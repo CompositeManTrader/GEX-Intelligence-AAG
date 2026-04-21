@@ -1,0 +1,12 @@
+streamlit>=1.35.0
+streamlit-autorefresh>=1.0.1
+plotly>=5.20.0
+pandas>=2.0.0
+numpy>=1.26.0
+scipy>=1.11.0
+requests>=2.31.0
+urllib3>=2.0.0
+pytz>=2024.1
+
+# Dev / tests (optional for prod Streamlit Cloud install)
+pytest>=8.0.0

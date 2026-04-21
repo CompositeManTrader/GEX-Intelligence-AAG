@@ -1,0 +1,91 @@
+"""
+Schwab chain parsing + cleaning.
+
+IV% ships as a decimal in the API and as a percentage in the cleaned dataframe.
+All downstream consumers (quant/*) operate on the percentage.
+"""
+from __future__ import annotations
+
+from typing import Optional, Tuple
+
+import pandas as pd
+
+
+_REMAP = {
+    "strikePrice": "Strike", "_exp": "Expiry", "_dte": "DTE",
+    "bid": "Bid", "ask": "Ask", "mark": "Mark", "last": "Last",
+    "totalVolume": "Volume", "openInterest": "OI",
+    "volatility": "IV%",
+    "impliedVolatility": "IV%_alt",
+    "delta": "Delta", "gamma": "Gamma",
+    "theta": "Theta", "vega": "Vega", "rho": "Rho",
+    "inTheMoney": "ITM", "theoreticalOptionValue": "Theo",
+}
+
+
+def parse_chain(data: dict) -> Tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """Parse Schwab chain JSON into (calls_df, puts_df, underlying_dict)."""
+    if not isinstance(data, dict):
+        return pd.DataFrame(), pd.DataFrame(), {}
+    rows_c: list[dict] = []
+    rows_p: list[dict] = []
+    for rows, key in [(rows_c, "callExpDateMap"), (rows_p, "putExpDateMap")]:
+        for exp_key, strikes in data.get(key, {}).items():
+            try:
+                exp, dte = exp_key.split(":")
+                dte_i = int(dte)
+            except (ValueError, AttributeError):
+                continue
+            for opts in strikes.values():
+                for o in opts:
+                    o["_exp"] = exp
+                    o["_dte"] = dte_i
+                    rows.append(o)
+    c = pd.DataFrame(rows_c) if rows_c else pd.DataFrame()
+    p = pd.DataFrame(rows_p) if rows_p else pd.DataFrame()
+    return c, p, data.get("underlying", {}) or {}
+
+
+def clean(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename + coerce columns. IV% is stored in percentage (0-200%)."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    df = df.copy()
+    if "volatility" not in df.columns and "impliedVolatility" in df.columns:
+        df["volatility"] = df["impliedVolatility"]
+    elif "volatility" not in df.columns:
+        df["volatility"] = float("nan")
+    cols = {k: v for k, v in _REMAP.items() if k in df.columns}
+    df = df[list(cols)].rename(columns=cols).copy()
+    df.drop(columns=["IV%_alt"], errors="ignore", inplace=True)
+
+    rounds = [("Bid", 2), ("Ask", 2), ("Mark", 2), ("Last", 2), ("Theo", 2),
+              ("Delta", 3), ("Theta", 3), ("Gamma", 4), ("Vega", 4), ("Rho", 4),
+              ("Strike", 2)]
+    for col, dig in rounds:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").round(dig)
+
+    # Schwab sometimes delivers IV as decimal, sometimes as pct — normalize.
+    if "IV%" in df.columns:
+        iv = pd.to_numeric(df["IV%"], errors="coerce")
+        # If values look like decimals (all <= 3.0) treat as decimal.
+        if iv.notna().any() and iv.dropna().median() < 3.0:
+            iv = iv * 100.0
+        df["IV%"] = iv.round(2)
+
+    if "OI" in df.columns:
+        df["OI"] = pd.to_numeric(df["OI"], errors="coerce").fillna(0).astype(int)
+    if "Volume" in df.columns:
+        df["Volume"] = pd.to_numeric(df["Volume"], errors="coerce").fillna(0).astype(int)
+    if "DTE" in df.columns:
+        df["DTE"] = pd.to_numeric(df["DTE"], errors="coerce").fillna(0).astype(int)
+    if "ITM" in df.columns:
+        df["ITM"] = df["ITM"].astype(bool)
+    return df
+
+
+def by_expiry(df: pd.DataFrame, exp: Optional[str]) -> pd.DataFrame:
+    if df is None or df.empty or "Expiry" not in df.columns or exp is None:
+        return df if df is not None else pd.DataFrame()
+    return df[df["Expiry"] == exp].copy()
