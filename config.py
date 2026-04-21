@@ -116,6 +116,7 @@ class SS:
     SEL_EXP = "sel_exp"
     REFRESH_COUNT = "_last_refresh_count"
     AUTO_REFRESH = "auto_refresh_toggle"
+    HIRO_HISTORY = "hiro_history"
 
 
 # ── Symbol validation (XSS + API hygiene) ──────────────────────────────────
