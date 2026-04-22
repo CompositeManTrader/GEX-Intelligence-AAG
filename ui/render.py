@@ -24,13 +24,14 @@ from charts.gex import (
     chart_cum_gex, chart_cex_profile, chart_dex_profile, chart_gex_by_expiry,
     chart_gex_curve, chart_gex_profile, chart_vex_profile,
 )
+from charts.intraday import chart_session_profile, render_intraday_chart
 from charts.theme import CYAN, FONT_MONO, GREEN, ORANGE, PURPLE, RED
 from charts.vol import (
     chart_greeks, chart_iv_hv_history, chart_iv_skew, chart_iv_smile,
     chart_oi_volume, chart_returns_dist, chart_term_structure, chart_vol_cone,
 )
 from config import CDMX_TZ, ET_TZ, SS, get_logger, market_status_et, sanitize_symbol
-from data.fetch import fetch_chain, fetch_price_history, fetch_quote
+from data.fetch import fetch_chain, fetch_intraday, fetch_price_history, fetch_quote
 from data.parse import by_expiry, clean, parse_chain
 from quant.exposures import (
     compute_cex_profile, compute_dex_profile, compute_gex_by_expiry,
@@ -45,6 +46,7 @@ from quant.levels import (
     put_call_ratio, skew_metrics, term_structure,
 )
 from quant.vol import vol_analytics
+from ui.auth_gate import current_user, logout, require_login
 from ui.chain_table import build_table
 from ui.decision import build_decision_panel
 from ui.interpretations import (
@@ -53,6 +55,7 @@ from ui.interpretations import (
     interpret_term_structure, interpret_vex, interpret_vol_analytics,
 )
 from ui.styles import CSS
+from ui.widgets import flip_zone_widget, trade_setup_card
 
 log = get_logger("ui.render")
 
@@ -83,7 +86,7 @@ def show_dashboard() -> None:
     today = datetime.date.today()
 
     # ── TOP BAR ─────────────────────────────────────────────────────────────
-    b1, b2, b3, b4, b5, b6 = st.columns([1.0, 1.4, 1.8, 1.0, 1.0, 0.6])
+    b1, b2, b3, b4, b5, b6, b7 = st.columns([1.0, 1.4, 1.8, 1.0, 1.0, 0.6, 0.7])
     with b1:
         st.markdown(
             "<span style='font-family:JetBrains Mono,monospace;font-size:1rem;"
@@ -111,7 +114,8 @@ def show_dashboard() -> None:
     with b5:
         auto_refresh = st.toggle("Auto 30s", value=False, key=SS.AUTO_REFRESH)
     with b6:
-        if st.button("EXIT", use_container_width=True):
+        if st.button("EXIT", use_container_width=True,
+                     help="Cerrar sesión Schwab (mantiene login de app)"):
             keys = [SS.TOKENS, SS.CONNECTED, SS.CHAIN_DATA, SS.LAST_SYM,
                     SS.LAST_STRIKES, SS.SYMBOL, SS.APP_KEY, SS.APP_SECRET,
                     SS.CALLBACK_URL, SS.OAUTH_PENDING, SS.OAUTH_CODE,
@@ -122,6 +126,13 @@ def show_dashboard() -> None:
             for k in [k for k in list(st.session_state.keys())
                       if k.startswith("intra_") or k.startswith("ph_")]:
                 st.session_state.pop(k, None)
+            st.rerun()
+    with b7:
+        who = current_user()
+        if st.button(f"🔒 {who}"[:10] if who else "🔒 LOGOUT",
+                     use_container_width=True,
+                     help="Cerrar sesión de la app completa (requerirá contraseña)"):
+            logout()
             st.rerun()
 
     if not symbol:
@@ -326,10 +337,11 @@ def show_dashboard() -> None:
     )
 
     # ─────────────────────────────────────────────────────────────────────────
-    #  TABS
+    #  TABS  (named for readability — order here controls UI order)
     # ─────────────────────────────────────────────────────────────────────────
-    tabs = st.tabs([
+    TAB_LABELS = [
         "🎯 Overview",
+        "📈 Intraday",
         "📊 GEX Total",
         "🔥 GEX 0DTE",
         "💎 Vanna (VEX)",
@@ -341,10 +353,27 @@ def show_dashboard() -> None:
         "💰 Open Interest",
         "📊 Vol Analytics",
         "📋 Chain",
-    ])
+    ]
+    tabs = st.tabs(TAB_LABELS)
+    (tab_overview, tab_intra, tab_gex, tab_0dte, tab_vex, tab_cex, tab_dex,
+     tab_hiro, tab_ts, tab_smile, tab_oi, tab_vol, tab_chain) = tabs
 
-    # ── 0. OVERVIEW ─────────────────────────────────────────────────────────
-    with tabs[0]:
+    # ── OVERVIEW ────────────────────────────────────────────────────────────
+    with tab_overview:
+        # 1. TRADE SETUP CARD — lo primero que ve el trader
+        iv_hv_ratio = (analytics_full or {}).get("iv_hv_ratio") if analytics_full else None
+        _render_md(trade_setup_card(
+            symbol=symbol, spot=spot,
+            gex_sum=gex_sum, vex_sum=vex_sum, cex_sum=cex_sum, dex_sum=dex_sum,
+            hiro_snap=hiro_snap, hiro_z=hiro_z,
+            atm_iv=iv_atm, iv_hv_ratio=iv_hv_ratio,
+            em_lo=em_lo, em_hi=em_hi, dte=dte_v,
+        ))
+
+        # 2. GEX FLIP ZONE — thermometer tactico
+        _render_md(flip_zone_widget(spot, gex_sum))
+
+        # 3. DECISION PANEL legacy
         _render_md('<p class="bb-header">DECISION PANEL  ·  Flow-weighted thesis</p>')
         panel = build_decision_panel(spot, gex_sum, vex_sum, cex_sum, dex_sum,
                                      iv_atm, em_lo, em_hi, dte_v, vol_regime_str)
@@ -376,8 +405,93 @@ def show_dashboard() -> None:
         _render_md(interpret_gex_profile(gex_sum, spot))
         _render_md(interpret_hiro(hiro_snap, hiro_z, len(hist)))
 
+    # ── INTRADAY ────────────────────────────────────────────────────────────
+    with tab_intra:
+        _render_md('<p class="bb-header">'
+                   'PRECIO INTRADAY  ·  Candlestick + niveles GEX dinámicos</p>')
+        st.caption(
+            "Velas nativas (Plotly) con líneas horizontales de <b>SPOT · CW · PW · "
+            "GF · HVL · MP · EM±</b>. Los niveles se recalculan cada refresh "
+            "usando la cadena actual. VWAP anclado a la apertura en línea discontinua."
+        )
+        c_ctrl1, c_ctrl2, c_ctrl3 = st.columns([1, 1, 4])
+        with c_ctrl1:
+            intra_freq = st.selectbox(
+                "Frecuencia", [1, 5, 15, 30], index=0,
+                format_func=lambda x: f"{x} min", key="intra_freq",
+            )
+        with c_ctrl2:
+            intra_days = st.selectbox(
+                "Días", [1, 2, 3, 5], index=0, key="intra_days",
+            )
+
+        # Cache key bucketed per frequency
+        now_et = datetime.datetime.now(ET_TZ)
+        bucket_min = max(1, int(intra_freq))
+        bucket = (now_et.minute // bucket_min) * bucket_min
+        now_bucket = now_et.strftime("%Y%m%d_%H") + f"{bucket:02d}"
+        intra_key = f"intra_{symbol}_{intra_freq}_{intra_days}_{now_bucket}"
+        intra_err_key = intra_key + "_err"
+
+        # Purge stale buckets for this symbol
+        for k in [k for k in list(st.session_state.keys())
+                  if k.startswith(f"intra_{symbol}_")
+                  and k not in (intra_key, intra_err_key)]:
+            del st.session_state[k]
+
+        if intra_key not in st.session_state:
+            with st.spinner(f"Cargando velas {intra_freq}min…"):
+                intra_df, intra_err = fetch_intraday(symbol, intra_freq, intra_days)
+            st.session_state[intra_key] = intra_df
+            st.session_state[intra_err_key] = intra_err
+        intra_df = st.session_state.get(intra_key, pd.DataFrame())
+        intra_err = st.session_state.get(intra_err_key, "")
+
+        m_status, _now_et = market_status_et()
+        st.caption(
+            f"Estado mercado: <b style='color:"
+            f"{'#22c55e' if m_status == 'OPEN' else '#f59e0b'}'>"
+            f"{m_status}</b> · Frecuencia {intra_freq}m · {intra_days}d",
+            unsafe_allow_html=True,
+        )
+
+        if not intra_df.empty:
+            fig_intra = render_intraday_chart(
+                intra_df, spot, gex_sum, mp=mp,
+                em_lo=em_lo, em_hi=em_hi,
+                freq_min=intra_freq, symbol=symbol,
+            )
+            if fig_intra:
+                st.plotly_chart(fig_intra, use_container_width=True)
+            # Session profile below candles
+            _render_md('<p class="bb-header" style="margin-top:0.6rem">'
+                       'SESSION PROFILE  ·  Volumen por bucket 30m (ET)</p>')
+            st.caption(
+                "Distribución del volumen a lo largo del día. El pico identifica "
+                "la hora en que se definió el rango intradía."
+            )
+            fig_sp = chart_session_profile(intra_df, symbol)
+            if fig_sp:
+                st.plotly_chart(fig_sp, use_container_width=True)
+            # Refresh button
+            if st.button("↺ Refresh velas", key="intra_refresh_btn"):
+                for k in [intra_key, intra_err_key]:
+                    st.session_state.pop(k, None)
+                try:
+                    fetch_intraday.clear()
+                    fetch_quote.clear()
+                except Exception:
+                    pass
+                st.rerun()
+        else:
+            st.caption(
+                "Datos intraday no disponibles. " +
+                (f"Error: `{intra_err}`" if intra_err
+                 else "Mercado cerrado o símbolo sin datos.")
+            )
+
     # ── 1. GEX TOTAL ────────────────────────────────────────────────────────
-    with tabs[1]:
+    with tab_gex:
         _render_md('<p class="bb-header">GEX PROFILE  ·  Gamma Exposure por Strike</p>')
         st.caption(
             "Calls → derecha (verde), Puts → izquierda (rojo), Net GEX → diamantes "
@@ -428,7 +542,7 @@ def show_dashboard() -> None:
             st.caption("Scenario requiere IV% y DTE válidos en la cadena.")
 
     # ── 2. GEX 0DTE ─────────────────────────────────────────────────────────
-    with tabs[2]:
+    with tab_0dte:
         zdte_c = calls_all[calls_all.get("DTE", pd.Series(dtype=int)) == 0] \
             if "DTE" in calls_all.columns else pd.DataFrame()
         zdte_p = puts_all[puts_all.get("DTE", pd.Series(dtype=int)) == 0] \
@@ -466,7 +580,7 @@ def show_dashboard() -> None:
                        "Este módulo solo aplica a símbolos con expiraciones diarias (SPY/QQQ/SPX).")
 
     # ── 3. VANNA ────────────────────────────────────────────────────────────
-    with tabs[3]:
+    with tab_vex:
         _render_md('<p class="bb-header">VANNA EXPOSURE  ·  $ Delta por +1 pto IV</p>')
         st.caption(
             "<b>VEX(k) = Vanna × OI × 100 × S × 0.01 × sign</b>. "
@@ -482,7 +596,7 @@ def show_dashboard() -> None:
             st.caption("VEX requiere IV% y DTE válidos en la cadena.")
 
     # ── 4. CHARM ────────────────────────────────────────────────────────────
-    with tabs[4]:
+    with tab_cex:
         _render_md('<p class="bb-header">CHARM EXPOSURE  ·  $ Delta decay por día</p>')
         st.caption(
             "<b>CEX(k) = Charm × OI × 100 × S × sign</b>. Decaimiento del delta dealer "
@@ -498,7 +612,7 @@ def show_dashboard() -> None:
             st.caption("CEX requiere IV% y DTE válidos en la cadena.")
 
     # ── 5. DELTA ────────────────────────────────────────────────────────────
-    with tabs[5]:
+    with tab_dex:
         _render_md('<p class="bb-header">DELTA EXPOSURE  ·  Sesgo direccional</p>')
         st.caption(
             "DEX = Σ Δ × OI × 100 × S. Call-heavy → soporte implícito. "
@@ -513,7 +627,7 @@ def show_dashboard() -> None:
             st.caption("DEX requiere Δ y OI válidos en la cadena.")
 
     # ── 6. HIRO FLOW ────────────────────────────────────────────────────────
-    with tabs[6]:
+    with tab_hiro:
         _render_md(
             '<p class="bb-header">HIRO  ·  Hedging Impact Real-time Oscillator</p>'
         )
@@ -552,7 +666,7 @@ def show_dashboard() -> None:
         _render_md(interpret_hiro(hiro_snap, hiro_z, len(hist)))
 
     # ── 7. TERM STRUCTURE ───────────────────────────────────────────────────
-    with tabs[7]:
+    with tab_ts:
         _render_md('<p class="bb-header">TERM STRUCTURE  (IV por vencimiento)</p>')
         st.caption(
             "Curva de volatilidad implícita por DTE. <b>Contango</b> → mercado "
@@ -589,7 +703,7 @@ def show_dashboard() -> None:
             st.caption("Term Structure no disponible.")
 
     # ── 8. IV SKEW & SMILE ──────────────────────────────────────────────────
-    with tabs[8]:
+    with tab_smile:
         _render_md('<p class="bb-header">IV SKEW  &  VOLATILITY SMILE</p>')
         st.caption(
             "Curva ámbar = <b>Market smile</b> (OTM puts abajo de spot + OTM calls arriba). "
@@ -628,7 +742,7 @@ def show_dashboard() -> None:
         st.plotly_chart(chart_greeks(calls, puts, spot), use_container_width=True)
 
     # ── 9. OPEN INTEREST ────────────────────────────────────────────────────
-    with tabs[9]:
+    with tab_oi:
         _render_md('<p class="bb-header">OPEN INTEREST  &  VOLUME</p>')
         st.caption(
             "OI = contratos abiertos (posicionamiento acumulado). "
@@ -639,7 +753,7 @@ def show_dashboard() -> None:
         _render_md(interpret_oi(calls, puts, spot))
 
     # ── 10. VOL ANALYTICS ───────────────────────────────────────────────────
-    with tabs[10]:
+    with tab_vol:
         _render_md('<p class="bb-header">VOLATILITY ANALYSIS  ·  HV · IV Rank · Cone</p>')
         if not price_df.empty and analytics_full:
             hv20 = analytics_full.get("hv20"); hv30 = analytics_full.get("hv30")
@@ -695,7 +809,7 @@ def show_dashboard() -> None:
             )
 
     # ── 11. CHAIN ───────────────────────────────────────────────────────────
-    with tabs[11]:
+    with tab_chain:
         _render_md('<p class="bb-header">OPTIONS CHAIN  (vencimiento seleccionado)</p>')
         mode = st.radio("Vista", ["both", "calls", "puts"], index=0, horizontal=True,
                         key="chain_mode", label_visibility="collapsed")
@@ -893,6 +1007,10 @@ def handle_oauth_code_exchange() -> bool:
 
 
 def run() -> None:
+    # Password gate (Streamlit Secrets-driven, editable sin redeploy)
+    st.markdown(CSS, unsafe_allow_html=True)
+    if not require_login():
+        return
     if handle_oauth_query_param():
         return
     if handle_oauth_code_exchange():

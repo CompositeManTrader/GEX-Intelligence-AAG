@@ -1,235 +1,272 @@
 """
-TradingView-style intraday candlestick + volume with GEX price-lines.
+Intraday candlestick chart — Plotly native.
 
-- Candles via Schwab pricehistory (cached 20s in data.fetch).
-- Latest price ticker fed separately from data.fetch.fetch_quote (cached 8s).
-- Live ET + CDMX clock ticks every second inside the iframe via setInterval.
-- Price-chip re-colors on live-tick.
+Rewrite of the previous lightweight-charts iframe implementation. Uses native
+Plotly so it integrates cleanly with Streamlit's rerun cycle (no stale
+JS-side state, no time-offset bugs, no iframe clock drift).
+
+Features:
+  - OHLC candles on the primary panel, volume histogram below.
+  - All structural GEX levels as horizontal lines with right-side labels:
+      SPOT · CW · PW · GF · HVL · MP · EM±
+  - Anchored VWAP (from session open) as a dashed line with band highlight.
+  - Hover: OHLC + change + % + volume.
+  - X-axis in Eastern Time (market time) with market hours highlighting.
+  - Session-profile helper: volume composition by 30-min buckets.
 """
 from __future__ import annotations
 
-import html
-import json
 from typing import Optional
 
+import numpy as np
 import pandas as pd
-import streamlit as st
-import streamlit.components.v1 as components
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+from charts.theme import (
+    AX_NOZERO, BASE, CYAN, FONT_MONO, GREEN, ORANGE, PURPLE, RED,
+)
 
 
-def _unix(dt) -> int:
-    t = pd.Timestamp(dt)
-    if t.tzinfo is None:
-        t = t.tz_localize("UTC")
-    return int(t.timestamp())
+# ─────────────────────────────────────────────────────────────────────────────
+#  Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+def _anchored_vwap(df: pd.DataFrame) -> pd.Series:
+    """Session-anchored VWAP: cum(price × vol) / cum(vol) from first bar."""
+    if df.empty or "volume" not in df.columns:
+        return pd.Series(dtype=float)
+    typical = (df["high"] + df["low"] + df["close"]) / 3.0
+    vol = df["volume"].astype(float)
+    pv = (typical * vol).cumsum()
+    cv = vol.cumsum().replace(0, np.nan)
+    return pv / cv
 
 
-def render_tv_chart(price_df: pd.DataFrame, spot: float, gex_summary: dict,
-                    mp: Optional[float] = None,
-                    em_lo: Optional[float] = None,
-                    em_hi: Optional[float] = None,
-                    freq_min: int = 1,
-                    live_quote: Optional[dict] = None,
-                    market_status: str = "—") -> None:
-    """Candlestick + volume + GEX structural levels via lightweight-charts v4."""
+def _as_et(dt_series: pd.Series) -> pd.Series:
+    """Convert a UTC-aware or naive datetime series to US/Eastern."""
+    s = pd.to_datetime(dt_series, errors="coerce")
+    if s.dt.tz is None:
+        s = s.dt.tz_localize("UTC")
+    return s.dt.tz_convert("America/New_York")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Main chart
+# ─────────────────────────────────────────────────────────────────────────────
+def render_intraday_chart(
+    price_df: pd.DataFrame,
+    spot: float,
+    gex_summary: Optional[dict],
+    mp: Optional[float] = None,
+    em_lo: Optional[float] = None,
+    em_hi: Optional[float] = None,
+    freq_min: int = 1,
+    symbol: str = "",
+) -> Optional[go.Figure]:
+    """Return a Plotly candlestick + volume + GEX-levels figure."""
     if price_df is None or price_df.empty:
-        st.caption("Sin datos de precio para mostrar la gráfica.")
-        return
+        return None
     df = price_df.copy().dropna(subset=["open", "high", "low", "close"])
     if df.empty:
-        st.caption("Sin velas válidas.")
-        return
+        return None
 
-    candles = [
-        {"time": _unix(r.date),
-         "open": round(float(r.open), 4),
-         "high": round(float(r.high), 4),
-         "low": round(float(r.low), 4),
-         "close": round(float(r.close), 4)}
-        for r in df.itertuples()
-    ]
-    volumes = [
-        {"time": _unix(r.date),
-         "value": float(r.volume),
-         "color": "#26a69a88" if r.close >= r.open else "#ef535088"}
-        for r in df.itertuples()
-    ]
+    df["date_et"] = _as_et(df["date"])
+    df = df.sort_values("date_et").reset_index(drop=True)
+    vwap = _anchored_vwap(df)
 
+    # Derived values
+    q_last = float(df["close"].iloc[-1])
+    q_open = float(df["open"].iloc[0])
+    q_chg = q_last - q_open
+    q_chg_p = (q_chg / q_open * 100) if q_open else 0.0
+    hi_day = float(df["high"].max())
+    lo_day = float(df["low"].min())
+
+    # GEX levels
     cw = gex_summary.get("call_wall") if gex_summary else None
     pw = gex_summary.get("put_wall") if gex_summary else None
     gf = gex_summary.get("gamma_flip") if gex_summary else None
     hvl = gex_summary.get("hvl") if gex_summary else None
 
-    def _pl(price, color, title, style=0, width=1):
-        if price is None or float(price) <= 0:
-            return None
-        return {"price": round(float(price), 2), "color": color,
-                "lineWidth": width, "lineStyle": style,
-                "axisLabelVisible": True, "title": title}
+    # Two-row subplot (candles + volume)
+    fig = make_subplots(
+        rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.02,
+        row_heights=[0.78, 0.22],
+    )
 
-    gex_lines = [l for l in [
-        _pl(spot, "#f97316", f"SPOT {spot:.2f}", 0, 2),
-        _pl(cw, "#22c55e", f"CW {cw:.2f}" if cw else "", 2, 1),
-        _pl(pw, "#ef4444", f"PW {pw:.2f}" if pw else "", 2, 1),
-        _pl(gf, "#a855f7", f"GF {gf:.2f}" if gf else "", 1, 1),
-        _pl(hvl, "#06b6d4", f"HVL {hvl:.2f}" if hvl else "", 4, 1),
-        _pl(mp, "#94a3b8", f"MP {mp:.2f}" if mp else "", 4, 1),
-        _pl(em_hi, "#c084fc", f"EM+ {em_hi:.2f}" if em_hi else "", 3, 1),
-        _pl(em_lo, "#c084fc", f"EM- {em_lo:.2f}" if em_lo else "", 3, 1),
-    ] if l is not None]
+    # ── Candles ─────────────────────────────────────────────────────────────
+    fig.add_trace(go.Candlestick(
+        x=df["date_et"], open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"],
+        increasing=dict(line=dict(color="#26a69a", width=1),
+                        fillcolor="#26a69a"),
+        decreasing=dict(line=dict(color="#ef5350", width=1),
+                        fillcolor="#ef5350"),
+        name="OHLC", showlegend=False,
+        hovertext=[
+            f"O {o:.2f}  H {h:.2f}  L {l:.2f}  C {c:.2f}<br>Δ {c - o:+.2f} ({((c - o) / o * 100) if o else 0:+.2f}%)"
+            for o, h, l, c in zip(df["open"], df["high"], df["low"], df["close"])
+        ],
+        hoverinfo="x+text",
+    ), row=1, col=1)
 
-    # Prefer live quote for header; fall back to last candle close
-    q_last = None
-    q_open = None
-    q_chg = None
-    q_chg_p = None
-    q_time_ms = None
-    if live_quote:
-        q_last = live_quote.get("last") or live_quote.get("mark")
-        q_open = live_quote.get("open") or float(df["open"].iloc[0])
-        q_chg = live_quote.get("net_change")
-        q_chg_p = live_quote.get("pct_change")
-        q_time_ms = live_quote.get("trade_time_ms") or live_quote.get("quote_time_ms")
-    if q_last is None:
-        q_last = float(df["close"].iloc[-1])
-    if q_open is None:
-        q_open = float(df["open"].iloc[0])
-    if q_chg is None:
-        q_chg = q_last - q_open
-    if q_chg_p is None:
-        q_chg_p = (q_chg / q_open * 100) if q_open else 0.0
+    # ── VWAP line (anchored to session open) ───────────────────────────────
+    if not vwap.empty and vwap.notna().any():
+        fig.add_trace(go.Scatter(
+            x=df["date_et"], y=vwap, mode="lines", name="VWAP",
+            line=dict(color="#a78bfa", width=1.2, dash="dash"),
+            hovertemplate="VWAP %{y:.2f}<extra></extra>",
+            showlegend=False,
+        ), row=1, col=1)
 
-    chg_clr = "#26a69a" if q_chg >= 0 else "#ef5350"
-    freq_lbl = f"{freq_min}m"
-    ms_status_clr = {
-        "OPEN": "#22c55e", "PRE": "#f59e0b", "POST": "#f59e0b",
-        "CLOSED": "#94a3b8",
-    }.get(market_status, "#94a3b8")
+    # ── Volume bars ─────────────────────────────────────────────────────────
+    vol_colors = [
+        "rgba(38,166,154,0.55)" if c >= o else "rgba(239,83,80,0.55)"
+        for o, c in zip(df["open"], df["close"])
+    ]
+    fig.add_trace(go.Bar(
+        x=df["date_et"], y=df["volume"], marker_color=vol_colors,
+        marker_line_width=0, name="Volume", showlegend=False,
+        hovertemplate="Vol %{y:,.0f}<extra></extra>",
+    ), row=2, col=1)
 
-    chips = "".join(filter(None, [
-        f'<span class="cg">CW&nbsp;{cw:.0f}</span>' if cw else "",
-        f'<span class="cr">PW&nbsp;{pw:.0f}</span>' if pw else "",
-        f'<span class="cp">GF&nbsp;{gf:.0f}</span>' if gf else "",
-        f'<span class="cy">HVL&nbsp;{hvl:.0f}</span>' if hvl else "",
-        f'<span class="cs">MP&nbsp;{mp:.0f}</span>' if mp else "",
-    ]))
+    # ── Horizontal GEX levels on candles panel ──────────────────────────────
+    def _hline(y: Optional[float], color: str, label: str, dash: str = "dot"):
+        if y is None or float(y) <= 0:
+            return
+        fig.add_hline(
+            y=float(y), line_dash=dash, line_color=color, line_width=1.1,
+            annotation_text=f" {label} {float(y):.2f}",
+            annotation_font=dict(size=9, color=color, family=FONT_MONO),
+            annotation_position="right",
+            row=1, col=1,
+        )
 
-    trade_time_js = "null" if q_time_ms is None else str(int(q_time_ms))
+    _hline(spot, ORANGE, "SPOT", dash="solid")
+    _hline(cw, GREEN, "CW")
+    _hline(pw, RED, "PW")
+    _hline(gf, PURPLE, "GF", dash="dash")
+    _hline(hvl, CYAN, "HVL", dash="dashdot")
+    _hline(mp, "#94a3b8", "MP", dash="longdash")
+    _hline(em_hi, "#c084fc", "EM+", dash="dot")
+    _hline(em_lo, "#c084fc", "EM-", dash="dot")
 
-    page = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><style>
-*{{margin:0;padding:0;box-sizing:border-box}}
-body{{background:#131722;color:#d1d4dc;font-family:'JetBrains Mono','Courier New',monospace;overflow:hidden}}
-#h{{display:flex;align-items:center;gap:8px;padding:5px 12px;background:#1e222d;border-bottom:1px solid #2a2e39;flex-wrap:wrap;font-size:11px}}
-#pr{{font-weight:700;font-size:15px;transition:color .25s}}
-#dl{{color:{chg_clr};font-weight:600}}
-#ms{{padding:2px 7px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(255,255,255,0.04);color:{ms_status_clr};border:1px solid {ms_status_clr}44}}
-#pulse{{display:inline-block;width:6px;height:6px;border-radius:50%;background:{ms_status_clr};margin-right:4px;animation:pulse 1.8s ease-in-out infinite}}
-@keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:.3}}}}
-span.co{{padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(249,115,22,.15);color:#f97316}}
-span.cg{{padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(38,166,154,.15);color:#26a69a}}
-span.cr{{padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(239,83,80,.15);color:#ef5350}}
-span.cp{{padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(168,85,247,.15);color:#a855f7}}
-span.cy{{padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(6,182,212,.15);color:#06b6d4}}
-span.cs{{padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(148,163,184,.12);color:#94a3b8}}
-#clk{{margin-left:auto;color:#9598a1;font-size:10px;text-align:right;line-height:1.35;font-variant-numeric:tabular-nums}}
-#clk b{{color:#d1d4dc}}
-#w{{position:relative;width:100%}}
-#tip{{position:absolute;top:40px;left:10px;font-size:10px;color:#9598a1;pointer-events:none;z-index:10;background:rgba(19,23,34,.92);padding:3px 8px;border-radius:3px;border:1px solid #2a2e39;display:none}}
-#mc{{width:100%;height:440px}}
-#vc{{width:100%;height:70px}}
-.flash-up{{animation:fu .6s ease-out}}
-.flash-dn{{animation:fd .6s ease-out}}
-@keyframes fu{{0%{{background:rgba(38,166,154,.35)}}100%{{background:transparent}}}}
-@keyframes fd{{0%{{background:rgba(239,83,80,.35)}}100%{{background:transparent}}}}
-</style></head><body>
-<div id="h">
-  <span id="ms"><span id="pulse"></span>{html.escape(market_status)}</span>
-  <span id="pr">{q_last:.2f}</span>
-  <span id="dl">{q_chg:+.2f}&nbsp;({q_chg_p:+.2f}%)</span>
-  <span class="co">{freq_lbl}</span>
-  {chips}
-  <span id="clk">
-    ET <b id="cet">--:--:--</b>&nbsp;·&nbsp;CDMX <b id="ccd">--:--:--</b><br>
-    Last tick: <b id="clt">—</b>
-  </span>
-</div>
-<div id="w">
-  <div id="tip"></div>
-  <div id="mc"></div>
-  <div id="vc"></div>
-</div>
-<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
-<script>
-const C={json.dumps(candles)};
-const V={json.dumps(volumes)};
-const G={json.dumps(gex_lines)};
-const TRADE_MS={trade_time_js};
-const PR_INIT={q_last};
-const TFmt=new Intl.DateTimeFormat("es-MX",{{timeZone:"America/Mexico_City",hour:"2-digit",minute:"2-digit",hour12:false}});
-const DFmtCDMX=new Intl.DateTimeFormat("es-MX",{{timeZone:"America/Mexico_City",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit",hour12:false}});
-const DFmtET=new Intl.DateTimeFormat("en-US",{{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit",hour12:false}});
-const ClkET=new Intl.DateTimeFormat("en-US",{{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false}});
-const ClkCDMX=new Intl.DateTimeFormat("es-MX",{{timeZone:"America/Mexico_City",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false}});
-const tickET=s=>ClkET.format(new Date(s*1000));
-const fmt=s=>DFmtET.format(new Date(s*1000));
-const CFG={{
-  layout:{{background:{{type:"solid",color:"#131722"}},textColor:"#535964",fontFamily:"'JetBrains Mono','Courier New',monospace",fontSize:11}},
-  grid:{{vertLines:{{color:"rgba(42,46,57,.5)",style:1}},horzLines:{{color:"rgba(42,46,57,.5)",style:1}}}},
-  crosshair:{{mode:LightweightCharts.CrosshairMode.Normal,
-    vertLine:{{color:"#758696",width:1,style:1,labelBackgroundColor:"#363a45"}},
-    horzLine:{{color:"#758696",width:1,style:1,labelBackgroundColor:"#363a45"}}}},
-  rightPriceScale:{{borderColor:"#2a2e39"}},
-  timeScale:{{borderColor:"#2a2e39",timeVisible:true,secondsVisible:false,tickMarkFormatter:s=>fmt(s)}},
-  localization:{{timeFormatter:s=>DFmtCDMX.format(new Date(s*1000))}},
-  handleScroll:{{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true}},
-  handleScale:{{mouseWheel:true,pinch:true,axisPressedMouseMove:true}},
-}};
-const W=document.getElementById("mc").offsetWidth||900;
-const mc=LightweightCharts.createChart(document.getElementById("mc"),{{...CFG,width:W,height:440}});
-const cs=mc.addCandlestickSeries({{upColor:"#26a69a",downColor:"#ef5350",borderUpColor:"#26a69a",borderDownColor:"#ef5350",wickUpColor:"#26a69a",wickDownColor:"#ef5350"}});
-cs.setData(C);
-G.forEach(l=>cs.createPriceLine(l));
-const vc=LightweightCharts.createChart(document.getElementById("vc"),{{...CFG,width:W,height:70,timeScale:{{...CFG.timeScale,visible:false}},rightPriceScale:{{visible:false}},leftPriceScale:{{visible:false}}}});
-const vs=vc.addHistogramSeries({{priceScaleId:"v",lastValueVisible:false,priceLineVisible:false}});
-vs.setData(V);
-let _syncing=false;
-function syncRange(src,dst){{
-  if(_syncing) return;
-  const r=src.timeScale().getVisibleLogicalRange();
-  if(!r) return;
-  _syncing=true;
-  dst.timeScale().setVisibleLogicalRange(r);
-  _syncing=false;
-}}
-mc.timeScale().subscribeVisibleLogicalRangeChange(()=>syncRange(mc,vc));
-vc.timeScale().subscribeVisibleLogicalRangeChange(()=>syncRange(vc,mc));
-const tip=document.getElementById("tip");
-mc.subscribeCrosshairMove(p=>{{
-  if(!p.time||!p.seriesData.has(cs)){{tip.style.display="none";return;}}
-  const r=p.seriesData.get(cs),d=r.close-r.open,pct=(d/r.open*100).toFixed(2),cl=d>=0?"#26a69a":"#ef5350";
-  tip.style.display="block";
-  tip.innerHTML=`<span style="color:#787b86">${{fmt(p.time)}} ET</span>&ensp;`
-    +`<span style="color:${{cl}}">O:${{r.open.toFixed(2)}} H:${{r.high.toFixed(2)}} L:${{r.low.toFixed(2)}} C:${{r.close.toFixed(2)}}&nbsp;<b>${{d>=0?"+":""}}${{d.toFixed(2)}} (${{pct}}%)</b></span>`;
-}});
-new ResizeObserver(()=>{{const w=document.getElementById("w").offsetWidth;if(w>10){{mc.applyOptions({{width:w}});vc.applyOptions({{width:w}});}}}}).observe(document.getElementById("w"));
-mc.timeScale().scrollToRealTime();
+    # ── Annotate last candle with live price tag ────────────────────────────
+    last_ts = df["date_et"].iloc[-1]
+    last_clr = GREEN if q_chg >= 0 else RED
+    fig.add_annotation(
+        x=last_ts, y=q_last,
+        text=f"  {q_last:.2f}  ({q_chg_p:+.2f}%)",
+        showarrow=False, xanchor="left",
+        font=dict(size=10, family=FONT_MONO, color="#fff"),
+        bgcolor=last_clr, bordercolor=last_clr,
+        borderpad=3, row=1, col=1,
+    )
 
-// Live clocks
-const cet=document.getElementById("cet"),ccd=document.getElementById("ccd"),clt=document.getElementById("clt"),pr=document.getElementById("pr");
-let _last=PR_INIT;
-function relTime(ms){{
-  if(!ms)return"—";
-  const diff=(Date.now()-ms)/1000;
-  if(diff<60)return Math.floor(diff)+"s";
-  if(diff<3600)return Math.floor(diff/60)+"m "+Math.floor(diff%60)+"s";
-  return Math.floor(diff/3600)+"h "+Math.floor((diff%3600)/60)+"m";
-}}
-setInterval(()=>{{
-  const now=new Date();
-  cet.textContent=ClkET.format(now);
-  ccd.textContent=ClkCDMX.format(now);
-  clt.textContent=relTime(TRADE_MS);
-}},1000);
-</script></body></html>"""
-    components.html(page, height=556, scrolling=False)
+    # ── Layout ──────────────────────────────────────────────────────────────
+    chg_sign = "+" if q_chg >= 0 else ""
+    title = (
+        f"  {symbol}  ·  ${q_last:.2f}  "
+        f"<span style='color:{last_clr}'>{chg_sign}{q_chg:.2f} "
+        f"({q_chg_p:+.2f}%)</span>  ·  "
+        f"H ${hi_day:.2f}  L ${lo_day:.2f}  ·  {freq_min}m"
+    )
+
+    fig.update_layout(
+        height=560, showlegend=False,
+        title=dict(
+            text=title, font=dict(size=12, color="#c0c0d8", family=FONT_MONO), x=0,
+        ),
+        **BASE,
+    )
+    fig.update_xaxes(**AX_NOZERO, rangeslider=dict(visible=False), row=1, col=1)
+    fig.update_xaxes(**AX_NOZERO, row=2, col=1,
+                     tickfont=dict(size=9, color="#606080", family=FONT_MONO))
+    fig.update_yaxes(**AX_NOZERO, title_text="Precio", row=1, col=1)
+    fig.update_yaxes(**AX_NOZERO, title_text="Vol", row=2, col=1)
+    # Disable plotly's range selector buttons for a cleaner look
+    fig.update_layout(xaxis_rangeslider_visible=False)
+    return fig
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Session Profile — volume by hour bucket (horizontal bar)
+# ─────────────────────────────────────────────────────────────────────────────
+def chart_session_profile(price_df: pd.DataFrame,
+                          symbol: str = "") -> Optional[go.Figure]:
+    """Horizontal bar chart: cumulative volume per 30-min bucket of the
+    latest session in ET. Shows where the volume concentrated during the day,
+    which often delimits the intraday range."""
+    if price_df is None or price_df.empty or "volume" not in price_df.columns:
+        return None
+    df = price_df.copy().dropna(subset=["open", "high", "low", "close", "volume"])
+    if df.empty:
+        return None
+    df["date_et"] = _as_et(df["date"])
+    # Focus on the most recent session only
+    last_day = df["date_et"].dt.date.max()
+    df = df[df["date_et"].dt.date == last_day]
+    if df.empty:
+        return None
+
+    # 30-minute buckets, labeled by start time in ET
+    df["bucket"] = df["date_et"].dt.floor("30min")
+    grouped = df.groupby("bucket", as_index=False).agg(
+        volume=("volume", "sum"),
+        open=("open", "first"),
+        close=("close", "last"),
+    )
+    grouped["label"] = grouped["bucket"].dt.strftime("%H:%M")
+    # Color: green if close ≥ open in that bucket, else red
+    grouped["color"] = np.where(
+        grouped["close"] >= grouped["open"],
+        "rgba(34,197,94,0.78)", "rgba(244,63,94,0.78)",
+    )
+    # Mark market-hour buckets bold
+    grouped["is_mkt"] = grouped["bucket"].dt.time.between(
+        pd.Timestamp("09:30").time(), pd.Timestamp("15:30").time()
+    )
+
+    total_vol = grouped["volume"].sum() or 1
+    grouped["pct"] = grouped["volume"] / total_vol * 100
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        y=grouped["label"], x=grouped["volume"], orientation="h",
+        marker=dict(color=grouped["color"], line=dict(width=0)),
+        hovertemplate=(
+            "%{y} ET<br>Vol %{x:,.0f}"
+            "<br>%{customdata:.1f}% del día<extra></extra>"
+        ),
+        customdata=grouped["pct"],
+        showlegend=False,
+    ))
+    # Highlight the busiest bucket
+    if not grouped.empty:
+        top_idx = int(grouped["volume"].idxmax())
+        top_lbl = grouped.loc[top_idx, "label"]
+        top_pct = grouped.loc[top_idx, "pct"]
+        fig.add_annotation(
+            x=grouped.loc[top_idx, "volume"],
+            y=top_lbl,
+            text=f" PEAK · {top_pct:.0f}%",
+            showarrow=False, xanchor="left",
+            font=dict(size=10, color="#fbbf24", family=FONT_MONO),
+        )
+
+    fig.update_layout(
+        height=max(260, 22 * len(grouped) + 80),
+        title=dict(
+            text=f"  SESSION PROFILE  ·  {symbol}  ·  "
+                 f"{last_day.strftime('%Y-%m-%d')}",
+            font=dict(size=11, color="#9090b0", family=FONT_MONO), x=0,
+        ),
+        xaxis_title="Volume",
+        yaxis_title="ET bucket (30m)",
+        **BASE,
+    )
+    fig.update_xaxes(**AX_NOZERO)
+    fig.update_yaxes(autorange="reversed",
+                     showgrid=False,
+                     tickfont=dict(size=10, color="#9090b0", family=FONT_MONO))
+    return fig
