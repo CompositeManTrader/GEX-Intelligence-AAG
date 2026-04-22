@@ -414,7 +414,7 @@ def show_dashboard() -> None:
             "GF · HVL · MP · EM±</b>. Los niveles se recalculan cada refresh "
             "usando la cadena actual. VWAP anclado a la apertura en línea discontinua."
         )
-        c_ctrl1, c_ctrl2, c_ctrl3 = st.columns([1, 1, 4])
+        c_ctrl1, c_ctrl2, c_ctrl3, c_ctrl4 = st.columns([1, 1, 1, 3])
         with c_ctrl1:
             intra_freq = st.selectbox(
                 "Frecuencia", [1, 5, 15, 30], index=0,
@@ -424,34 +424,40 @@ def show_dashboard() -> None:
             intra_days = st.selectbox(
                 "Días", [1, 2, 3, 5], index=0, key="intra_days",
             )
+        with c_ctrl3:
+            intra_auto = st.selectbox(
+                "Auto-refresh",
+                [0, 10, 20, 30, 60],
+                index=2,
+                format_func=lambda x: "OFF" if x == 0 else f"{x}s",
+                key="intra_auto_sec",
+                help="Actualización automática dentro de la tab intraday.",
+            )
 
-        # Cache key bucketed per frequency
-        now_et = datetime.datetime.now(ET_TZ)
-        bucket_min = max(1, int(intra_freq))
-        bucket = (now_et.minute // bucket_min) * bucket_min
-        now_bucket = now_et.strftime("%Y%m%d_%H") + f"{bucket:02d}"
-        intra_key = f"intra_{symbol}_{intra_freq}_{intra_days}_{now_bucket}"
-        intra_err_key = intra_key + "_err"
+        # ── Per-tab auto-refresh (independiente del global) ────────────────
+        if intra_auto:
+            try:
+                from streamlit_autorefresh import st_autorefresh
+                st_autorefresh(interval=int(intra_auto) * 1000,
+                               key="intra_tab_autorefresh")
+            except ImportError:
+                pass
 
-        # Purge stale buckets for this symbol
-        for k in [k for k in list(st.session_state.keys())
-                  if k.startswith(f"intra_{symbol}_")
-                  and k not in (intra_key, intra_err_key)]:
-            del st.session_state[k]
+        # Fetch directly — fetch_intraday already has @st.cache_data(ttl=20)
+        with st.spinner(f"Cargando velas {intra_freq}min…"):
+            intra_df, intra_err = fetch_intraday(symbol, intra_freq, intra_days)
 
-        if intra_key not in st.session_state:
-            with st.spinner(f"Cargando velas {intra_freq}min…"):
-                intra_df, intra_err = fetch_intraday(symbol, intra_freq, intra_days)
-            st.session_state[intra_key] = intra_df
-            st.session_state[intra_err_key] = intra_err
-        intra_df = st.session_state.get(intra_key, pd.DataFrame())
-        intra_err = st.session_state.get(intra_err_key, "")
-
-        m_status, _now_et = market_status_et()
+        m_status, now_et_m = market_status_et()
+        last_tick = (intra_df["date"].iloc[-1]
+                     if not intra_df.empty and "date" in intra_df.columns else None)
+        last_tick_str = (pd.Timestamp(last_tick).tz_convert(ET_TZ).strftime("%H:%M:%S ET")
+                         if last_tick is not None else "—")
         st.caption(
             f"Estado mercado: <b style='color:"
             f"{'#22c55e' if m_status == 'OPEN' else '#f59e0b'}'>"
-            f"{m_status}</b> · Frecuencia {intra_freq}m · {intra_days}d",
+            f"{m_status}</b> · Frec {intra_freq}m · {intra_days}d · "
+            f"Última vela: <b>{last_tick_str}</b> · "
+            f"Ahora: {now_et_m.strftime('%H:%M:%S ET')}",
             unsafe_allow_html=True,
         )
 
@@ -462,7 +468,10 @@ def show_dashboard() -> None:
                 freq_min=intra_freq, symbol=symbol,
             )
             if fig_intra:
-                st.plotly_chart(fig_intra, use_container_width=True)
+                # Unique key forces the component to remount on each refresh
+                # so the Plotly widget receives fresh data instead of diffing.
+                chart_key = f"intra_chart_{symbol}_{intra_freq}_{len(intra_df)}"
+                st.plotly_chart(fig_intra, use_container_width=True, key=chart_key)
             # Session profile below candles
             _render_md('<p class="bb-header" style="margin-top:0.6rem">'
                        'SESSION PROFILE  ·  Volumen por bucket 30m (ET)</p>')
@@ -472,11 +481,10 @@ def show_dashboard() -> None:
             )
             fig_sp = chart_session_profile(intra_df, symbol)
             if fig_sp:
-                st.plotly_chart(fig_sp, use_container_width=True)
-            # Refresh button
-            if st.button("↺ Refresh velas", key="intra_refresh_btn"):
-                for k in [intra_key, intra_err_key]:
-                    st.session_state.pop(k, None)
+                st.plotly_chart(fig_sp, use_container_width=True,
+                                key=f"sp_chart_{symbol}_{len(intra_df)}")
+            # Manual refresh button
+            if st.button("↺ Refresh velas ahora", key="intra_refresh_btn"):
                 try:
                     fetch_intraday.clear()
                     fetch_quote.clear()
@@ -498,10 +506,39 @@ def show_dashboard() -> None:
             "amarillos. Líneas: SPOT (naranja), Call/Put Walls (verde/rojo), "
             "Zero Γ (morado), HVL (cyan). Unidad: $M per 1% move."
         )
+
+        # View + zoom controls
+        cgx1, cgx2, _cgx3 = st.columns([1.2, 1.2, 3])
+        with cgx1:
+            gex_view = st.radio(
+                "Vista",
+                options=["all", "net", "call", "put"],
+                format_func=lambda v: {
+                    "all": "Todos", "net": "Solo Net",
+                    "call": "Solo Call", "put": "Solo Put",
+                }[v],
+                horizontal=True, key="gex_view_mode",
+            )
+        with cgx2:
+            gex_zoom = st.radio(
+                "Zoom",
+                options=["near", "mid", "wide", "all"],
+                format_func=lambda z: {
+                    "near": "Near  (±5%)", "mid": "Mid  (±10%)",
+                    "wide": "Wide  (±20%)", "all": "All strikes",
+                }[z],
+                horizontal=True, index=1, key="gex_zoom_mode",
+            )
+        gex_pct = {"near": 0.05, "mid": 0.10, "wide": 0.20, "all": None}[gex_zoom]
+
         if not gex_df.empty and gex_sum:
-            fig_gex = chart_gex_profile(gex_df, spot, gex_sum, symbol, focus_pct=focus_pct)
+            fig_gex = chart_gex_profile(
+                gex_df, spot, gex_sum, symbol,
+                focus_pct=gex_pct, view=gex_view,
+            )
             if fig_gex:
-                st.plotly_chart(fig_gex, use_container_width=True)
+                st.plotly_chart(fig_gex, use_container_width=True,
+                                key=f"gex_chart_{symbol}_{gex_view}_{gex_zoom}")
             _render_md(interpret_gex_profile(gex_sum, spot))
         else:
             st.warning("No hay datos suficientes para GEX. Ajusta DTE o min OI.")

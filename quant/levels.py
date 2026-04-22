@@ -179,7 +179,11 @@ def term_structure(c_all: pd.DataFrame, spot: float,
         return iv_lo + w * (iv_hi - iv_lo)
 
     for exp, grp in c_all.groupby("Expiry"):
-        dte_val = int(pd.to_numeric(grp.get("DTE", pd.Series([0])), errors="coerce").fillna(0).iloc[0])
+        # Defensive DTE extraction: works even if column missing or all-NaN.
+        if "DTE" in grp.columns and not grp["DTE"].dropna().empty:
+            dte_val = int(float(grp["DTE"].dropna().iloc[0]))
+        else:
+            dte_val = 0
         atm_c = _interp_atm(grp)
         atm_p = _interp_atm(p_groups[exp]) if exp in p_groups else None
         if atm_c is None:

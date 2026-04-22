@@ -32,14 +32,22 @@ from charts.theme import (
 #  Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 def _anchored_vwap(df: pd.DataFrame) -> pd.Series:
-    """Session-anchored VWAP: cum(price × vol) / cum(vol) from first bar."""
+    """Session-anchored VWAP: cum(price × vol) / cum(vol) from first bar.
+
+    Forward-fills over zero-volume bars so the line is continuous even when
+    the opening or intermediate candles have null volume (common in extended
+    hours or low-liquidity names).
+    """
     if df.empty or "volume" not in df.columns:
         return pd.Series(dtype=float)
     typical = (df["high"] + df["low"] + df["close"]) / 3.0
-    vol = df["volume"].astype(float)
+    vol = df["volume"].astype(float).fillna(0)
     pv = (typical * vol).cumsum()
-    cv = vol.cumsum().replace(0, np.nan)
-    return pv / cv
+    cv = vol.cumsum()
+    vwap = pv / cv.where(cv > 0)
+    # Forward-fill to paper over gaps, then back-fill the very first NaN
+    # (happens when the opening candle has zero volume).
+    return vwap.ffill().bfill()
 
 
 def _as_et(dt_series: pd.Series) -> pd.Series:

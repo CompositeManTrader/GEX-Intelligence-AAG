@@ -13,9 +13,14 @@ from charts.theme import (
 )
 
 
-def _focus_range(df: pd.DataFrame, spot: float, pct: float = 0.10) -> pd.DataFrame:
+def _focus_range(df: pd.DataFrame, spot: float,
+                 pct: Optional[float] = 0.10) -> pd.DataFrame:
+    """Filter strikes to ±pct around spot. If pct is None → return everything.
+    Falls back to the full df if the filter leaves <5 rows."""
     if df is None or df.empty:
         return pd.DataFrame()
+    if pct is None or pct <= 0:
+        return df
     lo, hi = spot * (1 - pct), spot * (1 + pct)
     fd = df[(df["Strike"] >= lo) & (df["Strike"] <= hi)]
     return fd if len(fd) >= 5 else df
@@ -23,8 +28,14 @@ def _focus_range(df: pd.DataFrame, spot: float, pct: float = 0.10) -> pd.DataFra
 
 # ─────────────────────────────────────────────────────────────────────────────
 def chart_gex_profile(gex_df: pd.DataFrame, spot: float, summary: dict,
-                      symbol: str, focus_pct: float = 0.08
+                      symbol: str,
+                      focus_pct: Optional[float] = 0.08,
+                      view: str = "all",
                       ) -> Optional[go.Figure]:
+    """
+    view ∈ {"all", "net", "call", "put"} — controls which series are rendered.
+    focus_pct: None → all strikes; float → ±pct window around spot.
+    """
     if gex_df is None or gex_df.empty:
         return None
     df = _focus_range(gex_df, spot, focus_pct).copy()
@@ -32,23 +43,45 @@ def chart_gex_profile(gex_df: pd.DataFrame, spot: float, summary: dict,
     df["P_GEX_M"] = df["P_GEX"] / 1e6
     df["Net_GEX_M"] = df["Net_GEX"] / 1e6
 
+    v = (view or "all").lower()
+    show_call = v in ("all", "call")
+    show_put = v in ("all", "put")
+    show_net = v in ("all", "net")
+    # In "net" mode, render Net as bars (more readable when it's the only series).
+    net_as_bars = v == "net"
+
     fig = go.Figure()
-    fig.add_trace(go.Bar(
-        y=df["Strike"], x=df["C_GEX_M"], orientation="h", name="Call GEX",
-        marker=dict(color="rgba(34,197,94,0.78)", line=dict(width=0)),
-        hovertemplate="<b>Strike $%{y:.1f}</b><br>Call GEX: $%{x:.1f}M<extra></extra>",
-    ))
-    fig.add_trace(go.Bar(
-        y=df["Strike"], x=df["P_GEX_M"], orientation="h", name="Put GEX",
-        marker=dict(color="rgba(244,63,94,0.78)", line=dict(width=0)),
-        hovertemplate="<b>Strike $%{y:.1f}</b><br>Put GEX: $%{x:.1f}M<extra></extra>",
-    ))
-    fig.add_trace(go.Scatter(
-        y=df["Strike"], x=df["Net_GEX_M"], mode="markers", name="Net GEX",
-        marker=dict(symbol="diamond", size=5, color="#fbbf24",
-                    line=dict(width=1, color="#000")),
-        hovertemplate="<b>Strike $%{y:.1f}</b><br>Net GEX: $%{x:+.1f}M<extra></extra>",
-    ))
+    if show_call:
+        fig.add_trace(go.Bar(
+            y=df["Strike"], x=df["C_GEX_M"], orientation="h", name="Call GEX",
+            marker=dict(color="rgba(34,197,94,0.78)", line=dict(width=0)),
+            hovertemplate="<b>Strike $%{y:.1f}</b><br>Call GEX: $%{x:.1f}M<extra></extra>",
+        ))
+    if show_put:
+        fig.add_trace(go.Bar(
+            y=df["Strike"], x=df["P_GEX_M"], orientation="h", name="Put GEX",
+            marker=dict(color="rgba(244,63,94,0.78)", line=dict(width=0)),
+            hovertemplate="<b>Strike $%{y:.1f}</b><br>Put GEX: $%{x:.1f}M<extra></extra>",
+        ))
+    if show_net:
+        if net_as_bars:
+            # Color each bar by sign for readability
+            net_colors = [
+                "rgba(34,197,94,0.78)" if v >= 0 else "rgba(244,63,94,0.78)"
+                for v in df["Net_GEX_M"]
+            ]
+            fig.add_trace(go.Bar(
+                y=df["Strike"], x=df["Net_GEX_M"], orientation="h", name="Net GEX",
+                marker=dict(color=net_colors, line=dict(width=0)),
+                hovertemplate="<b>Strike $%{y:.1f}</b><br>Net GEX: $%{x:+.1f}M<extra></extra>",
+            ))
+        else:
+            fig.add_trace(go.Scatter(
+                y=df["Strike"], x=df["Net_GEX_M"], mode="markers", name="Net GEX",
+                marker=dict(symbol="diamond", size=5, color="#fbbf24",
+                            line=dict(width=1, color="#000")),
+                hovertemplate="<b>Strike $%{y:.1f}</b><br>Net GEX: $%{x:+.1f}M<extra></extra>",
+            ))
 
     cw = summary.get("call_wall")
     pw = summary.get("put_wall")

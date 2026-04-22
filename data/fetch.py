@@ -157,9 +157,10 @@ def fetch_quote(symbol: str) -> Tuple[dict, str]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Intraday — cached 20s (short so tape is fresh, but still cache-friendly)
+#  Intraday — cached 8s (agresivo: el auto-refresh de la tab es de 10-20s,
+#  así que con ttl=8 garantizamos que cada tick de refresh re-pega a Schwab).
 # ─────────────────────────────────────────────────────────────────────────────
-@st.cache_data(ttl=20, show_spinner=False)
+@st.cache_data(ttl=8, show_spinner=False)
 def fetch_intraday(symbol: str, freq_min: int = 1,
                    days: int = 1) -> Tuple[pd.DataFrame, str]:
     try:
