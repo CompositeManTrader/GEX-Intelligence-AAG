@@ -13,6 +13,20 @@ from __future__ import annotations
 from typing import Optional
 
 
+def _html(s: str) -> str:
+    """Collapse an indented HTML block so Streamlit's markdown parser does
+    NOT treat leading spaces as an indented code block.
+
+    CommonMark (which Streamlit's markdown uses even with
+    `unsafe_allow_html=True`) promotes any line starting with 4+ spaces into
+    a `<pre><code>` block. Nested HTML with pretty indentation triggers this
+    and the raw `<div>` text leaks out onto the page. Stripping left-whitespace
+    per line + joining with newlines keeps the HTML valid while neutralising
+    the markdown code-fence heuristic.
+    """
+    return "\n".join(line.lstrip() for line in s.splitlines() if line.strip())
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  GEX FLIP ZONE  —  thermometer widget
 # ─────────────────────────────────────────────────────────────────────────────
@@ -56,32 +70,38 @@ def flip_zone_widget(spot: float, gex_sum: Optional[dict]) -> str:
     if cw and pw and cw > pw:
         pos = max(0.0, min(1.0, (spot - pw) / (cw - pw)))
         gf_pos = max(0.0, min(1.0, (gf - pw) / (cw - pw)))
-        bar_html = f"""
-        <div style="position:relative;height:14px;margin:8px 0 4px;
-             background:linear-gradient(to right,
-               rgba(244,63,94,.25) 0%,
-               rgba(245,158,11,.15) 45%, rgba(245,158,11,.15) 55%,
-               rgba(34,197,94,.25) 100%);
-             border:1px solid #2a2a3a;border-radius:3px;">
-          <div title="Put Wall ${pw:.0f}"
-               style="position:absolute;left:0%;top:-3px;width:2px;height:20px;background:#f43f5e"></div>
-          <div title="Call Wall ${cw:.0f}"
-               style="position:absolute;left:100%;top:-3px;width:2px;height:20px;background:#22c55e"></div>
-          <div title="Zero Γ ${gf:.0f}"
-               style="position:absolute;left:{gf_pos*100:.1f}%;top:-5px;width:2px;height:24px;background:#a855f7"></div>
-          <div title="Spot ${spot:.2f}"
-               style="position:absolute;left:{pos*100:.1f}%;top:-5px;width:12px;height:24px;
-               background:#fbbf24;border-radius:2px;box-shadow:0 0 6px #fbbf24"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;font-size:0.65rem;
-             color:#606080;font-family:JetBrains Mono,monospace;">
-          <span>PW ${pw:.0f}</span>
-          <span>Zero Γ ${gf:.0f}</span>
-          <span>CW ${cw:.0f}</span>
-        </div>
-        """
+        # Single-line spans so no line starts with 4+ spaces after the outer
+        # dedent — prevents Streamlit's markdown from code-fencing the block.
+        bar_html = (
+            f'<div style="position:relative;height:14px;margin:8px 0 4px;'
+            f'background:linear-gradient(to right,rgba(244,63,94,.25) 0%,'
+            f'rgba(245,158,11,.15) 45%,rgba(245,158,11,.15) 55%,'
+            f'rgba(34,197,94,.25) 100%);'
+            f'border:1px solid #2a2a3a;border-radius:3px;">'
+            f'<div title="Put Wall ${pw:.0f}" '
+            f'style="position:absolute;left:0%;top:-3px;width:2px;height:20px;'
+            f'background:#f43f5e"></div>'
+            f'<div title="Call Wall ${cw:.0f}" '
+            f'style="position:absolute;left:100%;top:-3px;width:2px;height:20px;'
+            f'background:#22c55e"></div>'
+            f'<div title="Zero Γ ${gf:.0f}" '
+            f'style="position:absolute;left:{gf_pos*100:.1f}%;top:-5px;'
+            f'width:2px;height:24px;background:#a855f7"></div>'
+            f'<div title="Spot ${spot:.2f}" '
+            f'style="position:absolute;left:{pos*100:.1f}%;top:-5px;'
+            f'width:12px;height:24px;background:#fbbf24;border-radius:2px;'
+            f'box-shadow:0 0 6px #fbbf24"></div>'
+            f'</div>'
+            f'<div style="display:flex;justify-content:space-between;'
+            f'font-size:0.65rem;color:#606080;'
+            f'font-family:JetBrains Mono,monospace;">'
+            f'<span>PW ${pw:.0f}</span>'
+            f'<span>Zero Γ ${gf:.0f}</span>'
+            f'<span>CW ${cw:.0f}</span>'
+            f'</div>'
+        )
 
-    return f"""
+    return _html(f"""
     <div style="background:linear-gradient(135deg,rgba(20,20,36,0.85),rgba(14,14,26,0.85));
          border:1px solid {color}55;border-left:4px solid {color};
          padding:0.9rem 1rem;border-radius:6px;margin:0.4rem 0 1rem;
@@ -113,7 +133,7 @@ def flip_zone_widget(spot: float, gex_sum: Optional[dict]) -> str:
         Cruzar Zero Γ → régimen cambia a <b>{next_regime}</b>.
       </div>
     </div>
-    """
+    """)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -235,7 +255,7 @@ def trade_setup_card(
             f'<td style="padding:3px 0;color:#9090b0;">{note}</td></tr>'
         )
 
-    return f"""
+    return _html(f"""
     <div style="background:linear-gradient(135deg,rgba(30,30,50,0.6),rgba(14,14,26,0.8));
          border:1px solid #2a2a3a;border-left:4px solid {bias_clr};
          padding:1rem 1.2rem;border-radius:6px;margin:0.6rem 0 1rem;
@@ -293,7 +313,7 @@ def trade_setup_card(
         Ajusta size según tu tolerancia al riesgo.
       </div>
     </div>
-    """
+    """)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
