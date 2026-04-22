@@ -180,8 +180,7 @@ def render_intraday_chart(
         **BASE,
     )
     fig.update_xaxes(**AX_NOZERO, rangeslider=dict(visible=False), row=1, col=1)
-    fig.update_xaxes(**AX_NOZERO, row=2, col=1,
-                     tickfont=dict(size=9, color="#606080", family=FONT_MONO))
+    fig.update_xaxes(**AX_NOZERO, row=2, col=1)
     fig.update_yaxes(**AX_NOZERO, title_text="Precio", row=1, col=1)
     fig.update_yaxes(**AX_NOZERO, title_text="Vol", row=2, col=1)
     # Disable plotly's range selector buttons for a cleaner look
