@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from charts.theme import (
-    AX_NOZERO, AX_ZERO, BASE, CYAN, FONT_MONO, GREEN,
+    AX_NOZERO, AX_ZERO, BASE, BG_DARK, BG_PLOT, CYAN, FONT_MONO, GREEN,
     ORANGE, PURPLE, RED, vline,
 )
 
@@ -133,6 +133,197 @@ def chart_gex_profile(gex_df: pd.DataFrame, spot: float, summary: dict,
     )
     fig.update_xaxes(**AX_ZERO)
     fig.update_yaxes(**AX_NOZERO, tickformat="$,.0f")
+    return fig
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  GexBot-style GEX chart  —  horizontal bars + intraday price overlay
+#  (dual X axis: GEX ($M) on top, wall-clock time on bottom, shared Y=strike)
+# ─────────────────────────────────────────────────────────────────────────────
+def chart_gex_gexbot_style(
+    gex_df: pd.DataFrame,
+    spot: float,
+    summary: dict,
+    symbol: str,
+    intraday_df: Optional[pd.DataFrame] = None,
+    focus_pct: Optional[float] = 0.03,
+    view: str = "all",
+) -> Optional[go.Figure]:
+    """Replica del layout de gexbot.com.
+
+    Muestra la distribución de Gamma Exposure por strike como barras
+    horizontales (calls a la derecha en verde, puts a la izquierda en rojo),
+    y superpone la curva del spot intradía usando un eje-X secundario
+    (tiempo) que comparte el eje-Y (strike) con las barras.
+
+    Parámetros
+    ----------
+    gex_df : DataFrame con columnas Strike, C_GEX, P_GEX, Net_GEX.
+    spot : precio actual del subyacente.
+    summary : dict con 'regime', 'call_wall', 'put_wall', 'gamma_flip',
+              'total_gex', 'max_dte', 'n_strikes'.
+    intraday_df : DataFrame de velas intradía (fetch_intraday). Opcional;
+                  si se omite, solo se muestran las barras y los walls.
+    focus_pct : filtro ±% alrededor del spot. `None` → todos los strikes.
+    view : "all" | "net" | "call" | "put" — qué series renderizar.
+    """
+    if gex_df is None or gex_df.empty:
+        return None
+
+    df = _focus_range(gex_df, spot, focus_pct).copy()
+    df["C_GEX_M"] = df["C_GEX"] / 1e6
+    df["P_GEX_M"] = df["P_GEX"] / 1e6
+    df["Net_GEX_M"] = df["Net_GEX"] / 1e6
+
+    v = (view or "all").lower()
+    show_call = v in ("all", "call")
+    show_put = v in ("all", "put")
+    show_net = v in ("all", "net")
+
+    fig = go.Figure()
+
+    # ── GEX bars (xaxis=x, top) ─────────────────────────────────────────
+    if show_call:
+        fig.add_trace(go.Bar(
+            y=df["Strike"], x=df["C_GEX_M"], orientation="h",
+            name="Call GEX",
+            marker=dict(color="rgba(34,197,94,0.85)", line=dict(width=0)),
+            hovertemplate="Strike $%{y:.1f}<br>Call GEX: $%{x:.1f}M<extra></extra>",
+            xaxis="x",
+        ))
+    if show_put:
+        fig.add_trace(go.Bar(
+            y=df["Strike"], x=df["P_GEX_M"], orientation="h",
+            name="Put GEX",
+            marker=dict(color="rgba(244,63,94,0.85)", line=dict(width=0)),
+            hovertemplate="Strike $%{y:.1f}<br>Put GEX: $%{x:.1f}M<extra></extra>",
+            xaxis="x",
+        ))
+    if show_net:
+        # gexbot uses blue dots for the latest intraday snapshot; we use
+        # Net GEX markers (combines Call+Put per strike) for parity.
+        fig.add_trace(go.Scatter(
+            y=df["Strike"], x=df["Net_GEX_M"], mode="markers",
+            name="Net GEX",
+            marker=dict(symbol="circle", size=6, color="#60a5fa",
+                        line=dict(width=1, color="#1e40af")),
+            hovertemplate="Strike $%{y:.1f}<br>Net GEX: $%{x:+.1f}M<extra></extra>",
+            xaxis="x",
+        ))
+
+    # ── Intraday price curve (xaxis=x2, bottom) ─────────────────────────
+    price_added = False
+    if (intraday_df is not None and not intraday_df.empty
+            and "close" in intraday_df.columns and "date" in intraday_df.columns):
+        idf = intraday_df.copy()
+        s = pd.to_datetime(idf["date"], errors="coerce")
+        if s.dt.tz is None:
+            s = s.dt.tz_localize("UTC")
+        idf["date_et"] = s.dt.tz_convert("America/New_York")
+        # Limit to the most recent session (gexbot shows today only)
+        last_day = idf["date_et"].dt.date.max()
+        idf = idf[idf["date_et"].dt.date == last_day]
+        if not idf.empty:
+            fig.add_trace(go.Scatter(
+                x=idf["date_et"], y=idf["close"], mode="lines",
+                name="Spot intraday",
+                line=dict(color="#06b6d4", width=1.6),
+                hovertemplate="%{x|%H:%M:%S} ET<br>$%{y:.2f}<extra></extra>",
+                xaxis="x2",
+            ))
+            price_added = True
+
+    # ── Zero-GEX vertical line (on primary xaxis) ───────────────────────
+    fig.add_vline(x=0, line_dash="solid",
+                  line_color="rgba(255,255,255,0.28)", line_width=1)
+
+    # ── Wall lines + left-anchored colored labels (gexbot style) ────────
+    cw = summary.get("call_wall")
+    pw = summary.get("put_wall")
+    gf = summary.get("gamma_flip")
+
+    def _wall(y: Optional[float], color: str, dash: str = "dash",
+              text_color: str = "#0b0b14") -> None:
+        if y is None:
+            return
+        fig.add_hline(y=float(y), line_dash=dash,
+                      line_color=color, line_width=1.3)
+        fig.add_annotation(
+            xref="paper", x=0.0, y=float(y), yref="y",
+            text=f"  {float(y):.2f}  ",
+            showarrow=False, xanchor="right", yanchor="middle",
+            font=dict(size=10, color=text_color, family=FONT_MONO),
+            bgcolor=color, bordercolor=color, borderpad=3,
+        )
+
+    # Order matters: draw spot LAST so its label renders on top
+    _wall(cw, GREEN, dash="dash")
+    _wall(pw, RED, dash="dash")
+    if (gf is not None
+            and (not cw or abs(gf - cw) > 0.5)
+            and (not pw or abs(gf - pw) > 0.5)):
+        _wall(gf, PURPLE, dash="dot", text_color="#ffffff")
+    _wall(spot, "#e8e8f0", dash="solid")
+
+    # ── Layout ──────────────────────────────────────────────────────────
+    regime = summary.get("regime", "NEUTRAL")
+    total_bn = summary.get("total_gex", 0) / 1e9
+    r_color = GREEN if regime == "POSITIVE" else (RED if regime == "NEGATIVE" else ORANGE)
+    n_strikes = summary.get("n_strikes", 0)
+    max_dte = summary.get("max_dte", 60)
+
+    xaxis2_cfg = dict(
+        overlaying="x",
+        side="bottom",
+        showgrid=False,
+        linecolor="#1a1a2a", showline=True,
+        tickfont=dict(size=9, family=FONT_MONO, color="#06b6d4"),
+        zeroline=False,
+        anchor="y",
+    )
+    if not price_added:
+        # Hide the unused secondary x-axis entirely
+        xaxis2_cfg["visible"] = False
+
+    fig.update_layout(
+        height=680,
+        barmode="overlay",
+        title=dict(
+            text=(f"  {symbol}  ·  {regime} Γ  ·  Net: ${total_bn:+.3f}B  ·  "
+                  f"Spot ${spot:.2f}  ·  {n_strikes} strikes  ·  DTE ≤ {max_dte}d"),
+            font=dict(size=11, color=r_color, family=FONT_MONO), x=0,
+        ),
+        xaxis=dict(
+            title="Gamma Exposure ($M per 1% move)",
+            side="top",
+            zeroline=True,
+            zerolinecolor="rgba(255,255,255,0.28)", zerolinewidth=1,
+            showgrid=True, gridcolor="rgba(255,255,255,0.04)",
+            linecolor="#1a1a2a", showline=True,
+            tickfont=dict(size=10, family=FONT_MONO, color="#606080"),
+            title_font=dict(size=10, color="#606080"),
+        ),
+        xaxis2=xaxis2_cfg,
+        yaxis=dict(
+            title="Strike",
+            side="left",
+            showgrid=True, gridcolor="rgba(255,255,255,0.04)",
+            linecolor="#1a1a2a", showline=True,
+            tickfont=dict(size=10, family=FONT_MONO, color="#a0a0c0"),
+            title_font=dict(size=10, color="#606080"),
+        ),
+        plot_bgcolor=BG_PLOT,
+        paper_bgcolor=BG_DARK,
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.06,
+                    xanchor="right", x=1,
+                    font=dict(size=10, color="#9090b0"),
+                    bgcolor="rgba(0,0,0,0)"),
+        margin=dict(l=85, r=30, t=72, b=40),
+        hoverlabel=dict(bgcolor="#1a1a2a", font_family=FONT_MONO,
+                        bordercolor="#3a3a4a", font_color="#e0e0f0"),
+        font=dict(size=11, family=FONT_MONO, color="#7070a0"),
+    )
     return fig
 
 

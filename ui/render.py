@@ -22,7 +22,8 @@ from auth.schwab import (
 from charts.flow import chart_hiro_oscillator, chart_hiro_strike
 from charts.gex import (
     chart_cum_gex, chart_cex_profile, chart_dex_profile, chart_gex_by_expiry,
-    chart_gex_curve, chart_gex_profile, chart_vex_profile,
+    chart_gex_curve, chart_gex_gexbot_style, chart_gex_profile,
+    chart_vex_profile,
 )
 from charts.intraday import chart_session_profile, render_intraday_chart
 from charts.theme import CYAN, FONT_MONO, GREEN, ORANGE, PURPLE, RED
@@ -502,13 +503,23 @@ def show_dashboard() -> None:
     with tab_gex:
         _render_md('<p class="bb-header">GEX PROFILE  ·  Gamma Exposure por Strike</p>')
         st.caption(
-            "Calls → derecha (verde), Puts → izquierda (rojo), Net GEX → diamantes "
-            "amarillos. Líneas: SPOT (naranja), Call/Put Walls (verde/rojo), "
-            "Zero Γ (morado), HVL (cyan). Unidad: $M per 1% move."
+            "Calls → derecha (verde), Puts → izquierda (rojo), Net GEX → puntos "
+            "azules. Walls: Call (verde dashed), Put (rojo dashed), Spot (blanco "
+            "sólido), Zero Γ (morado dotted). Modo GexBot superpone la curva del "
+            "spot intradía en cyan."
         )
 
-        # View + zoom controls
-        cgx1, cgx2, _cgx3 = st.columns([1.2, 1.2, 3])
+        # Style + view + zoom controls
+        cgx0, cgx1, cgx2 = st.columns([1.3, 1.5, 1.8])
+        with cgx0:
+            gex_style = st.radio(
+                "Estilo",
+                options=["gexbot", "classic"],
+                format_func=lambda s: {"gexbot": "GexBot", "classic": "Clásico"}[s],
+                horizontal=True, index=0, key="gex_style_mode",
+                help="GexBot: barras horizontales con precio intradía superpuesto. "
+                     "Clásico: barras horizontales sin overlay de precio.",
+            )
         with cgx1:
             gex_view = st.radio(
                 "Vista",
@@ -522,23 +533,38 @@ def show_dashboard() -> None:
         with cgx2:
             gex_zoom = st.radio(
                 "Zoom",
-                options=["near", "mid", "wide", "all"],
+                options=["tight", "near", "mid", "wide", "all"],
                 format_func=lambda z: {
-                    "near": "Near  (±5%)", "mid": "Mid  (±10%)",
-                    "wide": "Wide  (±20%)", "all": "All strikes",
+                    "tight": "Tight ±3%", "near": "Near ±5%",
+                    "mid": "Mid ±10%", "wide": "Wide ±20%",
+                    "all": "All strikes",
                 }[z],
-                horizontal=True, index=1, key="gex_zoom_mode",
+                horizontal=True, index=0 if gex_style == "gexbot" else 2,
+                key="gex_zoom_mode",
             )
-        gex_pct = {"near": 0.05, "mid": 0.10, "wide": 0.20, "all": None}[gex_zoom]
+        gex_pct = {
+            "tight": 0.03, "near": 0.05, "mid": 0.10, "wide": 0.20, "all": None,
+        }[gex_zoom]
 
         if not gex_df.empty and gex_sum:
-            fig_gex = chart_gex_profile(
-                gex_df, spot, gex_sum, symbol,
-                focus_pct=gex_pct, view=gex_view,
-            )
+            if gex_style == "gexbot":
+                # Fetch intraday (cache-hit if already loaded in Intraday tab)
+                intra_for_gex, _ierr = fetch_intraday(symbol, 5, 1)
+                fig_gex = chart_gex_gexbot_style(
+                    gex_df, spot, gex_sum, symbol,
+                    intraday_df=intra_for_gex,
+                    focus_pct=gex_pct, view=gex_view,
+                )
+            else:
+                fig_gex = chart_gex_profile(
+                    gex_df, spot, gex_sum, symbol,
+                    focus_pct=gex_pct, view=gex_view,
+                )
             if fig_gex:
-                st.plotly_chart(fig_gex, use_container_width=True,
-                                key=f"gex_chart_{symbol}_{gex_view}_{gex_zoom}")
+                st.plotly_chart(
+                    fig_gex, use_container_width=True,
+                    key=f"gex_chart_{symbol}_{gex_style}_{gex_view}_{gex_zoom}",
+                )
             _render_md(interpret_gex_profile(gex_sum, spot))
         else:
             st.warning("No hay datos suficientes para GEX. Ajusta DTE o min OI.")
