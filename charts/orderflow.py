@@ -24,6 +24,11 @@ from charts.theme import (
     AX_NOZERO, AX_ZERO, BASE, CYAN, FONT_MONO, GREEN, ORANGE, PURPLE, RED,
 )
 
+# Secondary-axis for the spot overlay: keep grid off so it doesn't conflict
+# with the primary exposure grid. Built once without showgrid so spreading it
+# into update_yaxes(...) can pass showgrid=False explicitly.
+_AX_SECONDARY = {k: v for k, v in AX_NOZERO.items() if k != "showgrid"}
+
 
 def _prepare(history: list) -> Optional[pd.DataFrame]:
     if not history or len(history) < 2:
@@ -93,7 +98,7 @@ def chart_dex_timeseries(history: list,
     )
     fig.update_xaxes(**AX_NOZERO)
     fig.update_yaxes(**AX_ZERO, title_text="DEX ($M)", secondary_y=False)
-    fig.update_yaxes(**AX_NOZERO, title_text="Spot ($)",
+    fig.update_yaxes(**_AX_SECONDARY, title_text="Spot ($)",
                      secondary_y=True, showgrid=False)
     return fig
 
@@ -171,7 +176,7 @@ def chart_gex_timeseries(history: list,
     )
     fig.update_xaxes(**AX_NOZERO)
     fig.update_yaxes(**AX_ZERO, title_text="GEX ($M / 1%)", secondary_y=False)
-    fig.update_yaxes(**AX_NOZERO, title_text="Spot ($)",
+    fig.update_yaxes(**_AX_SECONDARY, title_text="Spot ($)",
                      secondary_y=True, showgrid=False)
     return fig
 
@@ -224,7 +229,7 @@ def chart_convexity_timeseries(history: list,
     )
     fig.update_xaxes(**AX_NOZERO)
     fig.update_yaxes(**AX_ZERO, title_text="VEX ($M / +1 IV)", secondary_y=False)
-    fig.update_yaxes(**AX_NOZERO, title_text="Spot ($)",
+    fig.update_yaxes(**_AX_SECONDARY, title_text="Spot ($)",
                      secondary_y=True, showgrid=False)
     return fig
 
@@ -345,7 +350,7 @@ def chart_orderflow_stack(history: list,
     fig.update_yaxes(**AX_ZERO, title_text="VEX $M", row=3, col=1, secondary_y=False)
     # Spot overlay axes
     for r in (1, 2, 3):
-        fig.update_yaxes(**AX_NOZERO, title_text="Spot $",
+        fig.update_yaxes(**_AX_SECONDARY, title_text="Spot $",
                          row=r, col=1, secondary_y=True, showgrid=False)
 
     # Smaller subplot titles
