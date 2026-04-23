@@ -117,6 +117,7 @@ class SS:
     REFRESH_COUNT = "_last_refresh_count"
     AUTO_REFRESH = "auto_refresh_toggle"
     HIRO_HISTORY = "hiro_history"
+    ORDERFLOW_HISTORY = "orderflow_history"
 
 
 # ── Symbol validation (XSS + API hygiene) ──────────────────────────────────

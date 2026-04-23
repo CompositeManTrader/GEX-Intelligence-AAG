@@ -26,6 +26,10 @@ from charts.gex import (
     chart_vex_profile,
 )
 from charts.intraday import chart_session_profile, render_intraday_chart
+from charts.orderflow import (
+    chart_convexity_timeseries, chart_dex_timeseries, chart_gex_timeseries,
+    chart_orderflow_stack,
+)
 from charts.theme import CYAN, FONT_MONO, GREEN, ORANGE, PURPLE, RED
 from charts.vol import (
     chart_greeks, chart_iv_hv_history, chart_iv_skew, chart_iv_smile,
@@ -42,6 +46,7 @@ from quant.flow import (
     compute_hiro_by_strike, compute_hiro_snapshot, hiro_zscore,
     tick_hiro, update_hiro_history,
 )
+from quant.orderflow import tick_orderflow, update_orderflow_history
 from quant.levels import (
     atm_iv_interp, expected_move, iv_skew, iv_smile_by_expiry, max_pain,
     put_call_ratio, skew_metrics, term_structure,
@@ -121,7 +126,7 @@ def show_dashboard() -> None:
                     SS.LAST_STRIKES, SS.SYMBOL, SS.APP_KEY, SS.APP_SECRET,
                     SS.CALLBACK_URL, SS.OAUTH_PENDING, SS.OAUTH_CODE,
                     SS.ALL_EXPS, SS.SEL_EXP, SS.REFRESH_COUNT,
-                    SS.HIRO_HISTORY]
+                    SS.HIRO_HISTORY, SS.ORDERFLOW_HISTORY]
             for k in keys:
                 st.session_state.pop(k, None)
             for k in [k for k in list(st.session_state.keys())
@@ -191,9 +196,10 @@ def show_dashboard() -> None:
             if not calls_c.empty and "Expiry" in calls_c.columns else []
         ))
         st.session_state[SS.ALL_EXPS] = exps
-        # Reset HIRO history when symbol changes (per-symbol oscillator)
+        # Reset HIRO + Orderflow history when symbol changes (per-symbol series)
         if st.session_state.get(SS.LAST_SYM) != symbol:
             st.session_state.pop(SS.HIRO_HISTORY, None)
+            st.session_state.pop(SS.ORDERFLOW_HISTORY, None)
         st.rerun()
 
     if SS.CHAIN_DATA not in st.session_state:
@@ -337,6 +343,12 @@ def show_dashboard() -> None:
         calls_all, puts_all, spot, max_dte=max_dte, min_oi=min_oi,
     )
 
+    # ── ORDERFLOW: rolling history of dealer exposures (gexbot-style) ───────
+    of_tick = tick_orderflow(spot, gex_sum, dex_sum, vex_sum)
+    of_hist = st.session_state.get(SS.ORDERFLOW_HISTORY, [])
+    of_hist = update_orderflow_history(of_hist, of_tick, max_len=500)
+    st.session_state[SS.ORDERFLOW_HISTORY] = of_hist
+
     # ─────────────────────────────────────────────────────────────────────────
     #  TABS  (named for readability — order here controls UI order)
     # ─────────────────────────────────────────────────────────────────────────
@@ -344,6 +356,7 @@ def show_dashboard() -> None:
         "🎯 Overview",
         "📈 Intraday",
         "📊 GEX Total",
+        "🌀 Orderflow",
         "🔥 GEX 0DTE",
         "💎 Vanna (VEX)",
         "⏳ Charm (CEX)",
@@ -356,8 +369,8 @@ def show_dashboard() -> None:
         "📋 Chain",
     ]
     tabs = st.tabs(TAB_LABELS)
-    (tab_overview, tab_intra, tab_gex, tab_0dte, tab_vex, tab_cex, tab_dex,
-     tab_hiro, tab_ts, tab_smile, tab_oi, tab_vol, tab_chain) = tabs
+    (tab_overview, tab_intra, tab_gex, tab_orderflow, tab_0dte, tab_vex, tab_cex,
+     tab_dex, tab_hiro, tab_ts, tab_smile, tab_oi, tab_vol, tab_chain) = tabs
 
     # ── OVERVIEW ────────────────────────────────────────────────────────────
     with tab_overview:
@@ -603,6 +616,80 @@ def show_dashboard() -> None:
             _render_md(interpret_scenario(curve_df, gex_sum, spot))
         else:
             st.caption("Scenario requiere IV% y DTE válidos en la cadena.")
+
+    # ── ORDERFLOW (3-panel time-series, gexbot-style) ───────────────────────
+    with tab_orderflow:
+        _render_md('<p class="bb-header">'
+                   'ORDERFLOW  ·  DEX / GEX / Convexity en tiempo real</p>')
+        st.caption(
+            "Tres paneles apilados sobre el mismo eje temporal. Cada snapshot "
+            "agrega un tick al historial (hasta 500). <b>DEX</b> = bias direccional. "
+            "<b>Net GEX</b> = régimen de gamma con paredes (CW/PW/GF). "
+            "<b>Convexity</b> = vanna neta — cambia si IV se mueve. "
+            "La línea naranja punteada es el spot sobre el eje derecho."
+        )
+
+        c_of1, c_of2, c_of3, c_of4 = st.columns(4)
+        c_of1.metric("Snapshots", f"{len(of_hist)}")
+        last_of = of_hist[-1] if of_hist else {}
+        c_of2.metric(
+            "Net DEX",
+            (f"${last_of.get('net_dex_mm'):+.1f}M"
+             if last_of.get("net_dex_mm") is not None else "—"),
+        )
+        c_of3.metric(
+            "Net GEX",
+            (f"${last_of.get('net_gex_mm'):+.1f}M"
+             if last_of.get("net_gex_mm") is not None else "—"),
+        )
+        c_of4.metric(
+            "Net VEX",
+            (f"${last_of.get('net_vex_mm'):+.1f}M"
+             if last_of.get("net_vex_mm") is not None else "—"),
+        )
+
+        if len(of_hist) >= 2:
+            of_view = st.radio(
+                "Vista",
+                options=["stacked", "separate"],
+                format_func=lambda v: {
+                    "stacked": "Panel único (3 filas)",
+                    "separate": "Paneles separados",
+                }[v],
+                horizontal=True, index=0, key="of_view_mode",
+            )
+            if of_view == "stacked":
+                fig_of = chart_orderflow_stack(of_hist, symbol)
+                if fig_of:
+                    st.plotly_chart(
+                        fig_of, use_container_width=True,
+                        key=f"of_stack_{symbol}_{len(of_hist)}",
+                    )
+            else:
+                fig_dex_ts = chart_dex_timeseries(of_hist, symbol)
+                if fig_dex_ts:
+                    st.plotly_chart(
+                        fig_dex_ts, use_container_width=True,
+                        key=f"of_dex_{symbol}_{len(of_hist)}",
+                    )
+                fig_gex_ts = chart_gex_timeseries(of_hist, symbol)
+                if fig_gex_ts:
+                    st.plotly_chart(
+                        fig_gex_ts, use_container_width=True,
+                        key=f"of_gex_{symbol}_{len(of_hist)}",
+                    )
+                fig_vex_ts = chart_convexity_timeseries(of_hist, symbol)
+                if fig_vex_ts:
+                    st.plotly_chart(
+                        fig_vex_ts, use_container_width=True,
+                        key=f"of_vex_{symbol}_{len(of_hist)}",
+                    )
+        else:
+            st.caption(
+                "🔄 Orderflow necesita ≥ 2 snapshots. Se acumulan "
+                "automáticamente al refrescar la cadena. Activa <b>Auto 30s</b> "
+                "en la barra superior para construir el historial rápidamente."
+            )
 
     # ── 2. GEX 0DTE ─────────────────────────────────────────────────────────
     with tab_0dte:
