@@ -179,6 +179,9 @@ def chart_gex_gexbot_style(
     show_call = v in ("all", "call")
     show_put = v in ("all", "put")
     show_net = v in ("all", "net")
+    # When Net is the ONLY series shown, render it as sign-colored bars so
+    # it has visual weight (dots alone look empty on an otherwise blank panel).
+    net_as_bars = v == "net"
 
     fig = go.Figure()
 
@@ -200,16 +203,28 @@ def chart_gex_gexbot_style(
             xaxis="x",
         ))
     if show_net:
-        # gexbot uses blue dots for the latest intraday snapshot; we use
-        # Net GEX markers (combines Call+Put per strike) for parity.
-        fig.add_trace(go.Scatter(
-            y=df["Strike"], x=df["Net_GEX_M"], mode="markers",
-            name="Net GEX",
-            marker=dict(symbol="circle", size=6, color="#60a5fa",
-                        line=dict(width=1, color="#1e40af")),
-            hovertemplate="Strike $%{y:.1f}<br>Net GEX: $%{x:+.1f}M<extra></extra>",
-            xaxis="x",
-        ))
+        if net_as_bars:
+            net_colors = [
+                "rgba(34,197,94,0.85)" if v >= 0 else "rgba(244,63,94,0.85)"
+                for v in df["Net_GEX_M"]
+            ]
+            fig.add_trace(go.Bar(
+                y=df["Strike"], x=df["Net_GEX_M"], orientation="h",
+                name="Net GEX",
+                marker=dict(color=net_colors, line=dict(width=0)),
+                hovertemplate="Strike $%{y:.1f}<br>Net GEX: $%{x:+.1f}M<extra></extra>",
+                xaxis="x",
+            ))
+        else:
+            # Dots on top of Call+Put bars — gexbot-style overlay indicator.
+            fig.add_trace(go.Scatter(
+                y=df["Strike"], x=df["Net_GEX_M"], mode="markers",
+                name="Net GEX",
+                marker=dict(symbol="circle", size=6, color="#60a5fa",
+                            line=dict(width=1, color="#1e40af")),
+                hovertemplate="Strike $%{y:.1f}<br>Net GEX: $%{x:+.1f}M<extra></extra>",
+                xaxis="x",
+            ))
 
     # ── Intraday price curve (xaxis=x2, bottom) ─────────────────────────
     price_added = False

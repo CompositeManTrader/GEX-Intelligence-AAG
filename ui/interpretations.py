@@ -461,3 +461,177 @@ def interpret_0dte(zdte_sum: dict, spot: float) -> str:
     else:
         tone = "warn"
     return _box(" ".join(parts), tone)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Orderflow — per-panel market commentary
+# ─────────────────────────────────────────────────────────────────────────────
+def _slope(series: list) -> Optional[float]:
+    """Simple last-vs-first delta of the latest N values."""
+    vals = [v for v in series if v is not None]
+    if len(vals) < 2:
+        return None
+    return vals[-1] - vals[0]
+
+
+def interpret_orderflow_dex(history: list) -> str:
+    """What the DEX time-series is telling us right now."""
+    if not history:
+        return _box("Sin datos de DEX.", "neutral")
+    last = history[-1]
+    net = last.get("net_dex_mm")
+    if net is None:
+        return _box("Net DEX no disponible (cadena sin Δ/OI).", "neutral")
+    recent = [h.get("net_dex_mm") for h in history[-10:]]
+    slope = _slope(recent)
+    parts = [f"<b>Net DEX actual: ${net:+.1f}M</b> por 1% de movimiento."]
+    if net > 0:
+        parts.append(
+            "🟢 <b>Call-heavy</b>: el dealer está largo delta — vende en rallies "
+            "(resistencia implícita arriba) y compra en caídas (soporte abajo). "
+            "Esto <b>suaviza la acción del precio</b>."
+        )
+        tone = "bull"
+    else:
+        parts.append(
+            "🔴 <b>Put-heavy</b>: el dealer está corto delta — compra en rallies "
+            "(acelera al alza) y vende en caídas (acelera a la baja). "
+            "<b>Amplifica la volatilidad direccional</b>."
+        )
+        tone = "bear"
+    if slope is not None and abs(slope) > 5:
+        if slope > 0:
+            parts.append(
+                f"📈 Tendencia ↑ (+${slope:.1f}M en los últimos ticks) → "
+                "compradores de calls acumulan, dealer se vuelve más direccional al alza."
+            )
+        else:
+            parts.append(
+                f"📉 Tendencia ↓ ({slope:+.1f}M en los últimos ticks) → "
+                "compradores de puts acumulan, presión bajista en crecimiento."
+            )
+    return _box(" ".join(parts), tone)
+
+
+def interpret_orderflow_gex(history: list, spot: Optional[float] = None) -> str:
+    """Commentary for the GEX time-series panel."""
+    if not history:
+        return _box("Sin datos de GEX.", "neutral")
+    last = history[-1]
+    net = last.get("net_gex_mm")
+    if net is None:
+        return _box("Net GEX no disponible.", "neutral")
+    cw = last.get("call_wall")
+    pw = last.get("put_wall")
+    gf = last.get("gamma_flip")
+    recent = [h.get("net_gex_mm") for h in history[-10:]]
+    slope = _slope(recent)
+    parts = [f"<b>Net GEX: ${net:+.1f}M</b> por 1% ("
+             f"{'<b>LONG Γ</b>' if net >= 0 else '<b>SHORT Γ</b>'})."]
+    if net >= 0:
+        parts.append(
+            "🟢 Régimen <b>positivo</b>: los dealers compran caídas y venden "
+            "rallies. Expectativa de <b>mean-reversion</b>, rangos comprimidos "
+            "y vol realizada baja. Las paredes actúan como imán."
+        )
+        tone = "bull"
+    else:
+        parts.append(
+            "🔴 Régimen <b>negativo</b>: los dealers venden caídas y compran "
+            "rallies. Expectativa de <b>trending + momentum</b>, rangos más "
+            "amplios. Si el spot cruza el gamma flip, el hedging acelera el move."
+        )
+        tone = "bear"
+    if spot and cw and pw:
+        parts.append(
+            f"📌 Paredes: Call ${cw:.0f} (tope) · Put ${pw:.0f} (suelo). "
+            f"Spot ${spot:.2f} → "
+            f"{'dentro' if pw <= spot <= cw else '<b>FUERA</b>'} del canal GEX."
+        )
+    if spot and gf:
+        dist_pct = (gf - spot) / spot * 100
+        if abs(dist_pct) < 0.5:
+            parts.append(
+                f"⚠️ <b>Spot rozando Zero-Γ</b> (${gf:.0f}, {dist_pct:+.2f}%): "
+                "cualquier ruptura detona switching de régimen y expande volatilidad."
+            )
+            tone = "warn"
+    if slope is not None and abs(slope) > 50:
+        trend = "subiendo" if slope > 0 else "cayendo"
+        parts.append(
+            f"Net GEX {trend} ({slope:+.1f}M) → el régimen se está "
+            f"{'consolidando' if (slope > 0) == (net >= 0) else 'degradando'}."
+        )
+    return _box(" ".join(parts), tone)
+
+
+def interpret_orderflow_convexity(history: list) -> str:
+    """Commentary for the Convexity (net VEX) panel."""
+    if not history:
+        return _box("Sin datos de convexity.", "neutral")
+    last = history[-1]
+    net = last.get("net_vex_mm")
+    if net is None:
+        return _box("Net VEX no disponible (cadena sin IV válida).", "neutral")
+    recent = [h.get("net_vex_mm") for h in history[-10:]]
+    slope = _slope(recent)
+    parts = [f"<b>Net Convexity (VEX): ${net:+.1f}M</b> por +1 punto de IV."]
+    if net > 0:
+        parts.append(
+            "🟢 Dealer <b>long vanna</b>: si la IV sube, el dealer <b>compra spot</b> "
+            "(flujo comprador en vol expansion — típico de eventos tipo earnings "
+            "o FOMC con sesgo alcista)."
+        )
+        tone = "bull"
+    elif net < 0:
+        parts.append(
+            "🔴 Dealer <b>short vanna</b>: si la IV sube, el dealer <b>vende spot</b> "
+            "(cascada bajista en spike de VIX; clave para entender sell-offs "
+            "en IV expansion)."
+        )
+        tone = "bear"
+    else:
+        parts.append("Vanna dealer ~0 — IV no mueve el hedge direccional hoy.")
+        tone = "neutral"
+    if slope is not None and abs(slope) > 2:
+        trend = "↑" if slope > 0 else "↓"
+        parts.append(
+            f"Convexity {trend} ({slope:+.1f}M) — "
+            f"{'más exposición a vol' if slope > 0 else 'exposición a vol decreciendo'}."
+        )
+    return _box(" ".join(parts), tone)
+
+
+def interpret_orderflow_summary(history: list,
+                                spot: Optional[float] = None) -> str:
+    """One-box summary combining DEX bias + GEX regime + Vanna direction."""
+    if not history:
+        return _box("Esperando primer tick de orderflow…", "neutral")
+    last = history[-1]
+    dex = last.get("net_dex_mm")
+    gex = last.get("net_gex_mm")
+    vex = last.get("net_vex_mm")
+    msgs = []
+    if gex is not None:
+        msgs.append(
+            f"Régimen {'<b>LONG Γ</b>' if gex >= 0 else '<b>SHORT Γ</b>'} "
+            f"(${gex:+.1f}M)"
+        )
+    if dex is not None:
+        msgs.append(
+            f"Bias {'<b>alcista</b>' if dex >= 0 else '<b>bajista</b>'} "
+            f"(DEX ${dex:+.1f}M)"
+        )
+    if vex is not None:
+        if abs(vex) > 1:
+            msgs.append(
+                f"Vanna {'<b>+</b>' if vex > 0 else '<b>−</b>'} (${vex:+.1f}M/+1IV)"
+            )
+    if not msgs:
+        return _box("Orderflow sin datos suficientes.", "neutral")
+    headline = "  ·  ".join(msgs)
+    if spot is not None:
+        headline = f"Spot ${spot:.2f}  ·  {headline}"
+    tone = "bull" if (gex or 0) >= 0 and (dex or 0) >= 0 else \
+           ("bear" if (gex or 0) < 0 and (dex or 0) < 0 else "warn")
+    return _box(headline, tone)

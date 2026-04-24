@@ -31,7 +31,10 @@ _AX_SECONDARY = {k: v for k, v in AX_NOZERO.items() if k != "showgrid"}
 
 
 def _prepare(history: list) -> Optional[pd.DataFrame]:
-    if not history or len(history) < 2:
+    """Normalize orderflow history to a DataFrame. Accepts 1+ snapshots —
+    a single-point chart still conveys the *current* level, which is useful
+    during the first minute of the session while the rolling window fills."""
+    if not history:
         return None
     df = pd.DataFrame(history)
     if "timestamp" not in df.columns:
@@ -48,6 +51,11 @@ def _prepare(history: list) -> Optional[pd.DataFrame]:
     return df
 
 
+def _mode_for(df: pd.DataFrame) -> str:
+    """With only one tick you cannot draw a line — fall back to markers."""
+    return "markers" if len(df) < 2 else "lines"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Individual panels (kept as small helpers so callers can mix + match)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -59,29 +67,36 @@ def chart_dex_timeseries(history: list,
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
+    mode = _mode_for(df)
+    mk = dict(size=6)
     if "call_dex_mm" in df.columns and df["call_dex_mm"].notna().any():
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["call_dex_mm"], mode="lines",
+            x=df["timestamp"], y=df["call_dex_mm"], mode=mode,
             name="Call DEX", line=dict(color=GREEN, width=1.3),
+            marker=dict(color=GREEN, **mk),
             hovertemplate="%{x|%H:%M:%S}<br>Call DEX: $%{y:+.1f}M<extra></extra>",
         ), secondary_y=False)
     if "put_dex_mm" in df.columns and df["put_dex_mm"].notna().any():
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["put_dex_mm"], mode="lines",
+            x=df["timestamp"], y=df["put_dex_mm"], mode=mode,
             name="Put DEX", line=dict(color=RED, width=1.3),
+            marker=dict(color=RED, **mk),
             hovertemplate="%{x|%H:%M:%S}<br>Put DEX: $%{y:+.1f}M<extra></extra>",
         ), secondary_y=False)
     if "net_dex_mm" in df.columns and df["net_dex_mm"].notna().any():
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["net_dex_mm"], mode="lines",
+            x=df["timestamp"], y=df["net_dex_mm"], mode=mode,
             name="Net DEX", line=dict(color="#e0e0f0", width=1.8),
+            marker=dict(color="#e0e0f0", size=8, symbol="diamond",
+                        line=dict(color="#000", width=1)),
             hovertemplate="%{x|%H:%M:%S}<br>Net DEX: $%{y:+.1f}M<extra></extra>",
         ), secondary_y=False)
 
     if "spot" in df.columns and df["spot"].notna().any():
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["spot"], mode="lines", name="Spot",
+            x=df["timestamp"], y=df["spot"], mode=mode, name="Spot",
             line=dict(color=ORANGE, width=1.2, dash="dot"),
+            marker=dict(color=ORANGE, **mk),
             hovertemplate="%{x|%H:%M:%S}<br>Spot: $%{y:.2f}<extra></extra>",
         ), secondary_y=True)
 
@@ -111,31 +126,39 @@ def chart_gex_timeseries(history: list,
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
+    mode = _mode_for(df)
+    mk = dict(size=6)
     if "call_gex_mm" in df.columns and df["call_gex_mm"].notna().any():
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["call_gex_mm"], mode="lines",
+            x=df["timestamp"], y=df["call_gex_mm"], mode=mode,
             name="Call GEX", line=dict(color=GREEN, width=1.3),
+            marker=dict(color=GREEN, **mk),
             hovertemplate="%{x|%H:%M:%S}<br>Call GEX: $%{y:+.1f}M<extra></extra>",
         ), secondary_y=False)
     if "put_gex_mm" in df.columns and df["put_gex_mm"].notna().any():
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["put_gex_mm"], mode="lines",
+            x=df["timestamp"], y=df["put_gex_mm"], mode=mode,
             name="Put GEX", line=dict(color=RED, width=1.3),
+            marker=dict(color=RED, **mk),
             hovertemplate="%{x|%H:%M:%S}<br>Put GEX: $%{y:+.1f}M<extra></extra>",
         ), secondary_y=False)
     if "net_gex_mm" in df.columns and df["net_gex_mm"].notna().any():
         # Sign-colored fill so regime (long Γ vs short Γ) is obvious.
+        fill = "tozeroy" if mode == "lines" else None
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["net_gex_mm"], mode="lines",
+            x=df["timestamp"], y=df["net_gex_mm"], mode=mode,
             name="Net GEX", line=dict(color="#e0e0f0", width=2.0),
-            fill="tozeroy", fillcolor="rgba(168,85,247,0.12)",
+            marker=dict(color="#e0e0f0", size=8, symbol="diamond",
+                        line=dict(color="#000", width=1)),
+            fill=fill, fillcolor="rgba(168,85,247,0.12)",
             hovertemplate="%{x|%H:%M:%S}<br>Net GEX: $%{y:+.1f}M<extra></extra>",
         ), secondary_y=False)
 
     if "spot" in df.columns and df["spot"].notna().any():
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["spot"], mode="lines", name="Spot",
+            x=df["timestamp"], y=df["spot"], mode=mode, name="Spot",
             line=dict(color=ORANGE, width=1.2, dash="dot"),
+            marker=dict(color=ORANGE, **mk),
             hovertemplate="%{x|%H:%M:%S}<br>Spot: $%{y:.2f}<extra></extra>",
         ), secondary_y=True)
 
@@ -189,30 +212,38 @@ def chart_convexity_timeseries(history: list,
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
+    mode = _mode_for(df)
+    mk = dict(size=6)
     if "net_vex_mm" in df.columns and df["net_vex_mm"].notna().any():
+        fill = "tozeroy" if mode == "lines" else None
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["net_vex_mm"], mode="lines",
+            x=df["timestamp"], y=df["net_vex_mm"], mode=mode,
             name="Net Convexity (VEX)", line=dict(color=CYAN, width=1.8),
-            fill="tozeroy", fillcolor="rgba(6,182,212,0.14)",
+            marker=dict(color=CYAN, size=8, symbol="diamond",
+                        line=dict(color="#000", width=1)),
+            fill=fill, fillcolor="rgba(6,182,212,0.14)",
             hovertemplate="%{x|%H:%M:%S}<br>Net VEX: $%{y:+.1f}M<extra></extra>",
         ), secondary_y=False)
     if "call_vex_mm" in df.columns and df["call_vex_mm"].notna().any():
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["call_vex_mm"], mode="lines",
+            x=df["timestamp"], y=df["call_vex_mm"], mode=mode,
             name="Call VEX", line=dict(color=GREEN, width=1.0, dash="dot"),
+            marker=dict(color=GREEN, **mk),
             hovertemplate="%{x|%H:%M:%S}<br>Call VEX: $%{y:+.1f}M<extra></extra>",
         ), secondary_y=False)
     if "put_vex_mm" in df.columns and df["put_vex_mm"].notna().any():
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["put_vex_mm"], mode="lines",
+            x=df["timestamp"], y=df["put_vex_mm"], mode=mode,
             name="Put VEX", line=dict(color=RED, width=1.0, dash="dot"),
+            marker=dict(color=RED, **mk),
             hovertemplate="%{x|%H:%M:%S}<br>Put VEX: $%{y:+.1f}M<extra></extra>",
         ), secondary_y=False)
 
     if "spot" in df.columns and df["spot"].notna().any():
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["spot"], mode="lines", name="Spot",
+            x=df["timestamp"], y=df["spot"], mode=mode, name="Spot",
             line=dict(color=ORANGE, width=1.2, dash="dot"),
+            marker=dict(color=ORANGE, **mk),
             hovertemplate="%{x|%H:%M:%S}<br>Spot: $%{y:.2f}<extra></extra>",
         ), secondary_y=True)
 
@@ -256,29 +287,38 @@ def chart_orderflow_stack(history: list,
         ],
     )
 
+    mode = _mode_for(df)
+    mk = dict(size=6)
+    fill = "tozeroy" if mode == "lines" else None
+
     # ── Row 1: DEX ─────────────────────────────────────────────────────────
     if df.get("call_dex_mm") is not None and df["call_dex_mm"].notna().any():
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["call_dex_mm"], mode="lines",
+            x=df["timestamp"], y=df["call_dex_mm"], mode=mode,
             name="Call DEX", line=dict(color=GREEN, width=1.2),
+            marker=dict(color=GREEN, **mk),
             hovertemplate="%{x|%H:%M:%S}<br>Call DEX: $%{y:+.1f}M<extra></extra>",
         ), row=1, col=1, secondary_y=False)
     if df.get("put_dex_mm") is not None and df["put_dex_mm"].notna().any():
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["put_dex_mm"], mode="lines",
+            x=df["timestamp"], y=df["put_dex_mm"], mode=mode,
             name="Put DEX", line=dict(color=RED, width=1.2),
+            marker=dict(color=RED, **mk),
             hovertemplate="%{x|%H:%M:%S}<br>Put DEX: $%{y:+.1f}M<extra></extra>",
         ), row=1, col=1, secondary_y=False)
     if df.get("net_dex_mm") is not None and df["net_dex_mm"].notna().any():
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["net_dex_mm"], mode="lines",
+            x=df["timestamp"], y=df["net_dex_mm"], mode=mode,
             name="Net DEX", line=dict(color="#e0e0f0", width=1.8),
+            marker=dict(color="#e0e0f0", size=8, symbol="diamond",
+                        line=dict(color="#000", width=1)),
             hovertemplate="%{x|%H:%M:%S}<br>Net DEX: $%{y:+.1f}M<extra></extra>",
         ), row=1, col=1, secondary_y=False)
     if df.get("spot") is not None and df["spot"].notna().any():
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["spot"], mode="lines", name="Spot",
+            x=df["timestamp"], y=df["spot"], mode=mode, name="Spot",
             line=dict(color=ORANGE, width=1.1, dash="dot"),
+            marker=dict(color=ORANGE, **mk),
             showlegend=False,
             hovertemplate="%{x|%H:%M:%S}<br>Spot: $%{y:.2f}<extra></extra>",
         ), row=1, col=1, secondary_y=True)
@@ -286,42 +326,50 @@ def chart_orderflow_stack(history: list,
     # ── Row 2: Net GEX ─────────────────────────────────────────────────────
     if df.get("call_gex_mm") is not None and df["call_gex_mm"].notna().any():
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["call_gex_mm"], mode="lines",
+            x=df["timestamp"], y=df["call_gex_mm"], mode=mode,
             name="Call GEX", line=dict(color=GREEN, width=1.2),
+            marker=dict(color=GREEN, **mk),
             hovertemplate="%{x|%H:%M:%S}<br>Call GEX: $%{y:+.1f}M<extra></extra>",
         ), row=2, col=1, secondary_y=False)
     if df.get("put_gex_mm") is not None and df["put_gex_mm"].notna().any():
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["put_gex_mm"], mode="lines",
+            x=df["timestamp"], y=df["put_gex_mm"], mode=mode,
             name="Put GEX", line=dict(color=RED, width=1.2),
+            marker=dict(color=RED, **mk),
             hovertemplate="%{x|%H:%M:%S}<br>Put GEX: $%{y:+.1f}M<extra></extra>",
         ), row=2, col=1, secondary_y=False)
     if df.get("net_gex_mm") is not None and df["net_gex_mm"].notna().any():
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["net_gex_mm"], mode="lines",
+            x=df["timestamp"], y=df["net_gex_mm"], mode=mode,
             name="Net GEX", line=dict(color="#e0e0f0", width=2.0),
-            fill="tozeroy", fillcolor="rgba(168,85,247,0.12)",
+            marker=dict(color="#e0e0f0", size=8, symbol="diamond",
+                        line=dict(color="#000", width=1)),
+            fill=fill, fillcolor="rgba(168,85,247,0.12)",
             hovertemplate="%{x|%H:%M:%S}<br>Net GEX: $%{y:+.1f}M<extra></extra>",
         ), row=2, col=1, secondary_y=False)
     if df.get("spot") is not None and df["spot"].notna().any():
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["spot"], mode="lines",
-            line=dict(color=ORANGE, width=1.1, dash="dot"), showlegend=False,
+            x=df["timestamp"], y=df["spot"], mode=mode,
+            line=dict(color=ORANGE, width=1.1, dash="dot"),
+            marker=dict(color=ORANGE, **mk), showlegend=False,
             hovertemplate="%{x|%H:%M:%S}<br>Spot: $%{y:.2f}<extra></extra>",
         ), row=2, col=1, secondary_y=True)
 
     # ── Row 3: Convexity (VEX) ─────────────────────────────────────────────
     if df.get("net_vex_mm") is not None and df["net_vex_mm"].notna().any():
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["net_vex_mm"], mode="lines",
+            x=df["timestamp"], y=df["net_vex_mm"], mode=mode,
             name="Net VEX", line=dict(color=CYAN, width=1.8),
-            fill="tozeroy", fillcolor="rgba(6,182,212,0.14)",
+            marker=dict(color=CYAN, size=8, symbol="diamond",
+                        line=dict(color="#000", width=1)),
+            fill=fill, fillcolor="rgba(6,182,212,0.14)",
             hovertemplate="%{x|%H:%M:%S}<br>Net VEX: $%{y:+.1f}M<extra></extra>",
         ), row=3, col=1, secondary_y=False)
     if df.get("spot") is not None and df["spot"].notna().any():
         fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["spot"], mode="lines",
-            line=dict(color=ORANGE, width=1.1, dash="dot"), showlegend=False,
+            x=df["timestamp"], y=df["spot"], mode=mode,
+            line=dict(color=ORANGE, width=1.1, dash="dot"),
+            marker=dict(color=ORANGE, **mk), showlegend=False,
             hovertemplate="%{x|%H:%M:%S}<br>Spot: $%{y:.2f}<extra></extra>",
         ), row=3, col=1, secondary_y=True)
 

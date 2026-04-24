@@ -57,7 +57,9 @@ from ui.chain_table import build_table
 from ui.decision import build_decision_panel
 from ui.interpretations import (
     interpret_0dte, interpret_cex, interpret_dex, interpret_gex_profile,
-    interpret_hiro, interpret_oi, interpret_scenario, interpret_smile,
+    interpret_hiro, interpret_oi, interpret_orderflow_convexity,
+    interpret_orderflow_dex, interpret_orderflow_gex,
+    interpret_orderflow_summary, interpret_scenario, interpret_smile,
     interpret_term_structure, interpret_vex, interpret_vol_analytics,
 )
 from ui.styles import CSS
@@ -648,15 +650,26 @@ def show_dashboard() -> None:
              if last_of.get("net_vex_mm") is not None else "—"),
         )
 
-        if len(of_hist) >= 2:
+        # Top-line summary always visible — works with 1+ snapshots.
+        _render_md(interpret_orderflow_summary(of_hist, spot))
+
+        if of_hist:
+            if len(of_hist) == 1:
+                st.caption(
+                    "⏳ Único snapshot. El panel dibuja los valores actuales "
+                    "como puntos; al siguiente refresh (o con <b>Auto 30s</b> "
+                    "activo) se empieza a construir la serie temporal.",
+                    unsafe_allow_html=True,
+                )
+
             of_view = st.radio(
                 "Vista",
                 options=["stacked", "separate"],
                 format_func=lambda v: {
                     "stacked": "Panel único (3 filas)",
-                    "separate": "Paneles separados",
+                    "separate": "Paneles separados + comentario",
                 }[v],
-                horizontal=True, index=0, key="of_view_mode",
+                horizontal=True, index=1, key="of_view_mode",
             )
             if of_view == "stacked":
                 fig_of = chart_orderflow_stack(of_hist, symbol)
@@ -665,69 +678,140 @@ def show_dashboard() -> None:
                         fig_of, use_container_width=True,
                         key=f"of_stack_{symbol}_{len(of_hist)}",
                     )
+                # Also render the three commentary boxes below the stacked chart
+                _render_md(interpret_orderflow_dex(of_hist))
+                _render_md(interpret_orderflow_gex(of_hist, spot))
+                _render_md(interpret_orderflow_convexity(of_hist))
             else:
+                # DEX panel + commentary
+                _render_md('<p class="bb-header" style="margin-top:0.4rem">'
+                           'DEX  ·  Aggregate Delta Exposure</p>')
                 fig_dex_ts = chart_dex_timeseries(of_hist, symbol)
                 if fig_dex_ts:
                     st.plotly_chart(
                         fig_dex_ts, use_container_width=True,
                         key=f"of_dex_{symbol}_{len(of_hist)}",
                     )
+                _render_md(interpret_orderflow_dex(of_hist))
+
+                # GEX panel + commentary
+                _render_md('<p class="bb-header" style="margin-top:0.8rem">'
+                           'NET GEX  ·  Dealer Gamma Exposure</p>')
                 fig_gex_ts = chart_gex_timeseries(of_hist, symbol)
                 if fig_gex_ts:
                     st.plotly_chart(
                         fig_gex_ts, use_container_width=True,
                         key=f"of_gex_{symbol}_{len(of_hist)}",
                     )
+                _render_md(interpret_orderflow_gex(of_hist, spot))
+
+                # Convexity / Vanna panel + commentary
+                _render_md('<p class="bb-header" style="margin-top:0.8rem">'
+                           'CONVEXITY  ·  Net Vanna Exposure</p>')
                 fig_vex_ts = chart_convexity_timeseries(of_hist, symbol)
                 if fig_vex_ts:
                     st.plotly_chart(
                         fig_vex_ts, use_container_width=True,
                         key=f"of_vex_{symbol}_{len(of_hist)}",
                     )
+                _render_md(interpret_orderflow_convexity(of_hist))
         else:
             st.caption(
-                "🔄 Orderflow necesita ≥ 2 snapshots. Se acumulan "
-                "automáticamente al refrescar la cadena. Activa <b>Auto 30s</b> "
-                "en la barra superior para construir el historial rápidamente."
+                "🔄 Orderflow vacío. Se empieza a acumular en cuanto se "
+                "carga la primera cadena. Activa <b>Auto 30s</b> "
+                "en la barra superior para construir el historial rápidamente.",
+                unsafe_allow_html=True,
             )
 
     # ── 2. GEX 0DTE ─────────────────────────────────────────────────────────
     with tab_0dte:
-        zdte_c = calls_all[calls_all.get("DTE", pd.Series(dtype=int)) == 0] \
-            if "DTE" in calls_all.columns else pd.DataFrame()
-        zdte_p = puts_all[puts_all.get("DTE", pd.Series(dtype=int)) == 0] \
-            if "DTE" in puts_all.columns else pd.DataFrame()
+        # 0DTE filter — force numeric DTE first so the comparison works even
+        # when Schwab returns DTE as string/object.
+        if "DTE" in calls_all.columns:
+            _c_dte = pd.to_numeric(calls_all["DTE"], errors="coerce")
+            zdte_c = calls_all[_c_dte == 0]
+        else:
+            zdte_c = pd.DataFrame()
+        if "DTE" in puts_all.columns:
+            _p_dte = pd.to_numeric(puts_all["DTE"], errors="coerce")
+            zdte_p = puts_all[_p_dte == 0]
+        else:
+            zdte_p = pd.DataFrame()
+
         _render_md('<p class="bb-header">0DTE GAMMA  ·  Today-only dealer flow</p>')
         st.caption(
             "Filtro DTE = 0. Relevante para SPX/SPY/QQQ en horas finales: "
-            "charm colapsa a cero y gamma se concentra en el ATM."
+            "charm colapsa a cero y gamma se concentra en el ATM. "
+            "Se ignora el min-OI global porque los contratos 0DTE típicamente "
+            "tienen OI bajo pero volumen y gamma altos."
         )
         if not zdte_c.empty or not zdte_p.empty:
+            # min_oi=0 for 0DTE: filtering by OI hides the most active 0DTE
+            # strikes (they have huge volume but low carry-over OI).
+            # Spot-grid flip ON: for a single-DTE bucket, the true zero-gamma
+            # crossing is well-defined and more accurate than the
+            # strike-cumulative fallback.
             zdte_df, zdte_sum = compute_gex_profile(
-                zdte_c, zdte_p, spot, symbol=symbol, max_dte=0, min_oi=min_oi,
-                use_spot_grid_flip=False,
+                zdte_c, zdte_p, spot, symbol=symbol,
+                max_dte=0, min_oi=0,
+                use_spot_grid_flip=True,
             )
             if not zdte_df.empty and zdte_sum:
+                total_m = zdte_sum.get("total_gex", 0) / 1e6
                 z1, z2, z3, z4 = st.columns(4)
-                z1.metric("0DTE Net GEX",
-                          f"${zdte_sum['total_gex']/1e6:+.0f}M",
-                          "LONG Γ" if zdte_sum["total_gex"] >= 0 else "SHORT Γ")
-                z2.metric("0DTE Call Wall",
-                          f"${zdte_sum['call_wall']:.0f}" if zdte_sum.get("call_wall") else "—")
-                z3.metric("0DTE Put Wall",
-                          f"${zdte_sum['put_wall']:.0f}" if zdte_sum.get("put_wall") else "—")
-                z4.metric("0DTE HVL (pin)",
-                          f"${zdte_sum['hvl']:.0f}" if zdte_sum.get("hvl") else "—")
-                fig_z = chart_gex_profile(zdte_df, spot, zdte_sum, f"{symbol} 0DTE",
-                                          focus_pct=min(0.05, focus_pct))
+                z1.metric(
+                    "0DTE Net GEX",
+                    f"${total_m:+.1f}M",
+                    "LONG Γ" if total_m >= 0 else "SHORT Γ",
+                )
+                z2.metric(
+                    "0DTE Call Wall",
+                    (f"${zdte_sum['call_wall']:.0f}"
+                     if zdte_sum.get("call_wall") else "—"),
+                )
+                z3.metric(
+                    "0DTE Put Wall",
+                    (f"${zdte_sum['put_wall']:.0f}"
+                     if zdte_sum.get("put_wall") else "—"),
+                )
+                z4.metric(
+                    "0DTE HVL (pin)",
+                    (f"${zdte_sum['hvl']:.0f}"
+                     if zdte_sum.get("hvl") else "—"),
+                )
+                # Secondary row: gamma flip + strike counts
+                z5, z6, z7, z8 = st.columns(4)
+                gf = zdte_sum.get("gamma_flip")
+                z5.metric(
+                    "Zero Γ (0DTE)",
+                    f"${gf:.0f}" if gf else "—",
+                    (f"{(gf - spot)/spot*100:+.2f}% vs spot"
+                     if gf and spot else None),
+                )
+                z6.metric("# strikes", f"{zdte_sum.get('n_strikes', 0)}")
+                z7.metric("# calls 0DTE", f"{len(zdte_c)}")
+                z8.metric("# puts 0DTE", f"{len(zdte_p)}")
+                # Tighter focus for 0DTE — strikes are dense around ATM
+                fig_z = chart_gex_profile(
+                    zdte_df, spot, zdte_sum, f"{symbol} 0DTE",
+                    focus_pct=min(0.03, focus_pct),
+                )
                 if fig_z:
-                    st.plotly_chart(fig_z, use_container_width=True)
+                    st.plotly_chart(
+                        fig_z, use_container_width=True,
+                        key=f"0dte_chart_{symbol}_{len(zdte_df)}",
+                    )
                 _render_md(interpret_0dte(zdte_sum, spot))
             else:
-                st.caption("Sin datos 0DTE suficientes.")
+                st.caption(
+                    "Sin datos 0DTE procesables (gamma = 0 o cadena vacía)."
+                )
         else:
-            st.caption("No hay strikes con DTE = 0 en la cadena. "
-                       "Este módulo solo aplica a símbolos con expiraciones diarias (SPY/QQQ/SPX).")
+            st.caption(
+                "No hay strikes con DTE = 0 en la cadena. "
+                "Este módulo solo aplica a símbolos con expiraciones diarias "
+                "(SPY/QQQ/SPX). En SPX el filtro se activa solo de lunes a viernes."
+            )
 
     # ── 3. VANNA ────────────────────────────────────────────────────────────
     with tab_vex:
