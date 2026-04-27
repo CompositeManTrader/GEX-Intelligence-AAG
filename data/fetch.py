@@ -7,6 +7,7 @@ Schwab data layer.
 """
 from __future__ import annotations
 
+import datetime
 from typing import Optional, Tuple
 
 import pandas as pd
@@ -160,10 +161,13 @@ def fetch_quote(symbol: str) -> Tuple[dict, str]:
 # ─────────────────────────────────────────────────────────────────────────────
 #  Intraday — cached 5s, invalidated per minute via cache_bust arg.
 #
-#  Three robustness fixes vs the legacy version:
-#    (1) Always request `period+1` days from Schwab so we never miss the
-#        in-progress session — Schwab's `period=1` sometimes returns the last
-#        completed trading day instead of today's partial bars.
+#  Robustness fixes vs the legacy version:
+#    (1) Use **explicit `startDate` + `endDate`** (epoch-ms) instead of
+#        `period`+`periodType=day`. Schwab's `period=N` semantics return
+#        "the last N COMPLETED trading sessions" — meaning during a live
+#        session it stops at yesterday's 16:00 close and DOES NOT include
+#        today's partial bars. Pinning `endDate` to *now* forces today's
+#        in-progress session into the response.
 #    (2) Group/filter by **Eastern Time** (the market's clock) — not Mexico
 #        City — so "today" matches the current US trading session even when
 #        the user is in a different timezone.
@@ -195,14 +199,24 @@ def fetch_intraday(symbol: str, freq_min: int = 1,
     """
     _ = cache_bust  # noqa: F841 — only used to vary the cache key
     try:
-        # Ask for an extra day so today's partial session is never missing.
-        api_period = min(max(int(days) + 1, 2), 10)
+        # Explicit window: from N+2 calendar days ago (covers weekends +
+        # holidays) up to RIGHT NOW. endDate must include today or Schwab
+        # truncates at the previous session's 16:00.
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        end_ms = int(now_utc.timestamp() * 1000)
+        # +3 days padding handles weekends so days=1 still lands on the
+        # previous session even after Friday → Monday.
+        lookback_days = max(int(days), 1) + 3
+        start_dt = now_utc - datetime.timedelta(days=lookback_days)
+        start_ms = int(start_dt.timestamp() * 1000)
+
         r = _api_get("/marketdata/v1/pricehistory", params={
             "symbol": symbol,
             "periodType": "day",
-            "period": str(api_period),
             "frequencyType": "minute",
             "frequency": str(int(freq_min)),
+            "startDate": str(start_ms),
+            "endDate": str(end_ms),
             "needExtendedHoursData": "true" if include_extended else "false",
         })
         if r.status_code != 200:
@@ -227,6 +241,12 @@ def fetch_intraday(symbol: str, freq_min: int = 1,
         all_days = sorted(df["_d"].unique())
         keep = set(all_days[-max(1, int(days)):])
         df = df[df["_d"].isin(keep)].drop(columns=["_d"]).reset_index(drop=True)
+        log.info(
+            "intraday %s freq=%dm days_kept=%s last_bar=%s rows=%d",
+            symbol, freq_min, sorted(keep),
+            df["date"].iloc[-1].isoformat() if not df.empty else "—",
+            len(df),
+        )
         return df, ""
     except Exception as exc:
         log.exception("intraday error")
