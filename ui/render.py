@@ -10,6 +10,7 @@ Thin orchestration layer over:
 from __future__ import annotations
 
 import datetime
+import math
 import time
 from typing import Optional
 
@@ -52,11 +53,15 @@ from quant.exposures import (
     compute_cex_profile, compute_dex_profile, compute_gex_by_expiry,
     compute_gex_profile, compute_vex_profile, gex_curve_over_spot,
 )
+from quant.backtest import (
+    BacktestStats, Trade, compute_stats, run_backtest, trades_dataframe,
+)
 from quant.flow import (
     compute_hiro_by_strike, compute_hiro_snapshot, hiro_zscore,
     tick_hiro, update_hiro_history,
 )
 from quant.orderflow import tick_orderflow, update_orderflow_history
+from quant.signals import generate_signals as gen_signals
 from quant.levels import (
     atm_iv_interp, expected_move, iv_skew, iv_smile_by_expiry, max_pain,
     put_call_ratio, skew_metrics, term_structure,
@@ -559,6 +564,7 @@ def show_dashboard() -> None:
     TAB_LABELS = [
         "🎯 Overview",
         "📈 Intraday",
+        "🤖 Signals",
         "📊 GEX Total",
         "🌀 Orderflow",
         "🔥 GEX 0DTE",
@@ -574,9 +580,9 @@ def show_dashboard() -> None:
         "🕰️ Replay",
     ]
     tabs = st.tabs(TAB_LABELS)
-    (tab_overview, tab_intra, tab_gex, tab_orderflow, tab_0dte, tab_vex, tab_cex,
-     tab_dex, tab_hiro, tab_ts, tab_smile, tab_oi, tab_vol, tab_chain,
-     tab_replay) = tabs
+    (tab_overview, tab_intra, tab_signals, tab_gex, tab_orderflow, tab_0dte,
+     tab_vex, tab_cex, tab_dex, tab_hiro, tab_ts, tab_smile, tab_oi, tab_vol,
+     tab_chain, tab_replay) = tabs
 
     # ── OVERVIEW ────────────────────────────────────────────────────────────
     with tab_overview:
@@ -767,6 +773,299 @@ def show_dashboard() -> None:
                 (f"Error: `{intra_err}`" if intra_err
                  else "Mercado cerrado o símbolo sin datos.")
             )
+
+    # ── SIGNALS — live engine + walk-forward backtest ───────────────────────
+    with tab_signals:
+        _render_md('<p class="bb-header">'
+                   'SIGNALS  ·  Mean reversion en +Γ · Trend en −Γ</p>')
+        st.caption(
+            "Motor determinístico que dispara entradas según el régimen GEX. "
+            "<b>+Γ</b>: fade del VWAP cuando el spot se estira ±1.5σ. "
+            "<b>−Γ</b>: ruptura del Opening Range (primeros 30m). "
+            "Stops 0.5×ATR(14) o opposite-end OR. TP1 = VWAP/wall · TP2 = HVL/2×OR. "
+            "Salida forzada 15:50 ET — sin overnight.",
+            unsafe_allow_html=True,
+        )
+
+        # ── Live signals (latest bar) ──────────────────────────────────────
+        sig_bust = int(time.time() // 30)
+        live_df, live_err = fetch_intraday(
+            symbol, freq_min=1, days=1, cache_bust=sig_bust,
+        )
+
+        sigs_now: list = []
+        if not live_df.empty:
+            try:
+                sigs_now = gen_signals(
+                    live_df, gex_sum, symbol=symbol, hiro_z=hiro_z,
+                )
+            except Exception as exc:
+                log.exception("live signal generation failed")
+                st.error(f"Signal engine error: {exc}")
+
+        if sigs_now:
+            _render_md('<p class="bb-header" style="margin-top:0.6rem">'
+                       'SEÑALES ACTIVAS  ·  última vela</p>')
+            for s in sigs_now:
+                side_color = "#22c55e" if s.side == "LONG" else "#f43f5e"
+                strat_label = ("Mean Reversion" if s.strategy == "mean_reversion"
+                               else "Trend Breakout")
+                conf_pct = int(s.confidence * 100)
+                st.markdown(
+                    f'<div style="background:rgba(15,17,24,0.85);'
+                    f'border:1px solid #1e2230;border-left:4px solid {side_color};'
+                    f'border-radius:6px;padding:0.9rem 1.1rem;margin:0.4rem 0;'
+                    f'font-family:JetBrains Mono,monospace">'
+                    f'<div style="display:flex;justify-content:space-between;'
+                    f'align-items:center;margin-bottom:0.5rem">'
+                    f'<div>'
+                    f'<span style="color:{side_color};font-weight:800;'
+                    f'font-size:1.1rem;letter-spacing:0.05em">{s.side}</span>'
+                    f'<span style="color:#9ca3af;margin-left:0.6rem;'
+                    f'font-size:0.85rem">{strat_label}</span>'
+                    f'</div>'
+                    f'<div style="color:#06b6d4;font-size:0.78rem">'
+                    f'confidence {conf_pct}%</div></div>'
+                    f'<div style="display:grid;grid-template-columns:repeat(5,1fr);'
+                    f'gap:0.6rem;font-size:0.78rem">'
+                    f'<div><span style="color:#6b7280;font-size:0.62rem;'
+                    f'letter-spacing:0.12em;text-transform:uppercase">Entry</span>'
+                    f'<br><b style="color:#e5e7eb">${s.entry:.2f}</b></div>'
+                    f'<div><span style="color:#6b7280;font-size:0.62rem;'
+                    f'letter-spacing:0.12em;text-transform:uppercase">Stop</span>'
+                    f'<br><b style="color:#f43f5e">${s.stop:.2f}</b></div>'
+                    f'<div><span style="color:#6b7280;font-size:0.62rem;'
+                    f'letter-spacing:0.12em;text-transform:uppercase">TP1</span>'
+                    f'<br><b style="color:#22c55e">${s.target1:.2f}</b>'
+                    f'<span style="color:#6b7280"> · {s.rr_target1:.1f}R</span></div>'
+                    f'<div><span style="color:#6b7280;font-size:0.62rem;'
+                    f'letter-spacing:0.12em;text-transform:uppercase">TP2</span>'
+                    f'<br><b style="color:#22c55e">${s.target2:.2f}</b>'
+                    f'<span style="color:#6b7280"> · {s.rr_target2:.1f}R</span></div>'
+                    f'<div><span style="color:#6b7280;font-size:0.62rem;'
+                    f'letter-spacing:0.12em;text-transform:uppercase">1R</span>'
+                    f'<br><b style="color:#a855f7">${s.r_unit:.2f}</b></div>'
+                    f'</div>'
+                    f'<div style="color:#9ca3af;font-size:0.72rem;margin-top:0.6rem">'
+                    f'{s.rationale}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.info(
+                "Sin señales activas en esta vela. El motor evalúa cada bar de "
+                "1 min y solo dispara cuando se cumple la confluencia régimen + "
+                "estiramiento + filtro HIRO."
+            )
+
+        # ── Backtest panel ─────────────────────────────────────────────────
+        st.markdown('<hr class="bb-divider">', unsafe_allow_html=True)
+        _render_md('<p class="bb-header">'
+                   'BACKTEST  ·  walk-forward sobre sesiones guardadas</p>')
+        st.caption(
+            "Replay bar-por-bar usando los snapshots SQLite. Sin look-ahead: "
+            "cada vela usa el último orderflow tick ≤ ese momento. Las salidas "
+            "asumen que si el bar tocó stop Y target en el mismo minuto, sale "
+            "primero el stop (conservador)."
+        )
+
+        bt_dates = available_replay_dates(symbol, lookback_days=60)
+        bt1, bt2, bt3 = st.columns([2, 1, 1])
+        with bt1:
+            sel_days = st.multiselect(
+                "📅 Días a backtestear",
+                options=bt_dates,
+                default=bt_dates[:5] if bt_dates else [],
+                help="Necesitas días con orderflow guardado. Deja varios para "
+                     "una muestra estadísticamente útil.",
+                key="bt_days",
+            )
+        with bt2:
+            bt_use_t2 = st.toggle(
+                "Usar TP2 (trail)", value=True,
+                help="Si ON: la operación cierra solo en TP2 o stop. "
+                     "Si OFF: cierra en TP1 (~1.5R por ganador).",
+                key="bt_use_t2",
+            )
+        with bt3:
+            run_bt = st.button("▶ Correr backtest",
+                               type="primary",
+                               use_container_width=True,
+                               key="bt_run")
+
+        if run_bt and sel_days:
+            with st.spinner(f"Backtesting {len(sel_days)} días…"):
+                # Pull intraday for each day separately, then concatenate.
+                from data.persistence import load_orderflow_history
+
+                all_trades: list[Trade] = []
+                for d in sorted(sel_days):
+                    of_day = load_orderflow_history(symbol, date=d, limit=5000)
+                    if not of_day:
+                        continue
+                    # We only have today's intraday in cache reliably; for
+                    # historical days we depend on Schwab returning N days.
+                    # Pull a wide window (10 days) and let backtest filter.
+                    bt_bust = int(time.time() // 60)
+                    bars_df, _err = fetch_intraday(
+                        symbol, freq_min=1, days=10,
+                        cache_bust=bt_bust,
+                    )
+                    if bars_df.empty:
+                        continue
+                    # Filter to the requested day
+                    from quant.signals import _ensure_et
+                    et_df = _ensure_et(bars_df)
+                    target_date = pd.to_datetime(d).date()
+                    day_df = et_df[et_df["_et"].dt.date == target_date]
+                    if day_df.empty:
+                        st.warning(
+                            f"No hay velas en cache para {d}. "
+                            f"Los días a backtestear deben estar dentro de "
+                            f"los últimos 10 días que devuelve Schwab."
+                        )
+                        continue
+                    trades, _ = run_backtest(
+                        day_df, of_day, symbol=symbol,
+                        use_target2=bt_use_t2,
+                    )
+                    all_trades.extend(trades)
+
+                stats = compute_stats(all_trades)
+
+            if not all_trades:
+                st.warning(
+                    "No se generaron operaciones. Posibles causas: pocos "
+                    "snapshots de orderflow, régimen siempre NEUTRAL, o el "
+                    "spot no estiró nunca ±1.5σ."
+                )
+            else:
+                # ── Headline stats ─────────────────────────────────────────
+                k1, k2, k3, k4, k5, k6 = st.columns(6)
+                k1.metric("Trades", stats.trades)
+                k2.metric("Win rate",
+                          f"{stats.win_rate*100:.1f}%",
+                          f"{stats.wins}W / {stats.losses}L")
+                k3.metric("Avg R", f"{stats.avg_r:+.2f}R",
+                          help="Expectancy por trade en R-multiples.")
+                k4.metric("Sum R", f"{stats.sum_r:+.2f}R",
+                          help="Total cumulativo (= P&L en unidades de 1R).")
+                pf_str = (f"{stats.profit_factor:.2f}"
+                          if math.isfinite(stats.profit_factor) else "∞")
+                k5.metric("Profit factor", pf_str,
+                          help="|gross win| / |gross loss|. >1.5 ya es bueno.")
+                k6.metric("Sharpe (R)",
+                          f"{stats.sharpe:+.2f}",
+                          help="mean(R) / std(R) × √N — Sharpe-like sobre R.")
+
+                k7, k8, k9, k10 = st.columns(4)
+                k7.metric("Max drawdown", f"-{stats.max_drawdown_r:.2f}R")
+                k8.metric("Best trade", f"{stats.best_trade_r:+.2f}R")
+                k9.metric("Worst trade", f"{stats.worst_trade_r:+.2f}R")
+                k10.metric("Avg bars held", f"{stats.avg_bars_held:.0f} min")
+
+                # ── Equity curve ───────────────────────────────────────────
+                if stats.equity_curve:
+                    import plotly.graph_objects as go
+                    eq_fig = go.Figure()
+                    eq_fig.add_trace(go.Scatter(
+                        x=list(range(1, len(stats.equity_curve) + 1)),
+                        y=stats.equity_curve,
+                        mode="lines+markers",
+                        line=dict(color="#06b6d4", width=2),
+                        marker=dict(size=5),
+                        fill="tozeroy",
+                        fillcolor="rgba(6,182,212,0.1)",
+                        name="Cumulative R",
+                    ))
+                    eq_fig.update_layout(
+                        title="Equity curve (cumulative R-multiples)",
+                        height=320,
+                        paper_bgcolor="#0a0d14",
+                        plot_bgcolor="#0e1019",
+                        font=dict(family="JetBrains Mono", color="#e5e7eb",
+                                  size=11),
+                        margin=dict(l=40, r=40, t=40, b=40),
+                        xaxis=dict(title="Trade #",
+                                   gridcolor="rgba(255,255,255,0.05)"),
+                        yaxis=dict(title="Cumulative R",
+                                   gridcolor="rgba(255,255,255,0.05)",
+                                   zerolinecolor="rgba(255,255,255,0.2)"),
+                    )
+                    st.plotly_chart(eq_fig, use_container_width=True,
+                                    key="bt_equity_curve")
+
+                # ── Breakdown tables ───────────────────────────────────────
+                br1, br2 = st.columns(2)
+                with br1:
+                    st.markdown("**Por estrategia**")
+                    if stats.by_strategy:
+                        st.dataframe(
+                            pd.DataFrame(stats.by_strategy).T.reset_index().rename(
+                                columns={"index": "strategy"}),
+                            use_container_width=True, hide_index=True,
+                        )
+                with br2:
+                    st.markdown("**Por régimen**")
+                    if stats.by_regime:
+                        st.dataframe(
+                            pd.DataFrame(stats.by_regime).T.reset_index().rename(
+                                columns={"index": "regime"}),
+                            use_container_width=True, hide_index=True,
+                        )
+
+                # ── R-multiple histogram ───────────────────────────────────
+                import plotly.graph_objects as go
+                rs = [t.r_multiple for t in all_trades]
+                hist_fig = go.Figure()
+                hist_fig.add_trace(go.Histogram(
+                    x=rs,
+                    nbinsx=30,
+                    marker=dict(
+                        color=["rgba(244,63,94,0.7)" if r < 0
+                               else "rgba(34,197,94,0.7)" for r in rs],
+                        line=dict(color="rgba(255,255,255,0.1)", width=1),
+                    ),
+                ))
+                hist_fig.update_layout(
+                    title="Distribución de R-multiples",
+                    height=300,
+                    paper_bgcolor="#0a0d14",
+                    plot_bgcolor="#0e1019",
+                    font=dict(family="JetBrains Mono", color="#e5e7eb",
+                              size=11),
+                    margin=dict(l=40, r=40, t=40, b=40),
+                    xaxis=dict(title="R-multiple",
+                               gridcolor="rgba(255,255,255,0.05)"),
+                    yaxis=dict(title="Frecuencia",
+                               gridcolor="rgba(255,255,255,0.05)"),
+                )
+                st.plotly_chart(hist_fig, use_container_width=True,
+                                key="bt_r_histogram")
+
+                # ── Trade log ──────────────────────────────────────────────
+                _render_md('<p class="bb-header" style="margin-top:1rem">'
+                           'TRADE LOG</p>')
+                trades_df = trades_dataframe(all_trades)
+                # Friendly column order
+                cols_keep = ["timestamp_open", "timestamp_close", "side",
+                             "strategy", "regime", "entry", "stop",
+                             "target1", "target2", "exit_price",
+                             "exit_reason", "r_multiple", "pnl_pts",
+                             "bars_held"]
+                cols_keep = [c for c in cols_keep if c in trades_df.columns]
+                st.dataframe(trades_df[cols_keep], use_container_width=True,
+                             hide_index=True)
+
+                # CSV export
+                csv_bytes = trades_df.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    "📥 Descargar trade log (CSV)",
+                    data=csv_bytes,
+                    file_name=f"backtest_{symbol}_{datetime.date.today()}.csv",
+                    mime="text/csv",
+                    key="bt_csv_download",
+                )
 
     # ── 1. GEX TOTAL ────────────────────────────────────────────────────────
     with tab_gex:
