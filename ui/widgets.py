@@ -394,3 +394,189 @@ def _box_err(msg: str) -> str:
 
 def _card_err(msg: str) -> str:
     return _box_err(f"🤖 Trade Setup Card — {msg}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  TRADING MODE  —  single-screen futures-ready view
+# ─────────────────────────────────────────────────────────────────────────────
+def trading_hero(display_root: str, chain_symbol: str,
+                 spot: float, fut_spec, regime: Optional[str],
+                 net_gex_bn: Optional[float], hiro_z: Optional[float]) -> str:
+    """Hero header: enormous price, futures-equivalent, régimen pill."""
+    fut_px = (spot * fut_spec.etf_ratio) if fut_spec else None
+    fut_label = (
+        f'<div style="font-size:1.2rem;color:#06b6d4;'
+        f'letter-spacing:0.05em;margin-top:-0.4rem">'
+        f'≈ {fut_px:,.2f} {display_root}'
+        f'</div>'
+    ) if fut_spec and fut_px else ""
+
+    regime_color = {
+        "POSITIVE": "#22c55e",
+        "NEGATIVE": "#f43f5e",
+        "NEUTRAL": "#f59e0b",
+    }.get(regime or "NEUTRAL", "#9ca3af")
+
+    gex_str = (f"${net_gex_bn:+.2f}B" if net_gex_bn is not None else "—")
+    hiro_str = (f"{hiro_z:+.2f}σ" if hiro_z is not None else "—")
+    hiro_color = (
+        "#22c55e" if (hiro_z or 0) > 0.5
+        else "#f43f5e" if (hiro_z or 0) < -0.5
+        else "#9ca3af"
+    )
+
+    return _html(f"""
+<div style="background:linear-gradient(135deg,#0a0d14 0%,#10131c 100%);
+            border:1px solid #1e2230;border-radius:8px;padding:1.4rem 1.6rem;
+            margin:0.6rem 0 1.2rem;font-family:JetBrains Mono,monospace;">
+  <div style="display:flex;justify-content:space-between;align-items:flex-end;
+              gap:2rem;flex-wrap:wrap;">
+    <div>
+      <div style="font-size:0.65rem;color:#6b7280;letter-spacing:0.18em;
+                  text-transform:uppercase;margin-bottom:0.2rem">
+        {chain_symbol}{' &middot; ' + display_root if fut_spec else ''}
+      </div>
+      <div style="font-size:3.2rem;font-weight:700;color:#e5e7eb;
+                  line-height:1;letter-spacing:-0.02em">
+        ${spot:,.2f}
+      </div>
+      {fut_label}
+    </div>
+    <div style="display:flex;gap:1.2rem;font-size:0.78rem;align-items:center;">
+      <div style="text-align:right">
+        <div style="color:#6b7280;font-size:0.62rem;letter-spacing:0.14em;
+                    text-transform:uppercase">Régimen</div>
+        <div style="color:{regime_color};font-size:1.1rem;font-weight:700">
+          {regime or '—'} Γ
+        </div>
+      </div>
+      <div style="text-align:right">
+        <div style="color:#6b7280;font-size:0.62rem;letter-spacing:0.14em;
+                    text-transform:uppercase">Net GEX</div>
+        <div style="color:{regime_color};font-size:1.1rem;font-weight:700">
+          {gex_str}
+        </div>
+      </div>
+      <div style="text-align:right">
+        <div style="color:#6b7280;font-size:0.62rem;letter-spacing:0.14em;
+                    text-transform:uppercase">HIRO z</div>
+        <div style="color:{hiro_color};font-size:1.1rem;font-weight:700">
+          {hiro_str}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+""")
+
+
+def levels_strip(spot: float, fut_spec,
+                 cw: Optional[float], pw: Optional[float],
+                 gf: Optional[float], hvl: Optional[float],
+                 mp: Optional[float]) -> str:
+    """Wide strip with all key levels in $ (cash) and futures points distance.
+    Designed for at-a-glance reading next to a DOM."""
+    if fut_spec is None:
+        ratio = 1.0
+        ppt = 1.0
+        pt_label = "$"
+    else:
+        ratio = fut_spec.etf_ratio
+        ppt = fut_spec.point_value
+        pt_label = f"{fut_spec.root}pts"
+
+    def _row(name: str, level: Optional[float], color: str, role: str) -> str:
+        if level is None:
+            val_str = "—"
+            dist_str = ""
+            dollars = ""
+        else:
+            val_str = f"${level:,.2f}"
+            pts = (level - spot) * ratio
+            dist_str = f"{pts:+.1f} {pt_label}"
+            dollars = (f"<span style='color:#6b7280;font-size:0.60rem'>"
+                       f"  ${pts*ppt:+,.0f}/c</span>")
+        return _html(f"""
+<div style="display:flex;justify-content:space-between;align-items:center;
+            padding:0.55rem 0.9rem;border-left:3px solid {color};
+            background:rgba(15,17,24,0.7);margin-bottom:0.25rem;
+            border-radius:0 4px 4px 0">
+  <div style="display:flex;flex-direction:column;gap:0.05rem">
+    <div style="color:#6b7280;font-size:0.58rem;letter-spacing:0.14em;
+                text-transform:uppercase">{role}</div>
+    <div style="color:{color};font-size:0.95rem;font-weight:700">{name}</div>
+  </div>
+  <div style="display:flex;flex-direction:column;align-items:flex-end;gap:0.05rem">
+    <div style="color:#e5e7eb;font-size:0.95rem;font-weight:700;
+                font-family:JetBrains Mono,monospace">{val_str}</div>
+    <div style="color:{color};font-size:0.72rem;font-weight:600">
+      {dist_str}{dollars}
+    </div>
+  </div>
+</div>
+""")
+
+    body = ""
+    body += _row("CALL WALL",  cw,  "#22c55e", "Resistencia · cap arriba")
+    body += _row("HVL",        hvl, "#06b6d4", "Atractor · imán intradía")
+    body += _row("ZERO Γ",     gf,  "#a855f7", "Régimen · cruce = volatilidad")
+    body += _row("MAX PAIN",   mp,  "#f59e0b", "Pin · cierre objetivo")
+    body += _row("PUT WALL",   pw,  "#f43f5e", "Soporte · cap abajo")
+    return body
+
+
+def position_sizer(account_size: float, risk_pct: float,
+                   stop_pts: float, fut_spec) -> str:
+    """Tiny calculator: dado tamaño de cuenta, %riesgo y stop en puntos,
+    recomienda contratos. Solo aplica si el símbolo es un futuro."""
+    if fut_spec is None:
+        return _box_err(
+            "Position Sizer disponible solo para futuros (ES/NQ/RTY/YM/MES/MNQ/M2K/MYM)."
+        )
+    risk_dollars = account_size * (risk_pct / 100.0)
+    risk_per_contract = stop_pts * fut_spec.point_value
+    if risk_per_contract <= 0:
+        contracts = 0
+    else:
+        contracts = int(risk_dollars / risk_per_contract)
+    notional_per = fut_spec.point_value * 100  # rough — uses 100pts as a stand-in
+    return _html(f"""
+<div style="background:rgba(15,17,24,0.85);border:1px solid #1e2230;
+            border-radius:6px;padding:0.9rem 1rem;
+            font-family:JetBrains Mono,monospace;">
+  <div style="color:#6b7280;font-size:0.62rem;letter-spacing:0.16em;
+              text-transform:uppercase;margin-bottom:0.5rem">
+    📐 Position Sizer · {fut_spec.root}
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem">
+    <div>
+      <div style="color:#6b7280;font-size:0.58rem">Cuenta</div>
+      <div style="color:#e5e7eb;font-size:1rem;font-weight:700">
+        ${account_size:,.0f}
+      </div>
+    </div>
+    <div>
+      <div style="color:#6b7280;font-size:0.58rem">Riesgo / trade</div>
+      <div style="color:#f59e0b;font-size:1rem;font-weight:700">
+        ${risk_dollars:,.0f} <span style="font-size:0.7rem">({risk_pct:.1f}%)</span>
+      </div>
+    </div>
+    <div>
+      <div style="color:#6b7280;font-size:0.58rem">Stop</div>
+      <div style="color:#f43f5e;font-size:1rem;font-weight:700">
+        {stop_pts:.1f} pts
+        <span style="color:#6b7280;font-size:0.65rem">
+          (${risk_per_contract:,.0f}/c)
+        </span>
+      </div>
+    </div>
+    <div>
+      <div style="color:#6b7280;font-size:0.58rem">Contratos</div>
+      <div style="color:#22c55e;font-size:1.6rem;font-weight:800;line-height:1">
+        {contracts}
+      </div>
+    </div>
+  </div>
+</div>
+""")
+

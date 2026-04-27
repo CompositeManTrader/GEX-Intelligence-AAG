@@ -191,6 +191,8 @@ def term_structure(c_all: pd.DataFrame, spot: float,
         atm = (atm_c + atm_p) / 2.0 if atm_p is not None else atm_c
         if atm > 0:
             rows.append({"Expiry": exp, "DTE": dte_val, "ATM_IV": round(float(atm), 2)})
+    if not rows:
+        return pd.DataFrame(columns=["Expiry", "DTE", "ATM_IV"])
     return pd.DataFrame(rows).sort_values("DTE").reset_index(drop=True)
 
 

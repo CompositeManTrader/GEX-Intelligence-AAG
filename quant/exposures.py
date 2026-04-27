@@ -411,6 +411,9 @@ def compute_gex_by_expiry(calls: pd.DataFrame, puts: pd.DataFrame, spot: float,
             "Put_GEX_M": p_g / 1e6,
             "Net_GEX_M": (c_g + p_g) / 1e6,
         })
+    if not rows:
+        return pd.DataFrame(columns=["Expiry", "DTE", "Call_GEX_M",
+                                     "Put_GEX_M", "Net_GEX_M"])
     return pd.DataFrame(rows).sort_values("DTE").reset_index(drop=True)
 
 

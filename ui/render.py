@@ -35,9 +35,19 @@ from charts.vol import (
     chart_greeks, chart_iv_hv_history, chart_iv_skew, chart_iv_smile,
     chart_oi_volume, chart_returns_dist, chart_term_structure, chart_vol_cone,
 )
-from config import CDMX_TZ, ET_TZ, SS, get_logger, market_status_et, sanitize_symbol
+from config import (
+    CDMX_TZ, ET_TZ, FUTURES_PREFER_INDEX, SS, dollars_per_point,
+    future_spec, get_logger, is_future, market_status_et, points_distance,
+    resolve_chain_symbol, sanitize_symbol,
+)
 from data.fetch import fetch_chain, fetch_intraday, fetch_price_history, fetch_quote
 from data.parse import by_expiry, clean, parse_chain
+from data.persistence import (
+    available_replay_dates, db_stats, load_daily_snapshots,
+    load_hiro_history, load_orderflow_history, load_recent_hiro,
+    load_recent_orderflow, persist_daily_snapshot, persist_hiro_tick,
+    persist_orderflow_tick,
+)
 from quant.exposures import (
     compute_cex_profile, compute_dex_profile, compute_gex_by_expiry,
     compute_gex_profile, compute_vex_profile, gex_curve_over_spot,
@@ -63,7 +73,10 @@ from ui.interpretations import (
     interpret_term_structure, interpret_vex, interpret_vol_analytics,
 )
 from ui.styles import CSS
-from ui.widgets import flip_zone_widget, trade_setup_card
+from ui.widgets import (
+    flip_zone_widget, levels_strip, position_sizer, trade_setup_card,
+    trading_hero,
+)
 
 log = get_logger("ui.render")
 
@@ -94,7 +107,9 @@ def show_dashboard() -> None:
     today = datetime.date.today()
 
     # ── TOP BAR ─────────────────────────────────────────────────────────────
-    b1, b2, b3, b4, b5, b6, b7 = st.columns([1.0, 1.4, 1.8, 1.0, 1.0, 0.6, 0.7])
+    b1, b2, b3, b4, b5, b8, b6, b7 = st.columns(
+        [1.0, 1.4, 1.6, 0.9, 0.9, 0.9, 0.6, 0.7]
+    )
     with b1:
         st.markdown(
             "<span style='font-family:JetBrains Mono,monospace;font-size:1rem;"
@@ -105,11 +120,24 @@ def show_dashboard() -> None:
     with b2:
         raw_sym = st.text_input(
             "sym", value=st.session_state.get(SS.SYMBOL, "SPY"),
-            placeholder="SPY, AAPL, QQQ…", label_visibility="collapsed",
+            placeholder="SPY · ES · NQ · AAPL…", label_visibility="collapsed",
         )
-        symbol = sanitize_symbol(raw_sym)
-        if raw_sym and not symbol:
+        display_root = sanitize_symbol(raw_sym)
+        if raw_sym and not display_root:
             st.warning("Símbolo inválido. Usa mayúsculas, puntos o guiones (ej. BRK.B).")
+        # Resolve futures roots (ES/NQ/RTY/YM/MES/MNQ/M2K/MYM) → chain symbol.
+        prefer_idx = st.session_state.get(SS.PREFER_INDEX, FUTURES_PREFER_INDEX)
+        symbol, fut_spec = resolve_chain_symbol(display_root, prefer_index=prefer_idx)
+        st.session_state[SS.FUTURE_ROOT] = display_root if fut_spec else None
+        if fut_spec:
+            chain_label = fut_spec.underlying if prefer_idx else fut_spec.etf_proxy
+            st.markdown(
+                f"<div style='font-family:JetBrains Mono,monospace;font-size:0.62rem;"
+                f"color:#06b6d4;letter-spacing:0.10em;line-height:1;margin-top:-0.4rem;'>"
+                f"▸ {display_root} → {chain_label} · ${fut_spec.point_value:.2f}/pt"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
     with b3:
         all_exps = st.session_state.get(SS.ALL_EXPS, ["—"])
         st.selectbox("exp", options=all_exps, label_visibility="collapsed",
@@ -121,6 +149,12 @@ def show_dashboard() -> None:
         )
     with b5:
         auto_refresh = st.toggle("Auto 30s", value=False, key=SS.AUTO_REFRESH)
+    with b8:
+        trading_mode = st.toggle(
+            "🎯 Trading", value=False, key=SS.TRADING_MODE,
+            help="Pantalla única para operar en vivo: precio gigante, niveles "
+                 "en puntos del futuro, position sizer y mini-chart.",
+        )
     with b6:
         if st.button("EXIT", use_container_width=True,
                      help="Cerrar sesión Schwab (mantiene login de app)"):
@@ -164,6 +198,20 @@ def show_dashboard() -> None:
                 "Focus ± % del spot", 3, 25, 8, step=1, format="±%d%%",
                 help="Rango de strikes en los charts. 8-10% estándar para índices.",
             ) / 100.0
+        # Futures-specific toggle
+        if fut_spec is not None:
+            prev = st.session_state.get(SS.PREFER_INDEX, FUTURES_PREFER_INDEX)
+            new = st.toggle(
+                f"📊 Usar cadena del índice ({fut_spec.underlying}) en vez del ETF "
+                f"({fut_spec.etf_proxy})",
+                value=prev,
+                help="Activa si tu cuenta Schwab tiene acceso a opciones de índice. "
+                     "ETF proxy es más confiable; índice cash refleja mejor el GEX dealer.",
+            )
+            if new != prev:
+                st.session_state[SS.PREFER_INDEX] = new
+                st.session_state.pop(SS.CHAIN_DATA, None)
+                st.rerun()
 
     st.markdown('<hr class="bb-divider">', unsafe_allow_html=True)
 
@@ -266,9 +314,15 @@ def show_dashboard() -> None:
     hiro_snap = compute_hiro_snapshot(calls_all, puts_all)
     hiro_tick = tick_hiro(calls_all, puts_all, spot)
     hist = st.session_state.get(SS.HIRO_HISTORY, [])
-    hist = update_hiro_history(hist, hiro_tick, max_len=200)
+    # Seed from SQLite on cold start so we don't lose the morning's data when
+    # the dashboard is reopened mid-session.
+    if not hist:
+        hist = load_recent_hiro(symbol, hours=8, limit=500)
+    hist = update_hiro_history(hist, hiro_tick, max_len=500)
     st.session_state[SS.HIRO_HISTORY] = hist
     hiro_z = hiro_zscore(hist)
+    # Best-effort persist (won't crash UI on DB lock)
+    persist_hiro_tick(symbol, hiro_tick)
 
     # ── DIAGNOSTICS ─────────────────────────────────────────────────────────
     with st.expander("🔍 Diagnóstico", expanded=False):
@@ -348,8 +402,146 @@ def show_dashboard() -> None:
     # ── ORDERFLOW: rolling history of dealer exposures (gexbot-style) ───────
     of_tick = tick_orderflow(spot, gex_sum, dex_sum, vex_sum)
     of_hist = st.session_state.get(SS.ORDERFLOW_HISTORY, [])
-    of_hist = update_orderflow_history(of_hist, of_tick, max_len=500)
+    if not of_hist:
+        of_hist = load_recent_orderflow(symbol, hours=8, limit=1000)
+    of_hist = update_orderflow_history(of_hist, of_tick, max_len=1000)
     st.session_state[SS.ORDERFLOW_HISTORY] = of_hist
+    persist_orderflow_tick(symbol, of_tick)
+    # Roll a daily snapshot row (idempotent upsert) so post-mortems work.
+    persist_daily_snapshot(symbol, spot, gex_sum, mp, iv_atm,
+                           extra={"display_root": display_root,
+                                  "future_root": st.session_state.get(SS.FUTURE_ROOT)})
+
+    # ─────────────────────────────────────────────────────────────────────────
+    #  TRADING MODE  —  single-screen view, futures-ready
+    # ─────────────────────────────────────────────────────────────────────────
+    if trading_mode:
+        regime_now = (gex_sum or {}).get("regime", "NEUTRAL")
+        net_bn_now = (gex_sum or {}).get("total_gex", 0) / 1e9 if gex_sum else None
+
+        # 1. Hero
+        chain_label = symbol
+        _render_md(trading_hero(
+            display_root=display_root or symbol,
+            chain_symbol=chain_label,
+            spot=spot, fut_spec=fut_spec,
+            regime=regime_now,
+            net_gex_bn=net_bn_now,
+            hiro_z=hiro_z,
+        ))
+
+        # 2. Levels strip + intraday chart side by side
+        tcol_levels, tcol_chart = st.columns([1.05, 2.0])
+        with tcol_levels:
+            _render_md(levels_strip(
+                spot=spot, fut_spec=fut_spec,
+                cw=(gex_sum or {}).get("call_wall"),
+                pw=(gex_sum or {}).get("put_wall"),
+                gf=(gex_sum or {}).get("gamma_flip"),
+                hvl=(gex_sum or {}).get("hvl"),
+                mp=mp,
+            ))
+            # Distance to flip in $ + pct
+            gf_now = (gex_sum or {}).get("gamma_flip")
+            if gf_now and spot:
+                dist_pct = (spot - gf_now) / spot * 100
+                dist_pts = (spot - gf_now) * (fut_spec.etf_ratio if fut_spec else 1.0)
+                color = "#22c55e" if dist_pct > 0.3 else (
+                    "#f43f5e" if dist_pct < -0.3 else "#f59e0b")
+                pt_lbl = (f"{fut_spec.root}pts" if fut_spec else "$pts")
+                st.markdown(
+                    f'<div style="font-family:JetBrains Mono,monospace;'
+                    f'font-size:0.78rem;color:#9ca3af;margin-top:0.4rem;'
+                    f'padding:0.5rem 0.7rem;background:rgba(15,17,24,0.7);'
+                    f'border-radius:4px;border-left:3px solid {color}">'
+                    f'Distancia a Zero Γ: '
+                    f'<span style="color:{color};font-weight:700">'
+                    f'{dist_pct:+.2f}% · {dist_pts:+.1f} {pt_lbl}'
+                    f'</span></div>',
+                    unsafe_allow_html=True,
+                )
+
+        with tcol_chart:
+            # Mini intraday chart with horizontal levels
+            mini_df, mini_err = fetch_intraday(symbol, freq_min=5, days=1)
+            if mini_err or mini_df.empty:
+                st.info(f"Sin datos intraday: {mini_err or 'cerrado'}")
+            else:
+                fig_int = render_intraday_chart(
+                    mini_df, spot, gex_sum, mp=mp,
+                    em_lo=em_lo, em_hi=em_hi, freq_min=5, symbol=symbol,
+                )
+                if fig_int is not None:
+                    st.plotly_chart(fig_int, use_container_width=True,
+                                    key="trading_mode_chart")
+                else:
+                    fig_sp = chart_session_profile(mini_df, spot)
+                    if fig_sp is not None:
+                        st.plotly_chart(fig_sp, use_container_width=True,
+                                        key="trading_mode_session")
+
+        # 3. Position sizer (only meaningful for futures)
+        if fut_spec is not None:
+            ps1, ps2, ps3 = st.columns(3)
+            with ps1:
+                acct = st.number_input(
+                    "💼 Tamaño de cuenta ($)",
+                    min_value=1000, max_value=10_000_000,
+                    value=int(st.session_state.get("trading_acct", 25000)),
+                    step=1000, key="trading_acct",
+                )
+            with ps2:
+                risk = st.slider(
+                    "🎯 Riesgo por trade (%)",
+                    0.1, 5.0,
+                    value=float(st.session_state.get("trading_risk", 1.0)),
+                    step=0.1, key="trading_risk",
+                )
+            with ps3:
+                # Default stop = distance to nearest wall
+                cw_now = (gex_sum or {}).get("call_wall")
+                pw_now = (gex_sum or {}).get("put_wall")
+                default_stop = 10.0
+                if fut_spec and cw_now and pw_now and spot:
+                    nearest = min(abs(cw_now - spot), abs(pw_now - spot))
+                    default_stop = max(2.0, nearest * fut_spec.etf_ratio)
+                stop = st.number_input(
+                    f"🛑 Stop ({fut_spec.root} pts)",
+                    min_value=0.25, max_value=200.0,
+                    value=float(default_stop),
+                    step=0.25, key="trading_stop",
+                )
+            _render_md(position_sizer(float(acct), float(risk),
+                                       float(stop), fut_spec))
+
+        # 4. Trade setup card (compact)
+        iv_hv_ratio = (analytics_full or {}).get("iv_hv_ratio") if analytics_full else None
+        _render_md(trade_setup_card(
+            symbol=symbol, spot=spot,
+            gex_sum=gex_sum, vex_sum=vex_sum, cex_sum=cex_sum, dex_sum=dex_sum,
+            hiro_snap=hiro_snap, hiro_z=hiro_z,
+            atm_iv=iv_atm, iv_hv_ratio=iv_hv_ratio,
+            em_lo=em_lo, em_hi=em_hi, dte=dte_v,
+        ))
+
+        # Footer + auto-refresh in trading mode
+        st.markdown(
+            f'<p class="footer" style="margin-top:1.5rem">TRADING MODE · '
+            f'{display_root or symbol} · '
+            f'{last_refresh.strftime("%H:%M:%S")} UTC</p>',
+            unsafe_allow_html=True,
+        )
+        if auto_refresh:
+            try:
+                from streamlit_autorefresh import st_autorefresh
+                count = st_autorefresh(interval=15_000, key="trading_autorefresh")
+                if count and count != st.session_state.get(SS.REFRESH_COUNT):
+                    st.session_state[SS.REFRESH_COUNT] = count
+                    st.session_state.pop(SS.CHAIN_DATA, None)
+                    st.rerun()
+            except ImportError:
+                pass
+        return
 
     # ─────────────────────────────────────────────────────────────────────────
     #  TABS  (named for readability — order here controls UI order)
@@ -369,10 +561,12 @@ def show_dashboard() -> None:
         "💰 Open Interest",
         "📊 Vol Analytics",
         "📋 Chain",
+        "🕰️ Replay",
     ]
     tabs = st.tabs(TAB_LABELS)
     (tab_overview, tab_intra, tab_gex, tab_orderflow, tab_0dte, tab_vex, tab_cex,
-     tab_dex, tab_hiro, tab_ts, tab_smile, tab_oi, tab_vol, tab_chain) = tabs
+     tab_dex, tab_hiro, tab_ts, tab_smile, tab_oi, tab_vol, tab_chain,
+     tab_replay) = tabs
 
     # ── OVERVIEW ────────────────────────────────────────────────────────────
     with tab_overview:
@@ -418,6 +612,41 @@ def show_dashboard() -> None:
             hdr += _kv("HVL", f"${hvl:.0f}" if hvl else "—", CYAN, sub="attractor")
             hdr += '</div>'
             _render_md(hdr)
+
+            # ── Futures-points overlay ─────────────────────────────────────
+            if fut_spec is not None and spot > 0:
+                ratio = fut_spec.etf_ratio
+                ppt = fut_spec.point_value
+                def _pts(level):
+                    if level is None:
+                        return None
+                    return (level - spot) * ratio
+                def _fmt(pts):
+                    if pts is None:
+                        return "—"
+                    return f"{pts:+.1f} pts"
+                def _fmt_dollar(pts):
+                    if pts is None:
+                        return None
+                    return f"${pts*ppt:+,.0f}/contrato"
+                pts_panel = '<div class="kpi-panel">'
+                pts_panel += _kv(f"{display_root} ≈",
+                                 f"{spot*ratio:,.1f}", CYAN,
+                                 sub=f"{fut_spec.name}")
+                pts_panel += _kv("Δ Call Wall", _fmt(_pts(cw)), GREEN,
+                                 sub=_fmt_dollar(_pts(cw)))
+                pts_panel += _kv("Δ Put Wall", _fmt(_pts(pw)), RED,
+                                 sub=_fmt_dollar(_pts(pw)))
+                pts_panel += _kv("Δ Zero Γ", _fmt(_pts(gf)), PURPLE,
+                                 sub=_fmt_dollar(_pts(gf)))
+                pts_panel += _kv("Δ HVL", _fmt(_pts(hvl)), CYAN,
+                                 sub=_fmt_dollar(_pts(hvl)))
+                pts_panel += _kv("Tick", f"${fut_spec.tick_value:.2f}",
+                                 "#9ca3af",
+                                 sub=f"{fut_spec.tick_size} pt")
+                pts_panel += '</div>'
+                _render_md(pts_panel)
+
         _render_md(interpret_gex_profile(gex_sum, spot))
         _render_md(interpret_hiro(hiro_snap, hiro_z, len(hist)))
 
@@ -1048,6 +1277,117 @@ def show_dashboard() -> None:
         mode = st.radio("Vista", ["both", "calls", "puts"], index=0, horizontal=True,
                         key="chain_mode", label_visibility="collapsed")
         _render_md(build_table(calls, puts, spot, mode))
+
+    # ── REPLAY MODE ─────────────────────────────────────────────────────────
+    with tab_replay:
+        _render_md('<p class="bb-header">REPLAY  ·  Sesiones guardadas en SQLite local</p>')
+        st.caption(
+            "Cada tick de Orderflow + HIRO se persiste en `~/.options_terminal/intraday.db`. "
+            "Selecciona un día anterior para revivir cómo evolucionaron walls + spot. "
+            "Útil para post-mortems y entrenar tu lectura de niveles."
+        )
+
+        rep_dates = available_replay_dates(symbol, lookback_days=60)
+        if not rep_dates:
+            st.info(
+                f"Aún no hay datos guardados para **{symbol}**. "
+                "Mantén el dashboard abierto durante una sesión y vuelve mañana — "
+                "los ticks se acumulan automáticamente.",
+                icon="📭",
+            )
+        else:
+            r1, r2, r3 = st.columns([1.5, 1.5, 1])
+            with r1:
+                today_str = datetime.date.today().isoformat()
+                # Pick most recent that ISN'T today (replay = past, not live)
+                default_idx = 0
+                for i, d in enumerate(rep_dates):
+                    if d != today_str:
+                        default_idx = i
+                        break
+                sel_date = st.selectbox(
+                    "📅 Día a revivir",
+                    options=rep_dates,
+                    index=default_idx,
+                    format_func=lambda d: f"{d}  ({'HOY' if d == today_str else d})",
+                    key=SS.REPLAY_DATE,
+                )
+            with r2:
+                rep_view = st.selectbox(
+                    "Vista",
+                    ["Orderflow stack", "DEX timeseries", "GEX timeseries",
+                     "Convexity (VEX)"],
+                    key="replay_view",
+                )
+            with r3:
+                st.markdown("<div style='height:0.4rem'></div>", unsafe_allow_html=True)
+                refresh = st.button("🔄 Recargar", use_container_width=True)
+                if refresh:
+                    st.rerun()
+
+            of_rep = load_orderflow_history(symbol, date=sel_date, limit=5000)
+            hi_rep = load_hiro_history(symbol, date=sel_date, limit=5000)
+
+            if not of_rep:
+                st.warning(f"No hay ticks de orderflow guardados para {symbol} en {sel_date}.")
+            else:
+                first_ts = of_rep[0]["timestamp"]
+                last_ts = of_rep[-1]["timestamp"]
+                rsum1, rsum2, rsum3, rsum4 = st.columns(4)
+                rsum1.metric("Ticks orderflow", f"{len(of_rep):,}")
+                rsum2.metric("Ticks HIRO", f"{len(hi_rep):,}")
+                rsum3.metric("Inicio (UTC)", first_ts[11:19] if first_ts else "—")
+                rsum4.metric("Fin (UTC)", last_ts[11:19] if last_ts else "—")
+
+                if rep_view == "Orderflow stack":
+                    fig = chart_orderflow_stack(of_rep, symbol=symbol)
+                elif rep_view == "DEX timeseries":
+                    fig = chart_dex_timeseries(of_rep, symbol=symbol)
+                elif rep_view == "GEX timeseries":
+                    fig = chart_gex_timeseries(of_rep, symbol=symbol)
+                else:
+                    fig = chart_convexity_timeseries(of_rep, symbol=symbol)
+
+                if fig is not None:
+                    st.plotly_chart(fig, use_container_width=True,
+                                    key=f"replay_{sel_date}_{rep_view}")
+                else:
+                    st.info("Vista no disponible para esta sesión.")
+
+        # ── Daily snapshots table ──────────────────────────────────────────
+        _render_md(
+            '<p class="bb-header" style="margin-top:1.5rem">'
+            'DAILY SNAPSHOTS  ·  últimos 30 días</p>'
+        )
+        snaps = load_daily_snapshots(symbol, days=30)
+        if not snaps:
+            st.info("Sin snapshots diarios todavía.")
+        else:
+            snap_df = pd.DataFrame(snaps)
+            keep_cols = ["date", "spot_close", "regime", "total_gex",
+                         "call_wall", "put_wall", "gamma_flip", "hvl",
+                         "max_pain", "iv_atm"]
+            snap_df = snap_df[[c for c in keep_cols if c in snap_df.columns]]
+            # Friendly formatting
+            if "total_gex" in snap_df.columns:
+                snap_df["total_gex_$B"] = (snap_df["total_gex"] / 1e9).round(2)
+                snap_df = snap_df.drop(columns=["total_gex"])
+            st.dataframe(snap_df, use_container_width=True, hide_index=True)
+
+        # ── DB stats panel ─────────────────────────────────────────────────
+        _render_md(
+            '<p class="bb-header" style="margin-top:1.5rem">'
+            'STORAGE  ·  estadísticas del DB local</p>'
+        )
+        stats = db_stats()
+        if stats:
+            s1, s2, s3, s4, s5 = st.columns(5)
+            s1.metric("Orderflow rows", f"{stats.get('orderflow_rows', 0):,}")
+            s2.metric("HIRO rows", f"{stats.get('hiro_rows', 0):,}")
+            s3.metric("Daily rows", f"{stats.get('daily_rows', 0):,}")
+            s4.metric("Símbolos", stats.get("symbols", 0))
+            s5.metric("Tamaño", f"{stats.get('size_mb', 0):.2f} MB")
+            st.caption(f"📂 `{stats.get('path', '')}`")
 
     # ── FOOTER ──────────────────────────────────────────────────────────────
     st.markdown('<hr class="bb-divider">', unsafe_allow_html=True)
