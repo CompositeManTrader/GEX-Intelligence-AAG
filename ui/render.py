@@ -15,6 +15,7 @@ import time
 from typing import Optional
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 from auth.schwab import (
@@ -61,7 +62,7 @@ from quant.flow import (
     tick_hiro, update_hiro_history,
 )
 from quant.orderflow import tick_orderflow, update_orderflow_history
-from quant.signals import generate_signals as gen_signals
+from quant.signals import _ensure_et, generate_signals as gen_signals
 from quant.levels import (
     atm_iv_interp, expected_move, iv_skew, iv_smile_by_expiry, max_pain,
     put_call_ratio, skew_metrics, term_structure,
@@ -895,9 +896,6 @@ def show_dashboard() -> None:
 
         if run_bt and sel_days:
             with st.spinner(f"Backtesting {len(sel_days)} días…"):
-                # Pull intraday for each day separately, then concatenate.
-                from data.persistence import load_orderflow_history
-
                 all_trades: list[Trade] = []
                 for d in sorted(sel_days):
                     of_day = load_orderflow_history(symbol, date=d, limit=5000)
@@ -914,7 +912,6 @@ def show_dashboard() -> None:
                     if bars_df.empty:
                         continue
                     # Filter to the requested day
-                    from quant.signals import _ensure_et
                     et_df = _ensure_et(bars_df)
                     target_date = pd.to_datetime(d).date()
                     day_df = et_df[et_df["_et"].dt.date == target_date]
@@ -966,7 +963,6 @@ def show_dashboard() -> None:
 
                 # ── Equity curve ───────────────────────────────────────────
                 if stats.equity_curve:
-                    import plotly.graph_objects as go
                     eq_fig = go.Figure()
                     eq_fig.add_trace(go.Scatter(
                         x=list(range(1, len(stats.equity_curve) + 1)),
@@ -1015,7 +1011,6 @@ def show_dashboard() -> None:
                         )
 
                 # ── R-multiple histogram ───────────────────────────────────
-                import plotly.graph_objects as go
                 rs = [t.r_multiple for t in all_trades]
                 hist_fig = go.Figure()
                 hist_fig.add_trace(go.Histogram(
