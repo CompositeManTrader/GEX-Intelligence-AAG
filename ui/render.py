@@ -462,8 +462,12 @@ def show_dashboard() -> None:
                 )
 
         with tcol_chart:
-            # Mini intraday chart with horizontal levels
-            mini_df, mini_err = fetch_intraday(symbol, freq_min=5, days=1)
+            # Mini intraday chart with horizontal levels — bust cache every 15s
+            # (matches the trading-mode autorefresh cadence below).
+            mini_bust = int(time.time() // 15)
+            mini_df, mini_err = fetch_intraday(
+                symbol, freq_min=5, days=1, cache_bust=mini_bust,
+            )
             if mini_err or mini_df.empty:
                 st.info(f"Sin datos intraday: {mini_err or 'cerrado'}")
             else:
@@ -472,13 +476,19 @@ def show_dashboard() -> None:
                     em_lo=em_lo, em_hi=em_hi, freq_min=5, symbol=symbol,
                 )
                 if fig_int is not None:
-                    st.plotly_chart(fig_int, use_container_width=True,
-                                    key="trading_mode_chart")
+                    mini_epoch = int(pd.Timestamp(mini_df["date"].iloc[-1]).timestamp())
+                    st.plotly_chart(
+                        fig_int, use_container_width=True,
+                        key=f"trading_mode_chart_{mini_epoch}",
+                    )
                 else:
                     fig_sp = chart_session_profile(mini_df, spot)
                     if fig_sp is not None:
-                        st.plotly_chart(fig_sp, use_container_width=True,
-                                        key="trading_mode_session")
+                        mini_epoch = int(pd.Timestamp(mini_df["date"].iloc[-1]).timestamp())
+                        st.plotly_chart(
+                            fig_sp, use_container_width=True,
+                            key=f"trading_mode_session_{mini_epoch}",
+                        )
 
         # 3. Position sizer (only meaningful for futures)
         if fut_spec is not None:
@@ -688,9 +698,16 @@ def show_dashboard() -> None:
             except ImportError:
                 pass
 
-        # Fetch directly — fetch_intraday already has @st.cache_data(ttl=20)
+        # cache_bust rotates every `intra_auto` seconds (or every 30s by
+        # default if auto is off) → guarantees a real Schwab refetch even
+        # if Streamlit's TTL eviction lags.
+        bust_window = max(int(intra_auto) if intra_auto else 30, 5)
+        bust = int(time.time() // bust_window)
         with st.spinner(f"Cargando velas {intra_freq}min…"):
-            intra_df, intra_err = fetch_intraday(symbol, intra_freq, intra_days)
+            intra_df, intra_err = fetch_intraday(
+                symbol, intra_freq, intra_days,
+                include_extended=False, cache_bust=bust,
+            )
 
         m_status, now_et_m = market_status_et()
         last_tick = (intra_df["date"].iloc[-1]
@@ -715,7 +732,12 @@ def show_dashboard() -> None:
             if fig_intra:
                 # Unique key forces the component to remount on each refresh
                 # so the Plotly widget receives fresh data instead of diffing.
-                chart_key = f"intra_chart_{symbol}_{intra_freq}_{len(intra_df)}"
+                # We include both row count AND last-tick epoch so a single
+                # in-place candle update (close changes, no new bar) still
+                # remounts the chart.
+                last_epoch = int(pd.Timestamp(intra_df["date"].iloc[-1]).timestamp())
+                chart_key = (f"intra_chart_{symbol}_{intra_freq}"
+                             f"_{len(intra_df)}_{last_epoch}")
                 st.plotly_chart(fig_intra, use_container_width=True, key=chart_key)
             # Session profile below candles
             _render_md('<p class="bb-header" style="margin-top:0.6rem">'
@@ -726,8 +748,11 @@ def show_dashboard() -> None:
             )
             fig_sp = chart_session_profile(intra_df, symbol)
             if fig_sp:
-                st.plotly_chart(fig_sp, use_container_width=True,
-                                key=f"sp_chart_{symbol}_{len(intra_df)}")
+                sp_epoch = int(pd.Timestamp(intra_df["date"].iloc[-1]).timestamp())
+                st.plotly_chart(
+                    fig_sp, use_container_width=True,
+                    key=f"sp_chart_{symbol}_{len(intra_df)}_{sp_epoch}",
+                )
             # Manual refresh button
             if st.button("↺ Refresh velas ahora", key="intra_refresh_btn"):
                 try:
@@ -792,8 +817,12 @@ def show_dashboard() -> None:
 
         if not gex_df.empty and gex_sum:
             if gex_style == "gexbot":
-                # Fetch intraday (cache-hit if already loaded in Intraday tab)
-                intra_for_gex, _ierr = fetch_intraday(symbol, 5, 1)
+                # Fetch intraday (cache-hit if already loaded in Intraday tab).
+                # Bust window of 30s aligns with the global auto-refresh.
+                gex_bust = int(time.time() // 30)
+                intra_for_gex, _ierr = fetch_intraday(
+                    symbol, 5, 1, cache_bust=gex_bust,
+                )
                 fig_gex = chart_gex_gexbot_style(
                     gex_df, spot, gex_sum, symbol,
                     intraday_df=intra_for_gex,

@@ -18,6 +18,7 @@ from urllib3.util.retry import Retry
 from auth.schwab import refresh_access_token
 from config import (
     CDMX_TZ,
+    ET_TZ,
     HTTP_BACKOFF,
     HTTP_RETRIES,
     HTTP_TIMEOUT,
@@ -157,20 +158,52 @@ def fetch_quote(symbol: str) -> Tuple[dict, str]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Intraday — cached 8s (agresivo: el auto-refresh de la tab es de 10-20s,
-#  así que con ttl=8 garantizamos que cada tick de refresh re-pega a Schwab).
+#  Intraday — cached 5s, invalidated per minute via cache_bust arg.
+#
+#  Three robustness fixes vs the legacy version:
+#    (1) Always request `period+1` days from Schwab so we never miss the
+#        in-progress session — Schwab's `period=1` sometimes returns the last
+#        completed trading day instead of today's partial bars.
+#    (2) Group/filter by **Eastern Time** (the market's clock) — not Mexico
+#        City — so "today" matches the current US trading session even when
+#        the user is in a different timezone.
+#    (3) Accept a `cache_bust` kwarg from the caller (a value that rotates
+#        every N seconds, e.g. `int(time.time() // 30)`). Different value =
+#        different cache key, guaranteeing a real refresh on each tick even
+#        if Streamlit's TTL eviction is sluggish.
 # ─────────────────────────────────────────────────────────────────────────────
-@st.cache_data(ttl=8, show_spinner=False)
+@st.cache_data(ttl=5, show_spinner=False)
 def fetch_intraday(symbol: str, freq_min: int = 1,
-                   days: int = 1) -> Tuple[pd.DataFrame, str]:
+                   days: int = 1,
+                   include_extended: bool = False,
+                   cache_bust: int = 0) -> Tuple[pd.DataFrame, str]:
+    """Fetch intraday OHLCV bars from Schwab.
+
+    Parameters
+    ----------
+    symbol : str
+        Ticker (already resolved if originally a futures root).
+    freq_min : int
+        Bar resolution in minutes (1, 5, 15, 30).
+    days : int
+        How many trading days of history to keep (filtered ET-day-wise).
+    include_extended : bool
+        If True, request pre-market + after-hours bars.
+    cache_bust : int
+        Rotating integer used purely to vary the cache key. Pass
+        `int(time.time() // N)` to force a fresh fetch every N seconds.
+    """
+    _ = cache_bust  # noqa: F841 — only used to vary the cache key
     try:
+        # Ask for an extra day so today's partial session is never missing.
+        api_period = min(max(int(days) + 1, 2), 10)
         r = _api_get("/marketdata/v1/pricehistory", params={
             "symbol": symbol,
             "periodType": "day",
-            "period": str(min(max(int(days), 1), 10)),
+            "period": str(api_period),
             "frequencyType": "minute",
             "frequency": str(int(freq_min)),
-            "needExtendedHoursData": "false",
+            "needExtendedHoursData": "true" if include_extended else "false",
         })
         if r.status_code != 200:
             try:
@@ -189,9 +222,10 @@ def fetch_intraday(symbol: str, freq_min: int = 1,
         df["date"] = pd.to_datetime(df["datetime"], unit="ms", utc=True)
         df = df[["date", "open", "high", "low", "close", "volume"]].copy()
         df = df.sort_values("date").reset_index(drop=True)
-        df["_d"] = df["date"].dt.tz_convert(CDMX_TZ).dt.date
+        # Group by ET trading day so the chart aligns with the US session.
+        df["_d"] = df["date"].dt.tz_convert(ET_TZ).dt.date
         all_days = sorted(df["_d"].unique())
-        keep = set(all_days[-max(1, days):])
+        keep = set(all_days[-max(1, int(days)):])
         df = df[df["_d"].isin(keep)].drop(columns=["_d"]).reset_index(drop=True)
         return df, ""
     except Exception as exc:
