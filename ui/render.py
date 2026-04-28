@@ -255,6 +255,10 @@ def show_dashboard() -> None:
         if not data or data.get("status") == "FAILED":
             st.warning(f"No se encontraron opciones para **{symbol}**.")
             return
+        # Detect whether we're switching symbols (vs auto-refreshing same one)
+        prev_sym = st.session_state.get(SS.LAST_SYM)
+        symbol_changed = prev_sym != symbol
+
         st.session_state[SS.CHAIN_DATA] = data
         st.session_state[SS.LAST_SYM] = symbol
         st.session_state[SS.LAST_STRIKES] = strike_count
@@ -268,10 +272,13 @@ def show_dashboard() -> None:
         ))
         st.session_state[SS.ALL_EXPS] = exps
         # Reset HIRO + Orderflow history when symbol changes (per-symbol series)
-        if st.session_state.get(SS.LAST_SYM) != symbol:
+        if symbol_changed:
             st.session_state.pop(SS.HIRO_HISTORY, None)
             st.session_state.pop(SS.ORDERFLOW_HISTORY, None)
-        st.rerun()
+            # Only rerun on a true symbol change so the SEL_EXP selectbox
+            # picks up the new ALL_EXPS list. Auto-refreshes on the same
+            # symbol skip this rerun → no flicker, no widget-state reset.
+            st.rerun()
 
     if SS.CHAIN_DATA not in st.session_state:
         st.markdown(
@@ -569,7 +576,7 @@ def show_dashboard() -> None:
                 if count and count != st.session_state.get(SS.REFRESH_COUNT):
                     st.session_state[SS.REFRESH_COUNT] = count
                     st.session_state.pop(SS.CHAIN_DATA, None)
-                    st.rerun()
+                    # No st.rerun() — the autorefresh tick is itself a rerun.
             except ImportError:
                 pass
         return
@@ -1083,37 +1090,58 @@ def show_dashboard() -> None:
             "spot intradía en cyan."
         )
 
-        # Style + view + zoom controls
+        # ── Style + view + zoom controls ───────────────────────────────────
+        # Defensive widget-state pattern: read the last-known value from
+        # session_state and pass it as the explicit `index=` so the
+        # selection survives every rerun (auto-refresh, button click, etc).
+        # `key=` alone is supposed to handle this, but Streamlit 1.x has
+        # known edge cases when widgets re-render inside a tab + columns
+        # layout — the explicit index is a belt-and-suspenders guarantee.
+        STYLE_OPTS = ["gexbot", "classic"]
+        VIEW_OPTS = ["all", "net", "call", "put"]
+        ZOOM_OPTS = ["tight", "near", "mid", "wide", "all"]
+
+        prev_style = st.session_state.get("gex_style_mode", "gexbot")
+        prev_view = st.session_state.get("gex_view_mode", "all")
+        prev_zoom = st.session_state.get("gex_zoom_mode")
+        if prev_zoom not in ZOOM_OPTS:
+            prev_zoom = "tight" if prev_style == "gexbot" else "mid"
+
         cgx0, cgx1, cgx2 = st.columns([1.3, 1.5, 1.8])
         with cgx0:
             gex_style = st.radio(
                 "Estilo",
-                options=["gexbot", "classic"],
+                options=STYLE_OPTS,
                 format_func=lambda s: {"gexbot": "GexBot", "classic": "Clásico"}[s],
-                horizontal=True, index=0, key="gex_style_mode",
+                horizontal=True,
+                index=STYLE_OPTS.index(prev_style),
+                key="gex_style_mode",
                 help="GexBot: barras horizontales con precio intradía superpuesto. "
                      "Clásico: barras horizontales sin overlay de precio.",
             )
         with cgx1:
             gex_view = st.radio(
                 "Vista",
-                options=["all", "net", "call", "put"],
+                options=VIEW_OPTS,
                 format_func=lambda v: {
                     "all": "Todos", "net": "Solo Net",
                     "call": "Solo Call", "put": "Solo Put",
                 }[v],
-                horizontal=True, key="gex_view_mode",
+                horizontal=True,
+                index=VIEW_OPTS.index(prev_view),
+                key="gex_view_mode",
             )
         with cgx2:
             gex_zoom = st.radio(
                 "Zoom",
-                options=["tight", "near", "mid", "wide", "all"],
+                options=ZOOM_OPTS,
                 format_func=lambda z: {
                     "tight": "Tight ±3%", "near": "Near ±5%",
                     "mid": "Mid ±10%", "wide": "Wide ±20%",
                     "all": "All strikes",
                 }[z],
-                horizontal=True, index=0 if gex_style == "gexbot" else 2,
+                horizontal=True,
+                index=ZOOM_OPTS.index(prev_zoom),
                 key="gex_zoom_mode",
             )
         gex_pct = {
@@ -1122,8 +1150,7 @@ def show_dashboard() -> None:
 
         if not gex_df.empty and gex_sum:
             if gex_style == "gexbot":
-                # Fetch intraday (cache-hit if already loaded in Intraday tab).
-                # Bust window of 30s aligns with the global auto-refresh.
+                # Bust cache every 30s to match the global auto-refresh.
                 gex_bust = int(time.time() // 30)
                 intra_for_gex, _ierr = fetch_intraday(
                     symbol, 5, 1, cache_bust=gex_bust,
@@ -1139,9 +1166,13 @@ def show_dashboard() -> None:
                     focus_pct=gex_pct, view=gex_view,
                 )
             if fig_gex:
+                # Stable component key: tied ONLY to the symbol + style.
+                # Changing view/zoom no longer remounts (Plotly diffs
+                # the trace list). Auto-refresh ALSO no longer remounts
+                # because the key doesn't include any time-rotating value.
                 st.plotly_chart(
                     fig_gex, use_container_width=True,
-                    key=f"gex_chart_{symbol}_{gex_style}_{gex_view}_{gex_zoom}",
+                    key=f"gex_chart_{symbol}_{gex_style}",
                 )
             _render_md(interpret_gex_profile(gex_sum, spot))
         else:
