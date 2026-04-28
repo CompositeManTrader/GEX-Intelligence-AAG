@@ -221,6 +221,21 @@ def show_dashboard() -> None:
 
     st.markdown('<hr class="bb-divider">', unsafe_allow_html=True)
 
+    # ── AUTO-REFRESH HANDLER (must run BEFORE chain load) ──────────────────
+    # Wiring the pop here means the in-flight rerun (started by
+    # st_autorefresh) immediately re-fetches the chain and re-renders.
+    # That avoids the double-rerun cycle (= visible flicker) the previous
+    # version had, AND keeps the data current within the same 30s window.
+    if auto_refresh:
+        try:
+            from streamlit_autorefresh import st_autorefresh
+            _ar_count = st_autorefresh(interval=30_000, key="chain_autorefresh")
+            if _ar_count and _ar_count != st.session_state.get(SS.REFRESH_COUNT):
+                st.session_state[SS.REFRESH_COUNT] = _ar_count
+                st.session_state.pop(SS.CHAIN_DATA, None)
+        except ImportError:
+            pass
+
     # ── LOAD CHAIN ──────────────────────────────────────────────────────────
     need_load = symbol and (
         st.session_state.get(SS.LAST_SYM) != symbol
@@ -482,18 +497,18 @@ def show_dashboard() -> None:
                     em_lo=em_lo, em_hi=em_hi, freq_min=5, symbol=symbol,
                 )
                 if fig_int is not None:
-                    mini_epoch = int(pd.Timestamp(mini_df["date"].iloc[-1]).timestamp())
+                    # Stable key → Plotly does smooth in-place data diff
+                    # instead of remounting the iframe (no flicker).
                     st.plotly_chart(
                         fig_int, use_container_width=True,
-                        key=f"trading_mode_chart_{mini_epoch}",
+                        key=f"trading_mode_chart_{symbol}",
                     )
                 else:
                     fig_sp = chart_session_profile(mini_df, spot)
                     if fig_sp is not None:
-                        mini_epoch = int(pd.Timestamp(mini_df["date"].iloc[-1]).timestamp())
                         st.plotly_chart(
                             fig_sp, use_container_width=True,
-                            key=f"trading_mode_session_{mini_epoch}",
+                            key=f"trading_mode_session_{symbol}",
                         )
 
         # 3. Position sizer (only meaningful for futures)
@@ -737,14 +752,11 @@ def show_dashboard() -> None:
                 freq_min=intra_freq, symbol=symbol,
             )
             if fig_intra:
-                # Unique key forces the component to remount on each refresh
-                # so the Plotly widget receives fresh data instead of diffing.
-                # We include both row count AND last-tick epoch so a single
-                # in-place candle update (close changes, no new bar) still
-                # remounts the chart.
-                last_epoch = int(pd.Timestamp(intra_df["date"].iloc[-1]).timestamp())
-                chart_key = (f"intra_chart_{symbol}_{intra_freq}"
-                             f"_{len(intra_df)}_{last_epoch}")
+                # Stable key → Plotly does an in-place data diff every
+                # rerun. The figure object itself is rebuilt each time
+                # (with fresh bars from fetch_intraday) so the chart
+                # updates smoothly without remounting the iframe.
+                chart_key = f"intra_chart_{symbol}_{intra_freq}"
                 st.plotly_chart(fig_intra, use_container_width=True, key=chart_key)
             # Session profile below candles
             _render_md('<p class="bb-header" style="margin-top:0.6rem">'
@@ -755,10 +767,9 @@ def show_dashboard() -> None:
             )
             fig_sp = chart_session_profile(intra_df, symbol)
             if fig_sp:
-                sp_epoch = int(pd.Timestamp(intra_df["date"].iloc[-1]).timestamp())
                 st.plotly_chart(
                     fig_sp, use_container_width=True,
-                    key=f"sp_chart_{symbol}_{len(intra_df)}_{sp_epoch}",
+                    key=f"sp_chart_{symbol}",
                 )
             # Manual refresh button
             if st.button("↺ Refresh velas ahora", key="intra_refresh_btn"):
@@ -1351,7 +1362,7 @@ def show_dashboard() -> None:
                 if fig_z:
                     st.plotly_chart(
                         fig_z, use_container_width=True,
-                        key=f"0dte_chart_{symbol}_{len(zdte_df)}",
+                        key=f"0dte_chart_{symbol}",
                     )
                 _render_md(interpret_0dte(zdte_sum, spot))
             else:
@@ -1722,26 +1733,12 @@ def show_dashboard() -> None:
         unsafe_allow_html=True,
     )
 
-    # ── AUTO-REFRESH ────────────────────────────────────────────────────────
+    # ── AUTO-REFRESH FOOTER  ────────────────────────────────────────────────
+    # All the refresh logic is handled at the top of the function (right
+    # after the chain symbol is resolved) so the pop+fetch+render happens
+    # in a single rerun. We just print a status caption here.
     if auto_refresh:
-        try:
-            from streamlit_autorefresh import st_autorefresh
-            count = st_autorefresh(interval=30_000, key="chain_autorefresh")
-            if count and count != st.session_state.get(SS.REFRESH_COUNT):
-                st.session_state[SS.REFRESH_COUNT] = count
-                st.session_state.pop(SS.CHAIN_DATA, None)
-                st.rerun()
-            st.caption("🔄 Auto-refresh activo cada 30s (no bloqueante).")
-        except ImportError:
-            elapsed = (datetime.datetime.now() - last_refresh).seconds
-            remaining = max(0, 30 - elapsed)
-            if remaining == 0:
-                st.session_state.pop(SS.CHAIN_DATA, None)
-                st.rerun()
-            else:
-                st.caption(f"🔄 Actualizando en {remaining}s…")
-                time.sleep(1)
-                st.rerun()
+        st.caption("🔄 Auto-refresh activo cada 30s · sin parpadeo.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

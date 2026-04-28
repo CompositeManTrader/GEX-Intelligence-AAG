@@ -175,5 +175,33 @@ h1, h2, h3 { color: #e0e0f0 !important; }
 
 .footer { text-align:center; font-size:0.65rem; color:#2a2a3a; margin-top:2rem;
           font-family:'JetBrains Mono',monospace; }
+
+/* ─── Anti-flicker on auto-refresh ───────────────────────────────────────
+ * When st_autorefresh fires every 30s, Streamlit shows a "RUNNING…" pill
+ * and re-paints status overlays. That visible flash is what you perceive
+ * as the chart blinking. We hide it.
+ *
+ * Plotly's <iframe> components with stable keys do an in-place data diff
+ * (no remount), so the chart itself updates smoothly underneath. */
+
+[data-testid="stStatusWidget"] { display: none !important; }
+[data-testid="stHeader"] { background: transparent !important; }
+.stDeployButton { display: none !important; }
+
+/* Suppress the brief opacity flicker while Streamlit re-renders the DOM:
+ * keep the chart container fully visible at all times. */
+.stPlotlyChart, [data-testid="stPlotlyChart"] {
+    transition: none !important;
+    opacity: 1 !important;
+}
+
+/* When the script reruns, Streamlit briefly ghosts already-rendered
+ * components. The selector below keeps them at full opacity throughout. */
+[data-stale="true"] { opacity: 1 !important; }
+
+/* Smooth spinner fade so any remaining loading indicator is less jarring */
+[data-testid="stSpinner"] {
+    transition: opacity 0.2s ease-in-out;
+}
 </style>
 """
