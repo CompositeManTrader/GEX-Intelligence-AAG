@@ -31,12 +31,13 @@ import datetime
 import json
 import os
 import sqlite3
+from datetime import timezone
 from pathlib import Path
 from typing import Optional
 
 import streamlit as st
 
-from config import get_logger
+from config import ET_TZ, get_logger
 
 log = get_logger("data.persistence")
 
@@ -125,7 +126,21 @@ def _conn() -> sqlite3.Connection:
 #  Internal helpers
 # ─────────────────────────────────────────────────────────────────────────────
 def _today_iso() -> str:
-    return datetime.datetime.utcnow().date().isoformat()
+    """Today as YYYY-MM-DD in *Eastern Time* — the market clock.
+
+    Using UTC date here would have classified late-session ET ticks
+    (15:00–16:00 ET in winter is 20:00–21:00 UTC, fine; but 16:00 ET in
+    summer becomes 20:00 UTC, still same day) — except it gets worse for
+    after-hours data: a tick at 18:30 ET = 23:30 UTC stays "today", but
+    20:30 ET = 00:30 next-UTC-day would be filed under tomorrow.
+    Trading-session correlation requires the market's clock.
+    """
+    return datetime.datetime.now(ET_TZ).date().isoformat()
+
+
+def _et_cutoff_iso(days: int) -> str:
+    """Return an ET-anchored cutoff timestamp for `days` ago, in ISO format."""
+    return (datetime.datetime.now(ET_TZ) - datetime.timedelta(days=days)).isoformat()
 
 
 def _safe_float(v) -> Optional[float]:
@@ -202,7 +217,7 @@ def load_recent_orderflow(symbol: str, hours: int = 8,
     in-memory history when the dashboard starts up mid-session."""
     if not symbol:
         return []
-    cutoff = (datetime.datetime.utcnow()
+    cutoff = (datetime.datetime.now(timezone.utc)
               - datetime.timedelta(hours=hours)).isoformat()
     try:
         c = _conn()
@@ -276,7 +291,7 @@ def load_recent_hiro(symbol: str, hours: int = 8,
                      limit: int = 1000) -> list[dict]:
     if not symbol:
         return []
-    cutoff = (datetime.datetime.utcnow()
+    cutoff = (datetime.datetime.now(timezone.utc)
               - datetime.timedelta(hours=hours)).isoformat()
     try:
         c = _conn()
@@ -344,7 +359,7 @@ def persist_daily_snapshot(symbol: str, spot: float,
 def load_daily_snapshots(symbol: str, days: int = 30) -> list[dict]:
     if not symbol:
         return []
-    cutoff = (datetime.datetime.utcnow().date()
+    cutoff = (datetime.datetime.now(ET_TZ).date()
               - datetime.timedelta(days=days)).isoformat()
     try:
         c = _conn()
@@ -367,7 +382,7 @@ def available_replay_dates(symbol: str, lookback_days: int = 60) -> list[str]:
     for `symbol`, most recent first. Used to populate the replay date picker."""
     if not symbol:
         return []
-    cutoff = (datetime.datetime.utcnow().date()
+    cutoff = (datetime.datetime.now(ET_TZ).date()
               - datetime.timedelta(days=lookback_days)).isoformat()
     try:
         c = _conn()
@@ -409,7 +424,7 @@ def db_stats() -> dict:
 
 def purge_old_ticks(keep_days: int = 30) -> int:
     """Delete tick data older than `keep_days`. Daily snapshots are kept."""
-    cutoff = (datetime.datetime.utcnow()
+    cutoff = (datetime.datetime.now(timezone.utc)
               - datetime.timedelta(days=keep_days)).isoformat()
     try:
         c = _conn()

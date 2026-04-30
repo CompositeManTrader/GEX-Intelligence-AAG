@@ -66,11 +66,17 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").round(dig)
 
-    # Schwab sometimes delivers IV as decimal, sometimes as pct — normalize.
+    # Schwab sometimes delivers IV as decimal (0.20 = 20%), sometimes as
+    # percent (20.0 = 20%). Distinguish by the *max* value, not the median:
+    # a chain with a few extreme tail strikes can have median IV<3 in
+    # percent (low-vol calm names like utility ETFs) and would have been
+    # mis-multiplied by 100 by the legacy heuristic. Real IV in decimal
+    # almost never exceeds 3.0 (300% vol); seeing any value above that
+    # means the data already arrived in percent.
     if "IV%" in df.columns:
         iv = pd.to_numeric(df["IV%"], errors="coerce")
-        # If values look like decimals (all <= 3.0) treat as decimal.
-        if iv.notna().any() and iv.dropna().median() < 3.0:
+        valid = iv.dropna()
+        if not valid.empty and float(valid.max()) <= 3.0:
             iv = iv * 100.0
         df["IV%"] = iv.round(2)
 

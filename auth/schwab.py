@@ -66,6 +66,29 @@ def refresh_access_token() -> None:
                   "refresh_token": tok["refresh_token"]},
             timeout=15,
         )
+    except requests.RequestException as exc:
+        # Transient network error — DO NOT log the user out. Leave the
+        # current (still valid for the margin) token in place; the next
+        # call will retry. Wiping tokens on every blip caused logout
+        # storms during minor connectivity hiccups.
+        log.warning("Token refresh network error (transient): %s", exc)
+        return
+
+    # Distinguish hard auth errors (401/400 invalid_grant) from transient
+    # 5xx so we only force re-login on the former.
+    if r.status_code in (400, 401, 403):
+        log.error("Token refresh hard-auth failure %s: %s",
+                  r.status_code, r.text[:200])
+        st.error("Sesión Schwab expirada. Reconéctate.")
+        st.session_state.pop(SS.TOKENS, None)
+        st.session_state.pop(SS.CONNECTED, None)
+        st.rerun()
+        return
+    if r.status_code >= 500:
+        log.warning("Token refresh transient %s — keeping current token",
+                    r.status_code)
+        return
+    try:
         r.raise_for_status()
         new = r.json()
         tok.update({
@@ -74,12 +97,10 @@ def refresh_access_token() -> None:
             "expiry": utcnow() + datetime.timedelta(seconds=new.get("expires_in", 1800)),
         })
         st.session_state[SS.TOKENS] = tok
-    except Exception as exc:
-        log.exception("Token refresh failed")
-        st.error(f"Token refresh failed: {exc}")
-        st.session_state.pop(SS.TOKENS, None)
-        st.session_state.pop(SS.CONNECTED, None)
-        st.rerun()
+    except Exception:
+        log.exception("Token refresh parse failure (status=%s)", r.status_code)
+        # Treat malformed response as transient; don't force-logout.
+        return
 
 
 def try_auto_connect() -> bool:
