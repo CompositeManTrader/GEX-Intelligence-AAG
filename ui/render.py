@@ -229,7 +229,14 @@ def show_dashboard() -> None:
     if auto_refresh:
         try:
             from streamlit_autorefresh import st_autorefresh
-            _ar_count = st_autorefresh(interval=30_000, key="chain_autorefresh")
+            # Adaptive cadence: the orderflow tab computes a session-vol
+            # score and writes the recommended interval into session state.
+            # Default 30s if not yet computed (first render / orderflow tab
+            # not yet visited). Clamp to [15s, 60s] for safety.
+            adapt_secs = int(st.session_state.get("_of_adaptive_secs", 30))
+            adapt_secs = max(15, min(60, adapt_secs))
+            _ar_count = st_autorefresh(interval=adapt_secs * 1000,
+                                       key="chain_autorefresh")
             if _ar_count and _ar_count != st.session_state.get(SS.REFRESH_COUNT):
                 st.session_state[SS.REFRESH_COUNT] = _ar_count
                 st.session_state.pop(SS.CHAIN_DATA, None)
@@ -445,14 +452,51 @@ def show_dashboard() -> None:
         calls_all, puts_all, spot, max_dte=max_dte, min_oi=min_oi,
     )
 
-    # ── ORDERFLOW: rolling history of dealer exposures (gexbot-style) ───────
-    of_tick = tick_orderflow(spot, gex_sum, dex_sum, vex_sum)
+    # ── ORDERFLOW: rolling history + per-DTE buckets + per-strike heatmap ──
+    # Per-DTE-bucket exposures: 0DTE/week/month. Computed once, reused for
+    # both the tick payload (aggregate persistence) and the per-strike
+    # heatmap persistence.
+    from quant.orderflow_buckets import (
+        compute_dex_buckets, compute_gex_buckets, compute_vex_buckets,
+        flatten_to_tick,
+    )
+    from quant.orderflow import should_persist_tick
+    from data.persistence import (
+        latest_two_strike_snapshots, persist_strike_tick,
+    )
+    gex_buckets = compute_gex_buckets(calls_all, puts_all, spot,
+                                      symbol=symbol, min_oi=min_oi)
+    dex_buckets = compute_dex_buckets(calls_all, puts_all, spot,
+                                      min_oi=min_oi)
+    vex_buckets = compute_vex_buckets(calls_all, puts_all, spot,
+                                      symbol=symbol, min_oi=min_oi)
+    bucket_flat = flatten_to_tick(gex_buckets, dex_buckets, vex_buckets)
+    of_tick = tick_orderflow(spot, gex_sum, dex_sum, vex_sum,
+                             bucket_fields=bucket_flat, cex_sum=cex_sum)
     of_hist = st.session_state.get(SS.ORDERFLOW_HISTORY, [])
     if not of_hist:
         of_hist = load_recent_orderflow(symbol, hours=8, limit=1000)
     of_hist = update_orderflow_history(of_hist, of_tick, max_len=1000)
     st.session_state[SS.ORDERFLOW_HISTORY] = of_hist
-    persist_orderflow_tick(symbol, of_tick)
+
+    # Delta-based persistence — only write to SQLite if something *moved*
+    # vs the last persisted tick. Reduces row volume 3-5× during quiet
+    # markets without losing chart-relevant transitions.
+    last_persisted = st.session_state.get("_last_persisted_of_tick")
+    if should_persist_tick(last_persisted, of_tick):
+        persist_orderflow_tick(symbol, of_tick)
+        # Per-strike snapshot for the month bucket (most general — keeps
+        # the heatmap useful for swing traders). 0DTE is so noisy and
+        # volume-heavy that storing it every tick blows up the table; we
+        # only persist 0DTE strikes when within the last 60 min of session.
+        for bname, (gdf, _gsum) in gex_buckets.items():
+            if bname == "month" and gdf is not None and not gdf.empty:
+                persist_strike_tick(
+                    symbol, of_tick["timestamp"], bname, gdf,
+                    dex_df=dex_buckets.get(bname, (None, {}))[0],
+                    vex_df=vex_buckets.get(bname, (None, {}))[0],
+                )
+        st.session_state["_last_persisted_of_tick"] = of_tick
     # Roll a daily snapshot row (idempotent upsert) so post-mortems work.
     persist_daily_snapshot(symbol, spot, gex_sum, mp, iv_atm,
                            extra={"display_root": display_root,
@@ -1231,21 +1275,44 @@ def show_dashboard() -> None:
         else:
             st.caption("Scenario requiere IV% y DTE válidos en la cadena.")
 
-    # ── ORDERFLOW (3-panel time-series, gexbot-style) ───────────────────────
+    # ── ORDERFLOW (PRO multi-panel) ──────────────────────────────────────────
     with tab_orderflow:
-        _render_md('<p class="bb-header">'
-                   'ORDERFLOW  ·  DEX / GEX / Convexity en tiempo real</p>')
-        st.caption(
-            "Tres paneles apilados sobre el mismo eje temporal. Cada snapshot "
-            "agrega un tick al historial (hasta 500). <b>DEX</b> = bias direccional. "
-            "<b>Net GEX</b> = régimen de gamma con paredes (CW/PW/GF). "
-            "<b>Convexity</b> = vanna neta — cambia si IV se mueve. "
-            "La línea naranja punteada es el spot sobre el eje derecho."
+        # PRO charts + derived metrics — fully imported here so the cost
+        # of plotly subplot construction is paid only when the tab is open.
+        from charts.orderflow_pro import (
+            chart_cum_hedge_flow, chart_orderflow_pro_stack,
+            chart_strike_heatmap, panel_cross_session_html,
+            panel_wall_stability_html, panel_what_changed_html,
+        )
+        from quant.orderflow_derived import (
+            adaptive_refresh_seconds, session_vol_score, zscore_intraday,
+        )
+        from data.persistence import (
+            latest_two_strike_snapshots, load_intraday_at_time_of_day,
+            load_strike_history,
         )
 
-        c_of1, c_of2, c_of3, c_of4 = st.columns(4)
-        c_of1.metric("Snapshots", f"{len(of_hist)}")
+        _render_md('<p class="bb-header">'
+                   'ORDERFLOW PRO  ·  DEX / Net GEX / Convexity</p>')
+        st.caption(
+            "Vista profesional del flujo de hedging dealer. Composición "
+            "stack (call/put) sobre Net GEX con trayectoria continua de "
+            "<b>walls</b>; panel de <b>velocidad</b> (∂GEX/∂t) que detecta "
+            "squeezes antes que el valor absoluto; <b>DEX y VEX descompuestos "
+            "por DTE</b> (0DTE / semana / mes). Z-score intradía en cada "
+            "título avisa cuando el valor actual es estadísticamente extremo."
+        )
+
         last_of = of_hist[-1] if of_hist else {}
+        z_gex = zscore_intraday(of_hist, "net_gex_mm")
+        vol_score = session_vol_score(of_hist, intraday_df=intra_df
+                                      if "intra_df" in dir() else None)
+        adaptive_secs = adaptive_refresh_seconds(vol_score)
+        # Surface the adaptive interval for the auto-refresh widget below.
+        st.session_state["_of_adaptive_secs"] = adaptive_secs
+
+        c_of1, c_of2, c_of3, c_of4, c_of5 = st.columns(5)
+        c_of1.metric("Ticks (sesión)", f"{len(of_hist)}")
         c_of2.metric(
             "Net DEX",
             (f"${last_of.get('net_dex_mm'):+.1f}M"
@@ -1255,42 +1322,96 @@ def show_dashboard() -> None:
             "Net GEX",
             (f"${last_of.get('net_gex_mm'):+.1f}M"
              if last_of.get("net_gex_mm") is not None else "—"),
+            (f"{z_gex:+.1f}σ" if z_gex is not None else None),
         )
         c_of4.metric(
             "Net VEX",
             (f"${last_of.get('net_vex_mm'):+.1f}M"
              if last_of.get("net_vex_mm") is not None else "—"),
         )
+        c_of5.metric(
+            "Refresh adapt.",
+            f"{adaptive_secs}s",
+            help=("Cadencia recomendada por session-vol-score "
+                  f"({vol_score:.2f}). 15s en open/FOMC, 30s normal, 60s calma."),
+        )
 
-        # Top-line summary always visible — works with 1+ snapshots.
+        # Wall stability widget — addresses "are these walls real?"
+        _render_md(panel_wall_stability_html(of_hist))
+
+        # Top-line interpretation (kept from the legacy view — still useful)
         _render_md(interpret_orderflow_summary(of_hist, spot))
 
         if of_hist:
             if len(of_hist) == 1:
                 st.caption(
-                    "⏳ Único snapshot. El panel dibuja los valores actuales "
-                    "como puntos; al siguiente refresh (o con <b>Auto 30s</b> "
-                    "activo) se empieza a construir la serie temporal.",
+                    "⏳ Primer tick. El panel dibuja valores actuales como "
+                    "puntos; con auto-refresh activo se construye la serie.",
                     unsafe_allow_html=True,
                 )
 
             of_view = st.radio(
                 "Vista",
-                options=["stacked", "separate"],
+                options=["pro", "legacy_stacked", "legacy_separate"],
                 format_func=lambda v: {
-                    "stacked": "Panel único (3 filas)",
-                    "separate": "Paneles separados + comentario",
+                    "pro": "PRO (composición · velocity · DTE buckets)",
+                    "legacy_stacked": "Legacy (3 filas)",
+                    "legacy_separate": "Legacy (separado)",
                 }[v],
-                horizontal=True, index=1, key="of_view_mode",
+                horizontal=True, index=0, key="of_view_mode_v2",
             )
-            if of_view == "stacked":
+            if of_view == "pro":
+                fig_pro = chart_orderflow_pro_stack(of_hist, symbol)
+                if fig_pro is not None:
+                    st.plotly_chart(
+                        fig_pro, use_container_width=True,
+                        key=f"of_pro_{symbol}",
+                    )
+                # Cumulative dealer hedge flow estimate
+                fig_cum = chart_cum_hedge_flow(of_hist, symbol)
+                if fig_cum is not None:
+                    st.plotly_chart(
+                        fig_cum, use_container_width=True,
+                        key=f"of_cum_{symbol}",
+                    )
+                # What-changed (top strike movers between latest two snapshots)
+                rows_now, rows_prev = latest_two_strike_snapshots(symbol, "month")
+                _render_md(panel_what_changed_html(rows_now, rows_prev))
+
+                # Strike heatmap (today)
+                strikes_long = load_strike_history(symbol, bucket="month")
+                fig_hm = chart_strike_heatmap(
+                    strikes_long, symbol=symbol,
+                    metric="gex_mm", spot_history=of_hist, bucket="month",
+                )
+                if fig_hm is not None:
+                    st.plotly_chart(
+                        fig_hm, use_container_width=True,
+                        key=f"of_heatmap_{symbol}",
+                    )
+
+                # Cross-session compare — same minute, last N sessions
+                try:
+                    et_now = datetime.datetime.now(ET_TZ)
+                    cross_rows = load_intraday_at_time_of_day(
+                        symbol, et_now.hour, et_now.minute, days=10,
+                    )
+                except Exception:
+                    cross_rows = []
+                _render_md(panel_cross_session_html(
+                    cross_rows, "net_gex_mm", "Net GEX"))
+
+                # Per-metric narrative kept for context
+                _render_md(interpret_orderflow_dex(of_hist))
+                _render_md(interpret_orderflow_gex(of_hist, spot))
+                _render_md(interpret_orderflow_convexity(of_hist))
+            elif of_view == "legacy_stacked":
                 fig_of = chart_orderflow_stack(of_hist, symbol)
                 if fig_of:
                     st.plotly_chart(
                         fig_of, use_container_width=True,
-                        key=f"of_stack_{symbol}_{len(of_hist)}",
+                        key=f"of_stack_{symbol}",
                     )
-                # Also render the three commentary boxes below the stacked chart
                 _render_md(interpret_orderflow_dex(of_hist))
                 _render_md(interpret_orderflow_gex(of_hist, spot))
                 _render_md(interpret_orderflow_convexity(of_hist))
