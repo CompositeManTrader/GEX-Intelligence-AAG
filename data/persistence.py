@@ -104,9 +104,51 @@ CREATE TABLE IF NOT EXISTS daily_snapshots (
     PRIMARY KEY (symbol, date)
 );
 
-CREATE INDEX IF NOT EXISTS idx_of_symbol_ts  ON orderflow_ticks(symbol, ts);
+CREATE TABLE IF NOT EXISTS orderflow_strikes (
+    ts        TEXT NOT NULL,
+    symbol    TEXT NOT NULL,
+    bucket    TEXT NOT NULL,
+    strike    REAL NOT NULL,
+    gex_mm    REAL,
+    dex_mm    REAL,
+    vex_mm    REAL,
+    oi        INTEGER,
+    PRIMARY KEY (symbol, ts, bucket, strike)
+);
+
+CREATE INDEX IF NOT EXISTS idx_of_symbol_ts   ON orderflow_ticks(symbol, ts);
 CREATE INDEX IF NOT EXISTS idx_hiro_symbol_ts ON hiro_ticks(symbol, ts);
+CREATE INDEX IF NOT EXISTS idx_ofs_sym_ts     ON orderflow_strikes(symbol, ts);
+CREATE INDEX IF NOT EXISTS idx_ofs_sym_strike ON orderflow_strikes(symbol, strike, ts);
 """
+
+# Per-DTE-bucket fields persisted on the wide aggregate table. Schema is
+# evolved via additive ALTER TABLE so existing DBs are upgraded silently.
+_BUCKET_TICK_COLUMNS: tuple[str, ...] = (
+    "gex_net_0dte_mm",  "gex_call_0dte_mm",  "gex_put_0dte_mm",
+    "gex_net_week_mm",  "gex_call_week_mm",  "gex_put_week_mm",
+    "gex_net_month_mm", "gex_call_month_mm", "gex_put_month_mm",
+    "dex_net_0dte_mm", "dex_net_week_mm", "dex_net_month_mm",
+    "vex_net_0dte_mm", "vex_net_week_mm", "vex_net_month_mm",
+    "net_cex_mm", "hvl", "regime",
+)
+
+
+def _migrate_orderflow_ticks(c: sqlite3.Connection) -> None:
+    """Additive ALTER TABLE for older DBs that pre-date the bucket columns.
+    SQLite returns OperationalError on duplicate column; we ignore.
+    """
+    cur = c.execute("PRAGMA table_info(orderflow_ticks)")
+    existing = {row["name"] for row in cur.fetchall()}
+    for col in _BUCKET_TICK_COLUMNS:
+        if col in existing:
+            continue
+        sql_type = "TEXT" if col == "regime" else "REAL"
+        try:
+            c.execute(f"ALTER TABLE orderflow_ticks ADD COLUMN {col} {sql_type}")
+        except sqlite3.OperationalError:
+            pass
+    c.commit()
 
 
 @st.cache_resource(show_spinner=False)
@@ -117,6 +159,7 @@ def _conn() -> sqlite3.Connection:
     c.execute("PRAGMA journal_mode=WAL;")
     c.execute("PRAGMA synchronous=NORMAL;")
     c.executescript(_SCHEMA)
+    _migrate_orderflow_ticks(c)
     c.commit()
     log.info("persistence DB ready at %s", path)
     return c
@@ -160,18 +203,35 @@ ORDERFLOW_FIELDS = [
     "call_wall", "put_wall", "gamma_flip",
     "net_dex_mm", "call_dex_mm", "put_dex_mm",
     "net_vex_mm", "call_vex_mm", "put_vex_mm",
+    # Bucket fields (tier-1 of the orderflow rework). Float fields here
+    # are coerced via _safe_float; the lone string field 'regime' is
+    # appended below in persist_orderflow_tick so the value is preserved.
+    "gex_net_0dte_mm",  "gex_call_0dte_mm",  "gex_put_0dte_mm",
+    "gex_net_week_mm",  "gex_call_week_mm",  "gex_put_week_mm",
+    "gex_net_month_mm", "gex_call_month_mm", "gex_put_month_mm",
+    "dex_net_0dte_mm", "dex_net_week_mm", "dex_net_month_mm",
+    "vex_net_0dte_mm", "vex_net_week_mm", "vex_net_month_mm",
+    "net_cex_mm", "hvl",
 ]
 
 
 def persist_orderflow_tick(symbol: str, tick: dict) -> None:
-    """INSERT OR IGNORE — dedup by (symbol, ts). Best-effort."""
+    """INSERT OR IGNORE — dedup by (symbol, ts). Best-effort.
+
+    Floats are sanitized via `_safe_float`; the `regime` text label is
+    appended verbatim. Callers should gate writes via
+    `quant.orderflow.should_persist_tick` so we don't write 30s of
+    identical rows during quiet markets.
+    """
     if not symbol or not tick:
         return
     ts = tick.get("timestamp")
     if not ts:
         return
-    cols = ["ts", "symbol"] + ORDERFLOW_FIELDS
-    vals = [ts, symbol] + [_safe_float(tick.get(f)) for f in ORDERFLOW_FIELDS]
+    cols = ["ts", "symbol"] + ORDERFLOW_FIELDS + ["regime"]
+    vals = ([ts, symbol]
+            + [_safe_float(tick.get(f)) for f in ORDERFLOW_FIELDS]
+            + [str(tick["regime"]) if tick.get("regime") else None])
     placeholders = ",".join("?" * len(cols))
     try:
         c = _conn()
@@ -432,8 +492,200 @@ def purge_old_ticks(keep_days: int = 30) -> int:
                        (cutoff,)).rowcount
         n2 = c.execute("DELETE FROM hiro_ticks WHERE ts<?",
                        (cutoff,)).rowcount
+        n3 = c.execute("DELETE FROM orderflow_strikes WHERE ts<?",
+                       (cutoff,)).rowcount
         c.commit()
-        return int(n1 + n2)
+        return int(n1 + n2 + n3)
     except Exception:
         log.exception("purge_old_ticks failed")
         return 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Per-strike orderflow snapshots
+# ─────────────────────────────────────────────────────────────────────────────
+def persist_strike_tick(symbol: str, ts: str, bucket: str,
+                        gex_df, dex_df=None, vex_df=None) -> None:
+    """Persist a per-strike snapshot for one (symbol, ts, bucket).
+
+    Each row is the SCALED $M contribution at a single strike, for one
+    DTE bucket. Storing strike-level data unlocks the GEX heatmap and
+    the "what changed in last N minutes" panel — neither is reconstructible
+    from the flat aggregate tick alone.
+
+    Inputs are the per-strike profile DataFrames returned by
+    `compute_gex_profile` / `compute_dex_profile` / `compute_vex_profile`
+    for the bucket. Best-effort: silently swallows errors.
+    """
+    if not symbol or not ts or not bucket:
+        return
+    try:
+        import pandas as pd
+        if gex_df is None or len(gex_df) == 0:
+            return
+        # Build a strike-indexed view with optional per-strike GEX/DEX/VEX in $M
+        df = gex_df.set_index("Strike")[["Net_GEX"]].rename(columns={"Net_GEX": "gex"})
+        df["gex_mm"] = df["gex"] / 1e6
+        if dex_df is not None and len(dex_df) > 0 and "Net_DEX" in dex_df.columns:
+            df = df.join(
+                (dex_df.set_index("Strike")["Net_DEX"] / 1e6).rename("dex_mm"),
+                how="outer",
+            )
+        else:
+            df["dex_mm"] = None
+        if vex_df is not None and len(vex_df) > 0 and "Net_VEX" in vex_df.columns:
+            df = df.join(
+                (vex_df.set_index("Strike")["Net_VEX"] / 1e6).rename("vex_mm"),
+                how="outer",
+            )
+        else:
+            df["vex_mm"] = None
+
+        rows = [
+            (ts, symbol, bucket, float(k),
+             _safe_float(r.get("gex_mm")),
+             _safe_float(r.get("dex_mm")),
+             _safe_float(r.get("vex_mm")),
+             None)
+            for k, r in df.iterrows()
+        ]
+        if not rows:
+            return
+        c = _conn()
+        c.executemany(
+            "INSERT OR IGNORE INTO orderflow_strikes "
+            "(ts, symbol, bucket, strike, gex_mm, dex_mm, vex_mm, oi) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        c.commit()
+    except Exception:
+        log.exception("persist_strike_tick failed")
+
+
+def load_strike_history(symbol: str, bucket: str = "month",
+                        date: Optional[str] = None,
+                        limit: int = 50000) -> list[dict]:
+    """Load per-strike snapshots for a symbol+bucket on a given date
+    (default: today ET). Returns long-format rows
+    `{ts, strike, gex_mm, dex_mm, vex_mm}`, sorted by ts ASC, strike ASC.
+    """
+    if not symbol or not bucket:
+        return []
+    d = date or _today_iso()
+    try:
+        c = _conn()
+        cur = c.execute(
+            "SELECT ts, strike, gex_mm, dex_mm, vex_mm FROM orderflow_strikes "
+            "WHERE symbol=? AND bucket=? AND substr(ts,1,10)=? "
+            "ORDER BY ts ASC, strike ASC LIMIT ?",
+            (symbol, bucket, d, limit),
+        )
+        return [dict(r) for r in cur.fetchall()]
+    except Exception:
+        log.exception("load_strike_history failed")
+        return []
+
+
+def latest_two_strike_snapshots(symbol: str, bucket: str = "month"
+                                ) -> tuple[list[dict], list[dict]]:
+    """Return (newest_snapshot, prior_snapshot) as two strike-keyed row
+    lists for the given symbol+bucket. Used by the "what changed" panel:
+    feed both into `quant.orderflow_derived.what_changed`. Empty lists
+    if not enough history.
+    """
+    if not symbol or not bucket:
+        return [], []
+    try:
+        c = _conn()
+        cur = c.execute(
+            "SELECT DISTINCT ts FROM orderflow_strikes "
+            "WHERE symbol=? AND bucket=? ORDER BY ts DESC LIMIT 2",
+            (symbol, bucket),
+        )
+        ts_pair = [r["ts"] for r in cur.fetchall()]
+        if len(ts_pair) < 2:
+            return [], []
+        new_ts, old_ts = ts_pair[0], ts_pair[1]
+
+        def _rows(ts: str) -> list[dict]:
+            cur2 = c.execute(
+                "SELECT strike AS Strike, gex_mm AS Net_GEX, "
+                "dex_mm AS Net_DEX, vex_mm AS Net_VEX "
+                "FROM orderflow_strikes "
+                "WHERE symbol=? AND bucket=? AND ts=?",
+                (symbol, bucket, ts),
+            )
+            return [dict(r) for r in cur2.fetchall()]
+
+        return _rows(new_ts), _rows(old_ts)
+    except Exception:
+        log.exception("latest_two_strike_snapshots failed")
+        return [], []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Cross-session compare — "today at 10:30 vs same time over last N days"
+# ─────────────────────────────────────────────────────────────────────────────
+def load_intraday_at_time_of_day(symbol: str,
+                                 hh: int, mm: int,
+                                 days: int = 10,
+                                 fields: Optional[list[str]] = None
+                                 ) -> list[dict]:
+    """For each of the last `days` ET trading dates, return the orderflow
+    tick row whose ts is *closest* to HH:MM ET on that date. Useful as a
+    "what was net GEX yesterday at this same minute?" anchor.
+
+    Returns rows ordered date ASC.
+    """
+    if not symbol:
+        return []
+    fields = fields or ["spot", "net_gex_mm", "net_dex_mm", "net_vex_mm",
+                        "call_wall", "put_wall", "gamma_flip"]
+    try:
+        import pandas as pd
+        # Build the candidate dates list locally (ET).
+        today_et = datetime.datetime.now(ET_TZ).date()
+        dates = [(today_et - datetime.timedelta(days=k)).isoformat()
+                 for k in range(1, days + 1)]
+        c = _conn()
+        rows: list[dict] = []
+        target_min = hh * 60 + mm
+        col_list = ", ".join(fields)
+        for d in dates:
+            # Pick the row whose ts (UTC ISO) corresponds to the smallest
+            # absolute minutes-of-day-difference vs target. We approximate
+            # by extracting hour+minute from the substring HH:MM in `ts`
+            # and converting UTC→ET via a fixed offset based on date —
+            # since DST varies, a precise filter is awkward in pure SQL.
+            # Cheapest: scan that day's rows and pick min(|HH:MM diff|) in
+            # Python after converting to ET.
+            cur = c.execute(
+                f"SELECT ts, {col_list} FROM orderflow_ticks "
+                "WHERE symbol=? AND substr(ts,1,10)=? "
+                "ORDER BY ts ASC",
+                (symbol, d),
+            )
+            best: Optional[dict] = None
+            best_diff = 10 ** 9
+            for r in cur.fetchall():
+                try:
+                    ts = pd.Timestamp(r["ts"])
+                    if ts.tzinfo is None:
+                        ts = ts.tz_localize("UTC")
+                    et = ts.tz_convert(ET_TZ)
+                    delta = abs(et.hour * 60 + et.minute - target_min)
+                    if delta < best_diff:
+                        best_diff = delta
+                        best = dict(r)
+                        best["et_time"] = et.isoformat()
+                except Exception:
+                    continue
+            if best is not None:
+                best["session_date"] = d
+                rows.append(best)
+        rows.sort(key=lambda r: r.get("session_date", ""))
+        return rows
+    except Exception:
+        log.exception("load_intraday_at_time_of_day failed")
+        return []
