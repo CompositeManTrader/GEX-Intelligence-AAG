@@ -50,18 +50,29 @@ def hv_garman_klass(open_: pd.Series, high: pd.Series,
 def hv_yang_zhang(open_: pd.Series, high: pd.Series, low: pd.Series,
                   close: pd.Series, window: int) -> pd.Series:
     """Yang-Zhang (2000). Overnight + open-to-close + Rogers-Satchell. Drift-free,
-    handles opening jumps. Most robust for equities."""
+    handles opening jumps. Most robust for equities.
+
+        σ²_YZ = σ²_overnight + k·σ²_open_to_close + (1−k)·σ²_RS
+        σ²_overnight     = Var( ln(O_t / C_{t-1}) )
+        σ²_open_to_close = Var( ln(C_t / O_t) )    ← intraday return
+        σ²_RS = mean[ ln(H/O)·(ln(H/O) − ln(C/O)) + ln(L/O)·(ln(L/O) − ln(C/O)) ]
+
+    The previous implementation used Var(ln(C_t / C_{t-1})) — close-to-close —
+    for σ²_open_to_close. That is the legacy classical estimator, which already
+    captures the overnight gap, and would double-count it when summed with the
+    overnight term. The corrected estimator uses the *intraday* open-to-close
+    log return (`ln_co`).
+    """
     ln_ho = np.log(high / open_)
     ln_lo = np.log(low / open_)
     ln_co = np.log(close / open_)
     ln_oc_prev = np.log(open_ / close.shift(1))
-    ln_cc_prev = np.log(close / close.shift(1))
 
     n = window
     k = 0.34 / (1.34 + (n + 1) / (n - 1))
 
     var_overnight = ln_oc_prev.rolling(window).var()
-    var_open_to_close = ln_cc_prev.rolling(window).var()
+    var_open_to_close = ln_co.rolling(window).var()
     rs = ln_ho * (ln_ho - ln_co) + ln_lo * (ln_lo - ln_co)
     var_rs = rs.rolling(window).mean()
 

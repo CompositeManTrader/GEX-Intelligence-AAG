@@ -15,6 +15,7 @@ to millions for readability and snapshot the walls + spot at each tick.
 from __future__ import annotations
 
 import datetime
+from datetime import timezone
 from typing import Optional
 
 
@@ -46,7 +47,7 @@ def tick_orderflow(
             return None
 
     return dict(
-        timestamp=datetime.datetime.utcnow().isoformat(),
+        timestamp=datetime.datetime.now(timezone.utc).isoformat(),
         spot=float(spot) if spot else None,
         # GEX
         net_gex_mm=_mm(gex_sum, "total_gex"),

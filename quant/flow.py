@@ -24,6 +24,7 @@ Returned scales:
 from __future__ import annotations
 
 import datetime
+from datetime import timezone
 from typing import Optional
 
 import numpy as np
@@ -163,8 +164,11 @@ def hiro_zscore(history: list, window: int = 20) -> Optional[float]:
     if not history or len(history) < 3:
         return None
     series = pd.Series([h["hiro"] for h in history[-window:]])
-    sd = series.std(ddof=0)
-    if sd <= 1e-9:
+    # Sample stdev (ddof=1): correct for finite-history z-score. Population
+    # stdev underestimated dispersion on short windows and made the score
+    # overshoot, occasionally crossing the |z|>2 threshold spuriously.
+    sd = series.std(ddof=1)
+    if not pd.notna(sd) or sd <= 1e-9:
         return 0.0
     return round(float((series.iloc[-1] - series.mean()) / sd), 2)
 
@@ -176,6 +180,7 @@ def tick_hiro(calls: pd.DataFrame, puts: pd.DataFrame,
               spot: float) -> dict:
     """Single HIRO observation tagged with UTC timestamp."""
     snap = compute_hiro_snapshot(calls, puts)
-    snap["timestamp"] = datetime.datetime.utcnow().isoformat()
+    # tz-aware UTC ISO timestamp (datetime.utcnow is deprecated in 3.12+)
+    snap["timestamp"] = datetime.datetime.now(timezone.utc).isoformat()
     snap["spot"] = float(spot) if spot else None
     return snap

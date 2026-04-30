@@ -435,14 +435,16 @@ def compute_gex_by_expiry(calls: pd.DataFrame, puts: pd.DataFrame, spot: float,
         pe = p[p["Expiry"] == exp] if not p.empty else pd.DataFrame()
         c_g = (ce["Gamma"] * ce["OI"]).sum() * SCALE if not ce.empty else 0.0
         p_g = (pe["Gamma"] * pe["OI"]).sum() * SCALE * (-1.0) if not pe.empty else 0.0
+        # Use the smallest valid DTE in the expiry group, not iloc[0]: the
+        # first row's DTE may be NaN, and a NaN DTE was silently coerced to
+        # 0 by the legacy code, breaking the final sort_values("DTE").
         dte_val = 0
         for d in (ce, pe):
             if not d.empty and "DTE" in d.columns:
-                try:
-                    dte_val = int(d["DTE"].iloc[0])
+                dte_clean = pd.to_numeric(d["DTE"], errors="coerce").dropna()
+                if not dte_clean.empty:
+                    dte_val = int(dte_clean.min())
                     break
-                except Exception:
-                    pass
         rows.append({
             "Expiry": exp, "DTE": dte_val,
             "Call_GEX_M": c_g / 1e6,

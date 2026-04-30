@@ -72,14 +72,21 @@ class Signal:
 #  Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 def _ensure_et(df: pd.DataFrame) -> pd.DataFrame:
-    """Add `_et` column with ET timestamps. Idempotent."""
+    """Add `_et` column with ET timestamps. Idempotent.
+
+    Defensive against `df["date"]` being object/string dtype (e.g. from
+    JSON-loaded persistence): coerce via `pd.to_datetime` BEFORE
+    inspecting `.dt.tz` so we never raise AttributeError on upstream
+    inputs that haven't been parsed yet.
+    """
     if "_et" in df.columns:
         return df
     out = df.copy()
-    if df["date"].dt.tz is None:
-        out["_et"] = pd.to_datetime(out["date"]).dt.tz_localize("UTC").dt.tz_convert(ET_TZ)
+    parsed = pd.to_datetime(out["date"], errors="coerce")
+    if parsed.dt.tz is None:
+        out["_et"] = parsed.dt.tz_localize("UTC").dt.tz_convert(ET_TZ)
     else:
-        out["_et"] = pd.to_datetime(out["date"]).dt.tz_convert(ET_TZ)
+        out["_et"] = parsed.dt.tz_convert(ET_TZ)
     return out
 
 
@@ -113,26 +120,28 @@ def vwap_anchored(df: pd.DataFrame) -> np.ndarray:
 
 def vwap_bands(df: pd.DataFrame, n_sigma: float = 1.5
                ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """VWAP and ±n·σ bands using the rolling typical-price std."""
+    """VWAP and ±n·σ bands using the rolling typical-price std.
+
+    Vectorised via pandas rolling — the legacy O(n²) Python loop took
+    seconds on multi-day backtests; this is O(n) and yields the same
+    bands within rounding error.
+    """
     if df is None or df.empty:
         return np.array([]), np.array([]), np.array([])
     vwap = vwap_anchored(df)
     typical = ((df["high"] + df["low"] + df["close"]) / 3.0).to_numpy()
-    # Rolling std of typical price around VWAP, expanding for the first
-    # 20 bars then 20-bar rolling.
-    diff = typical - vwap
-    n = len(typical)
-    sd = np.zeros(n)
-    for i in range(n):
-        lo = max(0, i - 19)
-        sd[i] = np.std(diff[lo : i + 1]) if i > 0 else 0.0
+    diff = pd.Series(typical - vwap)
+    # Expanding for the first 20 bars, then 20-bar rolling. ddof=1 (sample
+    # stdev) — the legacy ddof=0 (population) underestimated dispersion on
+    # short windows and produced overly tight bands at the open.
+    sd = diff.rolling(window=20, min_periods=2).std(ddof=1).fillna(0.0).to_numpy()
     upper = vwap + n_sigma * sd
     lower = vwap - n_sigma * sd
     return vwap, upper, lower
 
 
 def atr(df: pd.DataFrame, n: int = 14) -> np.ndarray:
-    """Average true range, expanding then rolling."""
+    """Average true range, expanding then rolling. Vectorised."""
     if df is None or df.empty:
         return np.array([])
     h = df["high"].to_numpy()
@@ -140,11 +149,8 @@ def atr(df: pd.DataFrame, n: int = 14) -> np.ndarray:
     c = df["close"].to_numpy()
     pc = np.concatenate([[c[0]], c[:-1]])
     tr = np.maximum.reduce([h - l, np.abs(h - pc), np.abs(l - pc)])
-    out = np.zeros_like(tr)
-    for i in range(len(tr)):
-        lo = max(0, i - n + 1)
-        out[i] = np.mean(tr[lo : i + 1])
-    return out
+    # Expanding mean for first n bars, then rolling mean of length n.
+    return pd.Series(tr).rolling(window=n, min_periods=1).mean().to_numpy()
 
 
 def opening_range(df_session: pd.DataFrame, minutes: int = 30
