@@ -30,7 +30,18 @@ from quant import bs
 #  Filters
 # ─────────────────────────────────────────────────────────────────────────────
 def filter_chain(df: pd.DataFrame, max_dte: int = 60, min_oi: int = 0,
-                 require_iv: bool = False) -> pd.DataFrame:
+                 require_iv: bool = False, min_dte: int = 0) -> pd.DataFrame:
+    """Filter an options-chain dataframe for downstream exposure calcs.
+
+    Parameters
+    ----------
+    min_dte : int (default 0)
+        Inclusive lower bound on DTE. Combined with `max_dte` this defines
+        a half-open bucket that lets callers slice the chain by tenor:
+        `min_dte=0, max_dte=0` → 0DTE only;
+        `min_dte=1, max_dte=7` → front-week (excl. 0DTE);
+        `min_dte=8, max_dte=60` → monthly+ structural.
+    """
     if df is None or df.empty:
         return pd.DataFrame()
     required = ["Strike", "OI", "Gamma"]
@@ -39,7 +50,7 @@ def filter_chain(df: pd.DataFrame, max_dte: int = 60, min_oi: int = 0,
     out = df.copy()
     out = out[out["OI"] > min_oi]
     if "DTE" in out.columns:
-        out = out[out["DTE"] <= max_dte]
+        out = out[(out["DTE"] >= min_dte) & (out["DTE"] <= max_dte)]
     out = out.dropna(subset=["Strike", "Gamma"])
     out = out[out["Gamma"] > 0]
     if require_iv:
@@ -131,14 +142,17 @@ def gamma_flip_on_spot_grid(
     calls: pd.DataFrame, puts: pd.DataFrame, spot: float,
     symbol: str = "", max_dte: int = 60, min_oi: int = 0,
     grid_pct: float = 0.10, n_points: int = 81,
+    min_dte: int = 0,
 ) -> Optional[float]:
     """Re-price each option's Γ on a grid of hypothetical S', aggregate GEX(S'),
     and return the S' where the aggregate crosses zero.
 
     Requires IV% and DTE (so we can recompute γ). Falls back to None otherwise.
     """
-    c = filter_chain(calls, max_dte=max_dte, min_oi=min_oi, require_iv=True)
-    p = filter_chain(puts, max_dte=max_dte, min_oi=min_oi, require_iv=True)
+    c = filter_chain(calls, max_dte=max_dte, min_oi=min_oi,
+                     require_iv=True, min_dte=min_dte)
+    p = filter_chain(puts, max_dte=max_dte, min_oi=min_oi,
+                     require_iv=True, min_dte=min_dte)
     if c.empty and p.empty:
         return None
 
@@ -184,12 +198,12 @@ def gamma_flip_on_spot_grid(
 def compute_gex_profile(
     calls: pd.DataFrame, puts: pd.DataFrame, spot: float,
     symbol: str = "", max_dte: int = 60, min_oi: int = 0,
-    use_spot_grid_flip: bool = True,
+    use_spot_grid_flip: bool = True, min_dte: int = 0,
 ) -> Tuple[pd.DataFrame, dict]:
     if spot <= 0:
         return pd.DataFrame(), {}
-    c = filter_chain(calls, max_dte=max_dte, min_oi=min_oi)
-    p = filter_chain(puts, max_dte=max_dte, min_oi=min_oi)
+    c = filter_chain(calls, max_dte=max_dte, min_oi=min_oi, min_dte=min_dte)
+    p = filter_chain(puts, max_dte=max_dte, min_oi=min_oi, min_dte=min_dte)
     if c.empty and p.empty:
         return pd.DataFrame(), {}
 
@@ -219,7 +233,8 @@ def compute_gex_profile(
     flip = None
     if use_spot_grid_flip:
         flip = gamma_flip_on_spot_grid(calls, puts, spot, symbol=symbol,
-                                       max_dte=max_dte, min_oi=min_oi)
+                                       max_dte=max_dte, min_oi=min_oi,
+                                       min_dte=min_dte)
     if flip is None:
         cum = df["CumGEX"].to_numpy()
         stk = df["Strike"].to_numpy()
@@ -267,11 +282,14 @@ def compute_gex_profile(
 # ─────────────────────────────────────────────────────────────────────────────
 def compute_vex_profile(calls: pd.DataFrame, puts: pd.DataFrame, spot: float,
                         symbol: str = "", max_dte: int = 60,
-                        min_oi: int = 0) -> Tuple[pd.DataFrame, dict]:
+                        min_oi: int = 0, min_dte: int = 0
+                        ) -> Tuple[pd.DataFrame, dict]:
     if spot <= 0:
         return pd.DataFrame(), {}
-    c = filter_chain(calls, max_dte=max_dte, min_oi=min_oi, require_iv=True)
-    p = filter_chain(puts, max_dte=max_dte, min_oi=min_oi, require_iv=True)
+    c = filter_chain(calls, max_dte=max_dte, min_oi=min_oi,
+                     require_iv=True, min_dte=min_dte)
+    p = filter_chain(puts, max_dte=max_dte, min_oi=min_oi,
+                     require_iv=True, min_dte=min_dte)
     if c.empty and p.empty:
         return pd.DataFrame(), {}
 
@@ -317,11 +335,14 @@ def compute_vex_profile(calls: pd.DataFrame, puts: pd.DataFrame, spot: float,
 # ─────────────────────────────────────────────────────────────────────────────
 def compute_cex_profile(calls: pd.DataFrame, puts: pd.DataFrame, spot: float,
                         symbol: str = "", max_dte: int = 60,
-                        min_oi: int = 0) -> Tuple[pd.DataFrame, dict]:
+                        min_oi: int = 0, min_dte: int = 0
+                        ) -> Tuple[pd.DataFrame, dict]:
     if spot <= 0:
         return pd.DataFrame(), {}
-    c = filter_chain(calls, max_dte=max_dte, min_oi=min_oi, require_iv=True)
-    p = filter_chain(puts, max_dte=max_dte, min_oi=min_oi, require_iv=True)
+    c = filter_chain(calls, max_dte=max_dte, min_oi=min_oi,
+                     require_iv=True, min_dte=min_dte)
+    p = filter_chain(puts, max_dte=max_dte, min_oi=min_oi,
+                     require_iv=True, min_dte=min_dte)
     if c.empty and p.empty:
         return pd.DataFrame(), {}
 
@@ -368,6 +389,7 @@ def compute_cex_profile(calls: pd.DataFrame, puts: pd.DataFrame, spot: float,
 # ─────────────────────────────────────────────────────────────────────────────
 def compute_dex_profile(calls: pd.DataFrame, puts: pd.DataFrame, spot: float,
                         max_dte: int = 60, min_oi: int = 0,
+                        min_dte: int = 0,
                         ) -> Tuple[pd.DataFrame, dict]:
     if spot <= 0:
         return pd.DataFrame(), {}
@@ -377,7 +399,7 @@ def compute_dex_profile(calls: pd.DataFrame, puts: pd.DataFrame, spot: float,
             return pd.DataFrame()
         d = df.copy()
         if "DTE" in d.columns:
-            d = d[d["DTE"] <= max_dte]
+            d = d[(d["DTE"] >= min_dte) & (d["DTE"] <= max_dte)]
         d = d[d["OI"] > min_oi]
         return d.dropna(subset=["Strike", "Delta"])
 
