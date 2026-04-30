@@ -68,22 +68,59 @@ def _smooth(y: np.ndarray, win: int = 3) -> np.ndarray:
 
 
 def _find_wall(strikes: np.ndarray, values: np.ndarray,
-               sign: int = 1) -> Optional[float]:
+               sign: int = 1, spot: Optional[float] = None) -> Optional[float]:
     """Find the strike with the most extreme (sign * value) after smoothing.
 
-    Returns None if no candidate exceeds 50% of the max |extreme|."""
+    Parameters
+    ----------
+    sign : +1 to find the call wall (largest positive Net_GEX),
+           -1 to find the put wall (largest negative Net_GEX).
+    spot : if provided, restrict candidates to K > spot for sign=+1 and
+           K < spot for sign=-1. This matches SqueezeMetrics semantics:
+           call wall = pin/resistance ABOVE spot, put wall = support BELOW.
+           If no candidate exists in the constrained side, falls back to
+           the unconstrained search to preserve historical behaviour.
+
+    Returns None if no candidate exceeds 50% of the max positive peak in
+    the smoothed series. Comparing against `np.max(smooth)` (positive side
+    only) — not `np.max(np.abs(smooth))` — is critical: in asymmetric
+    regimes the opposite-side peak would dominate |·| and falsely reject
+    a legitimate wall.
+    """
     if len(strikes) == 0:
         return None
-    series = sign * values
+    strikes = np.asarray(strikes, dtype=float)
+    values = np.asarray(values, dtype=float)
+
+    # Apply spot constraint if requested.
+    mask = np.ones_like(strikes, dtype=bool)
+    if spot is not None:
+        if sign > 0:
+            mask = strikes > spot
+        elif sign < 0:
+            mask = strikes < spot
+    s_strikes = strikes[mask]
+    s_values = values[mask]
+
+    # Try constrained side first; if empty fall back to all strikes.
+    if len(s_strikes) == 0:
+        s_strikes, s_values = strikes, values
+
+    series = sign * s_values
     smooth = _smooth(series, 3)
+    if smooth.size == 0:
+        return None
     idx = int(np.argmax(smooth))
-    if smooth[idx] <= 0:
+    peak = float(smooth[idx])
+    if peak <= 0:
         return None
-    # Robustness check: the peak must be meaningful
-    peak = smooth[idx]
-    if peak < 0.5 * np.max(np.abs(smooth)):
+    # Threshold against the max of the (already sign-flipped) smoothed
+    # series — same side only. Using max(|·|) was wrong because it picks
+    # up the opposite wall and can suppress legitimate peaks.
+    max_pos = float(np.max(smooth))
+    if peak < 0.5 * max_pos:
         return None
-    return float(strikes[idx])
+    return float(s_strikes[idx])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -196,8 +233,8 @@ def compute_gex_profile(
     # Walls — smoothed peak detection instead of raw argmax
     strikes_np = df["Strike"].to_numpy()
     net_np = df["Net_GEX"].to_numpy()
-    call_wall = _find_wall(strikes_np, net_np, sign=+1)
-    put_wall = _find_wall(strikes_np, net_np, sign=-1)
+    call_wall = _find_wall(strikes_np, net_np, sign=+1, spot=spot)
+    put_wall = _find_wall(strikes_np, net_np, sign=-1, spot=spot)
 
     hvl = float(df.loc[df["Abs_GEX"].idxmax(), "Strike"]) if not df.empty else None
 
@@ -291,7 +328,8 @@ def compute_cex_profile(calls: pd.DataFrame, puts: pd.DataFrame, spot: float,
     q = dividend_yield_for(symbol)
     SCALE = 100.0 * spot
 
-    def _per_side(df: pd.DataFrame, sign: float) -> tuple[np.ndarray, np.ndarray]:
+    def _per_side(df: pd.DataFrame, sign: float, side: str
+                  ) -> tuple[np.ndarray, np.ndarray]:
         if df.empty:
             return np.array([]), np.array([])
         K = df["Strike"].to_numpy(dtype=float)
@@ -299,12 +337,12 @@ def compute_cex_profile(calls: pd.DataFrame, puts: pd.DataFrame, spot: float,
         dte = df["DTE"].to_numpy(dtype=float)
         T = bs.time_to_expiry_years(dte)
         r = bs.rate_for_dte(dte)
-        ch = bs.charm(spot, K, T, iv, r, q, per="day")
+        ch = bs.charm(spot, K, T, iv, r, q, per="day", side=side)
         cex = ch * df["OI"].to_numpy(dtype=float) * SCALE * sign
         return K, cex
 
-    cK, cV = _per_side(c, +1.0)
-    pK, pV = _per_side(p, -1.0)
+    cK, cV = _per_side(c, +1.0, side="call")
+    pK, pV = _per_side(p, -1.0, side="put")
 
     c_g = _group_strike(cK, cV, "C_CEX")
     p_g = _group_strike(pK, pV, "P_CEX")
