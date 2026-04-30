@@ -1336,6 +1336,34 @@ def show_dashboard() -> None:
                   f"({vol_score:.2f}). 15s en open/FOMC, 30s normal, 60s calma."),
         )
 
+        # Diagnostic strip — explains *why* panels may look empty when the
+        # historical persistence pre-dates the bucket-fields rollout.
+        bucket_cols = ("dex_net_0dte_mm", "dex_net_week_mm", "dex_net_month_mm",
+                       "vex_net_0dte_mm", "vex_net_week_mm", "vex_net_month_mm")
+        n_with_buckets = sum(
+            1 for t in of_hist
+            if any(t.get(c) is not None for c in bucket_cols)
+        )
+        first_ts = of_hist[0].get("timestamp") if of_hist else None
+        last_ts = of_hist[-1].get("timestamp") if of_hist else None
+        try:
+            t0 = datetime.datetime.fromisoformat(str(first_ts)).astimezone(ET_TZ)
+            t1 = datetime.datetime.fromisoformat(str(last_ts)).astimezone(ET_TZ)
+            span_label = (f"{t0.strftime('%H:%M')} → {t1.strftime('%H:%M')} ET "
+                          f"({(t1 - t0).total_seconds() / 60:.0f} min)")
+        except Exception:
+            span_label = "—"
+        st.caption(
+            f"📡 **Estado del orderflow**: {len(of_hist)} ticks · "
+            f"span {span_label} · "
+            f"con bucket-data: **{n_with_buckets}/{len(of_hist)}** "
+            f"({100 * n_with_buckets / max(len(of_hist), 1):.0f}%). "
+            + ("✅ Buckets activos." if n_with_buckets > 5 else
+               "⚠ Los ticks históricos pre-upgrade no tienen 0DTE/Week/Month — "
+               "los paneles DEX/VEX por bucket se llenarán a medida que entren "
+               "ticks nuevos (cada `Auto-refresh` añade uno).")
+        )
+
         # Wall stability widget — addresses "are these walls real?"
         _render_md(panel_wall_stability_html(of_hist))
 

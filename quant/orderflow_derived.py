@@ -51,20 +51,30 @@ def velocity(history: list, field: str = "net_gex_mm",
     window. Resamples to 1-minute bars first so irregular tick cadence
     doesn't bias the slope.
 
-    Returns None if history is too short.
+    Returns None if history is too short or the field has no real values.
+    Constant series (e.g. cached chain in a closed market) return a
+    DataFrame with all-zero velocity so callers can render an explicit
+    "calm" overlay instead of an empty panel.
     """
     df = _to_df(history)
     if df is None or field not in df.columns or len(df) < 3:
         return None
-    s = pd.to_numeric(df[field], errors="coerce")
-    if s.notna().sum() < 3:
+    # Pre-coerce to numeric BEFORE indexing. astype(float) on a Series
+    # with stringified numbers (Schwab occasionally returns them) raises;
+    # to_numeric(errors="coerce") returns NaN-safe floats.
+    numeric = pd.to_numeric(df[field], errors="coerce")
+    if numeric.notna().sum() < 3:
         return None
-    # Resample to 1-min on the timestamp index.
-    ts = df.set_index("timestamp")[field].astype(float)
+    ts = pd.Series(numeric.values, index=df["timestamp"])
+    # Drop tz from the index just for the resample — pandas ≥2 handles
+    # tz-aware indices fine in resample but a few combinations have edge
+    # cases; using naive UTC here is robust and we never re-publish the
+    # index so timezone info isn't load-bearing downstream.
+    if getattr(ts.index, "tz", None) is not None:
+        ts.index = ts.index.tz_convert("UTC").tz_localize(None)
     ts_min = ts.resample("1min").mean().interpolate("linear")
     if len(ts_min) < 3:
         return None
-    # Slope ≈ Δ over `window_min` minutes — first-difference shifted.
     deriv = (ts_min - ts_min.shift(window_min)) / float(max(window_min, 1))
     out = pd.DataFrame({
         "timestamp": deriv.index,

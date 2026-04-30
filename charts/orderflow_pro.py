@@ -57,11 +57,24 @@ def _prepare(history: list) -> Optional[pd.DataFrame]:
 
 
 def _z_badge(z: Optional[float]) -> str:
-    if z is None:
+    """Render the title z-score chip, but only when it carries information.
+
+    Below |z| < 0.5 the chip just says "z ·  0.0σ" which adds noise to the
+    title without any signal — hide it instead. Above |z| ≥ 2 we add the
+    ⚠ flag so extreme values still pop visually."""
+    if z is None or abs(z) < 0.5:
         return ""
-    sym = "▲" if z > 0 else ("▼" if z < 0 else "·")
+    sym = "▲" if z > 0 else "▼"
     flag = "  ⚠" if abs(z) >= 2.0 else ""
     return f"   ·   z {sym}{abs(z):.1f}σ{flag}"
+
+
+def _has_any(df, cols: list[str]) -> bool:
+    """True if ANY of the listed columns has at least one non-NaN value."""
+    for c in cols:
+        if c in df.columns and df[c].notna().any():
+            return True
+    return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -142,15 +155,16 @@ def chart_orderflow_pro_stack(history: list,
 
     # ── Row 2: GEX velocity ───────────────────────────────────────────────
     vel_df = velocity(history, "net_gex_mm", window_min=5)
+    vmax_abs = 0.0
     if vel_df is not None and not vel_df.empty:
         try:
             vel_df["timestamp"] = vel_df["timestamp"].dt.tz_convert("America/New_York")
         except Exception:
             pass
         v = vel_df["net_gex_mm_velocity_per_min"]
-        # Adaptive threshold: 1σ of velocity itself; >2σ flags an anomaly.
         v_clean = v.dropna()
         sigma = float(v_clean.std(ddof=1)) if len(v_clean) > 2 else 0.0
+        vmax_abs = float(v_clean.abs().max()) if not v_clean.empty else 0.0
         bar_colors = []
         for x in v:
             if not np.isfinite(x):
@@ -169,6 +183,36 @@ def chart_orderflow_pro_stack(history: list,
         ), row=2, col=1)
         fig.add_hline(y=0, line_dash="dot",
                       line_color="rgba(255,255,255,0.15)", row=2, col=1)
+        # Pin a sensible y-range. With genuinely calm data the auto-scale
+        # collapses to [-1, +1] and the bars vanish; force a window of at
+        # least ±2 $M/min so even small movements are visible, and at
+        # least 1.3× the observed max so anomaly-coloured bars aren't
+        # clipped at the edge.
+        rng = max(2.0, vmax_abs * 1.3)
+        fig.update_yaxes(range=[-rng, rng], row=2, col=1)
+        # Calm-market overlay — when |max velocity| is essentially noise
+        # the panel reads as empty; spell it out so the user knows it's
+        # the data, not a broken chart.
+        if vmax_abs < 0.5:
+            fig.add_annotation(
+                x=0.5, y=0.5, xref="x2 domain", yref="y2 domain",
+                text=("— mercado plano · velocidad < 0.5 $M/min<br>"
+                      "<span style='font-size:9px;color:#606080'>"
+                      "los ticks históricos pre-upgrade no tienen variación; "
+                      "se activará con nuevos refreshes</span>"),
+                showarrow=False, align="center",
+                font=dict(size=11, color="#7070a0", family=FONT_MONO),
+                bgcolor="rgba(15,17,24,0.8)", borderpad=6,
+            )
+    else:
+        # vel_df is None → not enough data yet
+        fig.add_annotation(
+            x=0.5, y=0.5, xref="x2 domain", yref="y2 domain",
+            text="— histórico insuficiente para calcular velocidad —",
+            showarrow=False, align="center",
+            font=dict(size=11, color="#7070a0", family=FONT_MONO),
+            bgcolor="rgba(15,17,24,0.8)", borderpad=6,
+        )
 
     # ── Row 3: DEX with DTE buckets ───────────────────────────────────────
     bucket_specs = [
@@ -176,6 +220,8 @@ def chart_orderflow_pro_stack(history: list,
         ("week", "Week",  ORANGE),
         ("month", "Month", PURPLE),
     ]
+    dex_bucket_cols = [f"dex_net_{n}_mm" for n, _, _ in bucket_specs]
+    has_dex_buckets = _has_any(df, dex_bucket_cols)
     for name, label, color in bucket_specs:
         col = f"dex_net_{name}_mm"
         if col in df.columns and df[col].notna().any():
@@ -198,6 +244,8 @@ def chart_orderflow_pro_stack(history: list,
         ), row=3, col=1, secondary_y=True)
 
     # ── Row 4: VEX with DTE buckets ───────────────────────────────────────
+    vex_bucket_cols = [f"vex_net_{n}_mm" for n, _, _ in bucket_specs]
+    has_vex_buckets = _has_any(df, vex_bucket_cols)
     for name, label, color in bucket_specs:
         col = f"vex_net_{name}_mm"
         if col in df.columns and df[col].notna().any():
@@ -225,6 +273,32 @@ def chart_orderflow_pro_stack(history: list,
         fig.add_hline(y=0, line_dash="dot",
                       line_color="rgba(255,255,255,0.10)", row=r, col=1,
                       secondary_y=False)
+
+    # Bucket-data freshness annotations: when historical ticks pre-date the
+    # bucket-fields rollout, all per-DTE columns are NaN and the trader
+    # otherwise sees an "empty" panel for DEX/VEX. Spell out *why* the
+    # decomposition is missing so they don't think the chart is broken.
+    if not has_dex_buckets:
+        fig.add_annotation(
+            x=0.5, y=0.5, xref="x3 domain", yref="y3 domain",
+            text=("DEX por DTE bucket  ·  pendiente<br>"
+                  "<span style='font-size:9px;color:#606080'>"
+                  "los ticks históricos pre-upgrade no tienen 0DTE/Week/Month;<br>"
+                  "se llenarán con cada nuevo refresh</span>"),
+            showarrow=False, align="center",
+            font=dict(size=11, color="#7070a0", family=FONT_MONO),
+            bgcolor="rgba(15,17,24,0.85)", borderpad=6,
+        )
+    if not has_vex_buckets:
+        fig.add_annotation(
+            x=0.5, y=0.5, xref="x4 domain", yref="y4 domain",
+            text=("VEX por DTE bucket  ·  pendiente<br>"
+                  "<span style='font-size:9px;color:#606080'>"
+                  "se llenarán con cada nuevo refresh</span>"),
+            showarrow=False, align="center",
+            font=dict(size=11, color="#7070a0", family=FONT_MONO),
+            bgcolor="rgba(15,17,24,0.85)", borderpad=6,
+        )
 
     fig.update_layout(
         height=940,
