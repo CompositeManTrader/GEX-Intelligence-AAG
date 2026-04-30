@@ -10,12 +10,13 @@ Reference: Hull 11e, Ch 19.
 from __future__ import annotations
 
 import datetime
+from datetime import timezone
 from typing import Union
 
 import numpy as np
 from scipy.stats import norm
 
-from config import CALENDAR_DAYS, MARKET_CLOSE_ET, RATE_CURVE_DEFAULT
+from config import CALENDAR_DAYS, ET_TZ, MARKET_CLOSE_ET, RATE_CURVE_DEFAULT
 
 ArrayLike = Union[float, np.ndarray]
 
@@ -39,13 +40,23 @@ def time_to_expiry_years(
 
     zero_mask = dte == 0
     if np.any(zero_mask):
-        # Work in Eastern Time — crude (no DST adjustment) but sufficient intraday.
-        now = now or datetime.datetime.utcnow()
-        et_now = now - datetime.timedelta(hours=4)  # approx ET (EDT)
-        close = datetime.datetime.combine(et_now.date(), MARKET_CLOSE_ET)
-        secs_to_close = max((close - et_now).total_seconds(), 120.0)
+        # Use a real ET-aware clock so DST is handled correctly. The
+        # previous implementation hardcoded UTC-4 (EDT) and was off by
+        # an hour during EST months — that materially mispriced 0DTE
+        # gamma in the final hour of the session.
+        if now is None:
+            now = datetime.datetime.now(ET_TZ)
+        else:
+            # Accept naive (assumed UTC) or tz-aware datetimes.
+            if now.tzinfo is None:
+                now = now.replace(tzinfo=timezone.utc)
+            now = now.astimezone(ET_TZ)
+        close_naive = datetime.datetime.combine(now.date(), MARKET_CLOSE_ET)
+        close_et = ET_TZ.localize(close_naive) if hasattr(ET_TZ, "localize") \
+            else close_naive.replace(tzinfo=now.tzinfo)
+        secs_to_close = max((close_et - now).total_seconds(), 120.0)
         frac_day = secs_to_close / 86400.0
-        # T for 0DTE = fraction of one calendar day
+        # T for 0DTE = fraction of one calendar day, in years.
         T = np.where(zero_mask, frac_day / CALENDAR_DAYS, T)
 
     # Final floor to prevent divide-by-zero in sigma*sqrt(T)
@@ -125,16 +136,28 @@ def vanna(S, K, T, sigma, r, q=0.0) -> np.ndarray:
     return np.where(np.isfinite(out), out, 0.0)
 
 
-def charm(S, K, T, sigma, r, q=0.0, per: str = "day") -> np.ndarray:
-    """Charm (∂Δ/∂t). Returned per calendar day by default.
+def charm(S, K, T, sigma, r, q=0.0, per: str = "day",
+          side: str = "call") -> np.ndarray:
+    """Charm (∂Δ/∂t in calendar-time-forward direction).
+    Returned per calendar day by default.
 
-    Hull 19.12 (with continuous dividend q):
-      Charm_call_year = q·e^(-qT)·N(d1)
-          − e^(-qT)·φ(d1)·[ 2(r-q)T − d2·σ√T ] / (2T·σ√T)
-    For put: Charm_put = Charm_call − q·e^(-qT) (parity in Δ).
-    We use the call form here; since downstream GEX/VEX/CEX use `charm`
-    identically for both sides under q=0 this equals the legacy behaviour.
-    For q>0 callers should pass `side` if they care about the put/call split.
+    Hull 11e Eq 19.18 expresses ∂Δ/∂T (T = time-to-expiry). Calendar-time
+    charm is the negative of that. With continuous dividend q the
+    call-side calendar charm is:
+
+        Charm_call_year = q·e^(-qT)·N(d1)
+            − e^(-qT)·φ(d1)·[ 2(r-q)T − d2·σ√T ] / (2·T·σ·√T)
+
+    Put-call parity for delta with continuous dividends is
+    Δ_put = e^(-qT)·(N(d1) − 1).  Differentiating both sides w.r.t.
+    calendar time t (T = T₀ − t) gives:
+
+        Charm_put = Charm_call + q·e^(-qT)
+
+    The legacy implementation hardcoded `side="call"`; for q>0 (e.g. SPY,
+    QQQ, DIA in `config.DIVIDEND_YIELDS`) put-side CEX was therefore
+    biased by ≈ q·OI·100·S per put strike.  Pass `side="put"` to get the
+    correct put-side per-day charm.
     """
     S = np.asarray(S, dtype=float)
     T = np.asarray(T, dtype=float)
@@ -149,6 +172,11 @@ def charm(S, K, T, sigma, r, q=0.0, per: str = "day") -> np.ndarray:
         num = np.exp(-q * T) * norm.pdf(v1) * (2.0 * (r - q) * T - v2 * sigma * np.sqrt(T))
         den = 2.0 * T * sigma * np.sqrt(T)
         charm_year = term_q - num / den
+
+    if str(side).lower().startswith("p"):
+        # Put-side adjustment: +q·e^(-qT) added to the call charm.
+        charm_year = charm_year + q * np.exp(-q * T)
+
     if per == "day":
         charm_year = charm_year / float(CALENDAR_DAYS)
     return np.where(np.isfinite(charm_year), charm_year, 0.0)
