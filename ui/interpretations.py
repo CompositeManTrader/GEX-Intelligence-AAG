@@ -87,8 +87,9 @@ def interpret_gex_profile(gex_sum: dict, spot: float) -> str:
         parts.append(f"📍 Resistencia clave: <b>${cw:.0f}</b> (call wall).")
     elif pw:
         parts.append(f"📍 Soporte clave: <b>${pw:.0f}</b> (put wall).")
-    # Zero gamma
-    if gf and spot:
+    # Zero gamma — guard spot>0 so a transient zero spot from `fetch_quote`
+    # cannot crash the panel with ZeroDivisionError.
+    if gf and spot and spot > 0:
         flip_pct = (gf - spot) / spot * 100
         if abs(flip_pct) < 0.3:
             parts.append(
@@ -97,10 +98,14 @@ def interpret_gex_profile(gex_sum: dict, spot: float) -> str:
             )
         else:
             side = "arriba" if flip_pct > 0 else "abajo"
+            # Cross direction → destination regime: spot moves UP through
+            # an above-spot gf → POSITIVE; spot moves DOWN through a
+            # below-spot gf → NEGATIVE. The legacy 2-state toggle was
+            # wrong whenever the current regime was NEUTRAL.
+            destination = "POSITIVE" if flip_pct > 0 else "NEGATIVE"
             parts.append(
                 f"Zero Γ en <b>${gf:.0f}</b> ({flip_pct:+.1f}% {side}). "
-                f"Cruzarlo alternaría el régimen a "
-                f"{'NEGATIVE' if regime == 'POSITIVE' else 'POSITIVE'}."
+                f"Cruzarlo movería el régimen a {destination}."
             )
     # HVL
     if hvl:
@@ -227,16 +232,20 @@ def interpret_term_structure(ts_df: pd.DataFrame) -> str:
             "vencimientos, régimen estable."
         )
         tone = "neutral"
-    # Kink detection
+    # Kink detection — sort by DTE first so the diff() walks chronologically,
+    # then use .loc with the index label returned by idxmax/idxmin (the
+    # legacy code did `.iloc[label]`, which returned the wrong row whenever
+    # the caller passed a non-default index — e.g. a sliced ts_df).
     if len(ts_df) >= 3:
-        diffs = ts_df["ATM_IV"].diff().dropna()
-        if diffs.max() > 2.5:
-            kink_idx = int(diffs.idxmax())
-            kink_exp = str(ts_df.iloc[kink_idx]["Expiry"])[:10]
+        ordered = ts_df.sort_values("DTE")
+        diffs = ordered["ATM_IV"].diff().dropna()
+        if not diffs.empty and diffs.max() > 2.5:
+            kink_label = diffs.idxmax()
+            kink_exp = str(ordered.loc[kink_label, "Expiry"])[:10]
             msg += f" &nbsp;🔺 Pico notable cerca de <b>{kink_exp}</b>."
-        if diffs.min() < -2.5:
-            dip_idx = int(diffs.idxmin())
-            dip_exp = str(ts_df.iloc[dip_idx]["Expiry"])[:10]
+        if not diffs.empty and diffs.min() < -2.5:
+            dip_label = diffs.idxmin()
+            dip_exp = str(ordered.loc[dip_label, "Expiry"])[:10]
             msg += f" &nbsp;🔻 Caída notable en <b>{dip_exp}</b>."
     return _box(msg, tone)
 

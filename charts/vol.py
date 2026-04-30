@@ -126,11 +126,14 @@ def chart_iv_smile(smile_df: pd.DataFrame, spot: float, expiry: str,
             showlegend=False,
         ), row=1, col=1)
     vline(fig, spot, row=1, col=1, label=False)
-    # Skew col: Put_IV - Call_IV
-    skew_s = (sm["P_IV"] - sm["C_IV"]).dropna()
-    clrs = [RED if v > 0 else GREEN for v in skew_s]
+    # Skew col: Put_IV - Call_IV. Compute the skew once and use the SAME
+    # array for both y-values and the per-bar color list — otherwise a NaN
+    # IV on either side desyncs the dropna'd colors from the un-dropna'd
+    # bars and Plotly recycles colors silently, mis-coloring strikes.
+    skew_y = (sm["P_IV"] - sm["C_IV"])
+    clrs = [RED if (pd.notna(v) and v > 0) else GREEN for v in skew_y]
     fig.add_trace(go.Bar(
-        x=sm["Strike"], y=(sm["P_IV"] - sm["C_IV"]),
+        x=sm["Strike"], y=skew_y,
         marker_color=clrs, marker_line_width=0,
         name="Skew", showlegend=False,
         hovertemplate="K %{x}<br>P−C IV: %{y:.1f}%<extra></extra>",

@@ -25,9 +25,13 @@ def _fmt(v, col: str = "") -> str:
         s = f"{int(f):,}"
         return f'<span class="hi">{s}</span>' if f > 0 else f'<span class="neu">{s}</span>'
     if col == "Delta":
-        cls = ("pos" if f > 0.5 else
-               ("neg" if f < -0.5 else
-                ("hi" if abs(f) > 0.3 else "neu")))
+        # Color by |Δ| (moneyness intensity), not signed Δ. Puts have
+        # negative deltas in [-1, 0] — coloring −0.5 (ATM put) red as if
+        # it were a far-OTM short was misleading. Use intensity scale:
+        # ITM (|Δ|>0.7) = strong, near-ATM (0.3<|Δ|≤0.7) = mid, far-OTM
+        # (|Δ|≤0.3) = neutral. Sign is preserved in the rendered number.
+        a = abs(f)
+        cls = "pos" if a > 0.7 else ("hi" if a > 0.3 else "neu")
         return f'<span class="{cls}">{f:+.3f}</span>'
     if col in ("Gamma", "Vega"):
         return (f'<span class="hi">{f:.4f}</span>' if f > 0
@@ -38,6 +42,15 @@ def _fmt(v, col: str = "") -> str:
         return (f'<span class="hi">{f:.2f}</span>' if f > 0
                 else '<span class="neu">—</span>')
     return f"{f:.2f}"
+
+
+def _pct_label(s: float, spot: float) -> str:
+    """Strike % distance from spot — guarded against zero/None spot so a
+    transient parse miss from `data/fetch.fetch_quote` cannot crash the
+    whole chain render with ZeroDivisionError."""
+    if not spot or spot <= 0:
+        return "—"
+    return f"{(s / spot - 1) * 100:+.1f}%"
 
 
 def build_table(c_df: pd.DataFrame, p_df: pd.DataFrame,
@@ -76,7 +89,7 @@ def build_table(c_df: pd.DataFrame, p_df: pd.DataFrame,
             rc = "atm-row" if s == atm_s else ("itm-c" if itm else "")
             sc = "atm-strike" if s == atm_s else "strike"
             pct = (f'<span style="font-size:0.6rem;color:#404060;margin-left:4px">'
-                   f'{(s/spot-1)*100:+.1f}%</span>')
+                   f'{_pct_label(s, spot)}</span>')
             parts.append(f'<tr class="{rc}"><td class="lft">'
                          f'<span class="{sc}">${s:.1f}</span>{pct}</td>')
             parts.append(cells(r, c_cols))
@@ -92,7 +105,7 @@ def build_table(c_df: pd.DataFrame, p_df: pd.DataFrame,
             rc = "atm-row" if s == atm_s else ("itm-p" if itm else "")
             sc = "atm-strike" if s == atm_s else "strike"
             pct = (f'<span style="font-size:0.6rem;color:#404060;margin-left:4px">'
-                   f'{(s/spot-1)*100:+.1f}%</span>')
+                   f'{_pct_label(s, spot)}</span>')
             parts.append(f'<tr class="{rc}"><td class="lft">'
                          f'<span class="{sc}">${s:.1f}</span>{pct}</td>')
             parts.append(cells(r, p_cols))
@@ -127,7 +140,7 @@ def build_table(c_df: pd.DataFrame, p_df: pd.DataFrame,
             mid = ("background:rgba(249,115,22,0.1);color:#f97316;font-weight:800;"
                    if is_atm else
                    "background:#0d0d1a;color:#9090b0;font-weight:600;")
-            pct = f'{(s/spot-1)*100:+.1f}%'
+            pct = _pct_label(s, spot)
             parts.append(f'<td class="ctr" style="{mid}'
                          f'border-left:1px solid #22c55e22;'
                          f'border-right:1px solid #f43f5e22;">'

@@ -63,7 +63,14 @@ def flip_zone_widget(spot: float, gex_sum: Optional[dict]) -> str:
 
     above = dist_abs > 0    # gf above spot → spot would need to rally to flip
     direction = "por ENCIMA del spot" if above else "por DEBAJO del spot"
-    next_regime = "NEGATIVE" if regime == "POSITIVE" else "POSITIVE"
+    # Crossing direction matters: if Zero Γ is ABOVE spot, a rally up across
+    # it pushes Net GEX into POSITIVE territory; a fall below an above-spot
+    # gf is impossible (can't fall through a level above you). Net GEX is
+    # negative below gf and positive above gf (SqueezeMetrics convention),
+    # so the destination regime is determined by which side of gf you land.
+    # The legacy 2-state toggle assumed binary regime and mis-labelled the
+    # transition target whenever the current regime was NEUTRAL.
+    next_regime = "POSITIVE" if above else "NEGATIVE"
 
     # Thermometer: spot position inside [pw, cw] range as %
     bar_html = ""

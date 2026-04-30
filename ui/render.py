@@ -275,6 +275,11 @@ def show_dashboard() -> None:
         if symbol_changed:
             st.session_state.pop(SS.HIRO_HISTORY, None)
             st.session_state.pop(SS.ORDERFLOW_HISTORY, None)
+            # Also drop the previously-selected expiry — it belonged to
+            # the old chain and `by_expiry` would otherwise return empty
+            # for the new symbol, blanking every panel until the user
+            # manually re-selects an expiry.
+            st.session_state.pop(SS.SEL_EXP, None)
             # Only rerun on a true symbol change so the SEL_EXP selectbox
             # picks up the new ALL_EXPS list. Auto-refreshes on the same
             # symbol skip this rerun → no flicker, no widget-state reset.
@@ -300,7 +305,18 @@ def show_dashboard() -> None:
     calls = by_expiry(calls_all, sel_exp).sort_values("Strike") if not calls_all.empty else calls_all
     puts = by_expiry(puts_all, sel_exp).sort_values("Strike") if not puts_all.empty else puts_all
 
-    spot = float(ul.get("mark") or ul.get("last") or ul.get("close") or 0)
+    # Spot reference: prefer last traded price, then mark only when bid/ask
+    # are both populated (otherwise mark can be (0+stale_ask)/2 — a stale
+    # reference that mis-prices walls / EM / pct-distances across the panel).
+    _last = ul.get("last")
+    _mark = ul.get("mark")
+    _bid, _ask = ul.get("bid"), ul.get("ask")
+    if _last and float(_last) > 0:
+        spot = float(_last)
+    elif _mark and _bid and _ask and float(_bid) > 0 and float(_ask) > 0:
+        spot = float(_mark)
+    else:
+        spot = float(ul.get("close") or 0)
     chg = float(ul.get("netChange", 0) or 0)
     chg_p = float(ul.get("percentChange", 0) or 0)
     bid_u = float(ul.get("bid", 0) or 0)
@@ -317,7 +333,9 @@ def show_dashboard() -> None:
             except Exception:
                 dte_v = 0
 
-    iv_atm = atm_iv_interp(calls_all, spot) or atm_iv_interp(calls, spot)
+    # Blend put-side IV when available (OCC convention) — see levels.py.
+    iv_atm = (atm_iv_interp(calls_all, spot, p=puts_all)
+              or atm_iv_interp(calls, spot, p=puts))
     p_c = put_call_ratio(calls, puts)
     mp = max_pain(calls, puts)
     em_lo, em_hi = expected_move(spot, iv_atm, dte_v)
