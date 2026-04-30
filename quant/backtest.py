@@ -130,9 +130,16 @@ def _orderflow_snapshot_at(of_history: list[dict],
     total = (float(net_mm) * 1e6) if net_mm is not None else 0.0
     call_g = (float(call_mm) * 1e6) if call_mm is not None else 0.0
     put_g = (float(put_mm) * 1e6) if put_mm is not None else 0.0
-    if total > 1e3:
+    # Regime threshold: relative to gross GEX so it scales naturally with
+    # the underlying. The previous absolute $1k threshold was effectively
+    # zero for index ETFs (typical net GEX in the billions) and over-
+    # filtered tiny single-name chains. ≥5% of gross is the SqueezeMetrics
+    # convention for a "meaningful" regime.
+    gross = abs(call_g) + abs(put_g)
+    neutral_band = max(0.05 * gross, 1e6)  # at least $1M to absorb noise
+    if total > neutral_band:
         regime = "POSITIVE"
-    elif total < -1e3:
+    elif total < -neutral_band:
         regime = "NEGATIVE"
     else:
         regime = "NEUTRAL"
@@ -250,12 +257,16 @@ def run_backtest(
                             open_positions.append(_armed_position(
                                 sig, fill_price=fill, fill_ts=next_bar["_et"]))
 
-        # End of session: force-close anything still open at last bar
+        # End of session: force-close anything still open at last bar.
+        # If the position is a runner (TP1 already locked) we blend so the
+        # reported pnl reflects the 50/50 scale-out actually taken.
         if open_positions:
             last_bar = day_bars.iloc[-1]
             for pos in open_positions:
+                close_px = float(last_bar["close"])
+                exit_px = _blend_runner_exit(pos, close_px)
                 trades.append(_close_trade(pos, last_bar,
-                    {"exit_price": float(last_bar["close"]),
+                    {"exit_price": exit_px,
                      "exit_reason": "flat_close"}, symbol))
 
     stats = compute_stats(trades)
@@ -282,18 +293,46 @@ def _armed_position(sig: Signal, fill_price: float,
     )
 
 
+def _blend_runner_exit(pos: dict, raw_exit: float) -> float:
+    """Blend the half closed at TP1 with the runner's final exit price.
+
+    When `use_target2=True` and TP1 fills, half the position closes at TP1
+    and the remainder is trailed to TP2 (with stop moved to entry/breakeven).
+    The Trade record stores a single exit_price/r_multiple, so to keep the
+    arithmetic correct we report the equally-weighted average of the two
+    fills. With pnl = exit - entry this gives:
+        pnl_blended = 0.5·(TP1 − entry) + 0.5·(final − entry)
+    which is exactly the realised pnl for the 50/50 scale-out.
+    """
+    if pos.get("tp1_filled"):
+        return (float(pos["tp1_price"]) + float(raw_exit)) / 2.0
+    return float(raw_exit)
+
+
 def _check_exit(pos: dict, bar: pd.Series, next_bar: pd.Series,
                 flat_close_et: datetime.time,
                 use_target2: bool) -> Optional[dict]:
     """Decide whether the OPEN position closes on `bar`. Returns None if
-    still open, or a dict with exit_price + exit_reason."""
+    still open, or a dict with exit_price + exit_reason.
+
+    Scale-out semantics (use_target2=True):
+      - First time TP1 is touched: lock half at TP1, trail stop to entry
+        (breakeven). Position stays open as a "runner" for TP2.
+      - Runner exits at TP2, breakeven stop, or end-of-session — exit_price
+        is reported as the 50/50 average of the TP1 fill and the final fill.
+    Conservative same-bar ordering: if stop and TP are both touched in the
+    same bar, we assume stop first (worst-case fill).
+    """
     pos["bars_held"] += 1
     high = float(bar["high"])
     low = float(bar["low"])
     side = pos["side"]
-    stop = pos["stop"]
-    t1 = pos["target1"]
-    t2 = pos["target2"] if use_target2 else None
+    entry = float(pos["entry"])
+    t1 = float(pos["target1"])
+    t2 = float(pos["target2"]) if use_target2 else None
+    in_runner = bool(pos.get("tp1_filled", False))
+    # When trailing the runner, the active stop is the entry (breakeven).
+    stop = entry if (in_runner and use_target2) else float(pos["stop"])
 
     bar_time = bar["_et"].time() if hasattr(bar["_et"], "time") else None
 
@@ -301,31 +340,52 @@ def _check_exit(pos: dict, bar: pd.Series, next_bar: pd.Series,
         hit_stop = low <= stop
         hit_t1 = high >= t1
         hit_t2 = (t2 is not None and high >= t2)
-        # Conservative ordering: if both touched in same bar, stop first.
-        if hit_stop and (hit_t1 or hit_t2):
-            return {"exit_price": stop, "exit_reason": "stop"}
-        if hit_stop:
-            return {"exit_price": stop, "exit_reason": "stop"}
-        if hit_t2:
-            return {"exit_price": t2, "exit_reason": "target2"}
-        if hit_t1 and not use_target2:
-            return {"exit_price": t1, "exit_reason": "target1"}
     else:  # SHORT
         hit_stop = high >= stop
         hit_t1 = low <= t1
         hit_t2 = (t2 is not None and low <= t2)
-        if hit_stop and (hit_t1 or hit_t2):
-            return {"exit_price": stop, "exit_reason": "stop"}
-        if hit_stop:
-            return {"exit_price": stop, "exit_reason": "stop"}
-        if hit_t2:
-            return {"exit_price": t2, "exit_reason": "target2"}
-        if hit_t1 and not use_target2:
-            return {"exit_price": t1, "exit_reason": "target1"}
 
-    # Force flat at end-of-session
+    # ─── Pre-scale phase: full position, original stop ───────────────────
+    if not in_runner:
+        if use_target2:
+            # Both stop and TP touched — assume stop fills first (worst case).
+            if hit_stop:
+                return {"exit_price": stop, "exit_reason": "stop"}
+            if hit_t2:
+                # TP1 + TP2 inside the same bar: lock TP1 half, runner exits TP2.
+                return {"exit_price": (t1 + t2) / 2.0,
+                        "exit_reason": "target2"}
+            if hit_t1:
+                # Lock half at TP1, trail to TP2 with stop at entry.
+                pos["tp1_filled"] = True
+                pos["tp1_price"] = float(t1)
+                # Position stays open (the runner). Fall through to flat-close.
+            # else: nothing hit, fall through to flat-close.
+        else:
+            # use_target2=False: classic single-target behaviour, exit at TP1.
+            if hit_stop:
+                return {"exit_price": stop, "exit_reason": "stop"}
+            if hit_t1:
+                return {"exit_price": t1, "exit_reason": "target1"}
+
+    # ─── Runner phase: half closed at TP1, BE stop, target = TP2 ─────────
+    else:
+        if hit_stop and hit_t2:
+            # Both BE-stop and TP2 in the same bar — conservative: BE stop fills first.
+            return {"exit_price": _blend_runner_exit(pos, stop),
+                    "exit_reason": "stop_be"}
+        if hit_stop:
+            return {"exit_price": _blend_runner_exit(pos, stop),
+                    "exit_reason": "stop_be"}
+        if hit_t2:
+            return {"exit_price": _blend_runner_exit(pos, t2),
+                    "exit_reason": "target2"}
+
+    # ─── End-of-session force-flat (handles runner blending automatically) ─
     if bar_time is not None and bar_time >= flat_close_et:
-        return {"exit_price": float(bar["close"]), "exit_reason": "flat_close"}
+        close_px = float(bar["close"])
+        return {"exit_price": _blend_runner_exit(pos, close_px),
+                "exit_reason": "flat_close"}
     return None
 
 
