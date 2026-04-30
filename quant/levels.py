@@ -41,17 +41,24 @@ def put_call_ratio(c: pd.DataFrame, p: pd.DataFrame,
     return round(float(p[field].sum()) / tot, 2) if tot > 0 else None
 
 
-def atm_iv_interp(c: pd.DataFrame, spot: float) -> Optional[float]:
-    """Linear interpolation of IV at K=spot using the two nearest strikes."""
-    if c is None or c.empty or "IV%" not in c.columns or spot <= 0:
+def _interp_iv_one_side(df: pd.DataFrame, spot: float) -> Optional[float]:
+    """Linear-interp IV at K=spot on the nearest expiry of one side (calls or puts)."""
+    if df is None or df.empty or "IV%" not in df.columns:
         return None
-    valid = c[c["IV%"].notna() & (c["IV%"] > MIN_IV_PCT)].copy()
+    valid = df[df["IV%"].notna() & (df["IV%"] > MIN_IV_PCT)].copy()
     if valid.empty:
         return None
     if "DTE" in valid.columns:
-        # Choose nearest expiry first
-        nearest_dte = valid.loc[(valid["Strike"] - spot).abs().idxmin(), "DTE"]
-        valid = valid[valid["DTE"] == nearest_dte]
+        # Pick the genuinely nearest expiry — the smallest non-negative DTE.
+        # Previous code picked the DTE of the row whose strike was nearest
+        # to spot, which is non-deterministic when several expiries share
+        # the same strike grid.
+        non_neg = valid[valid["DTE"] >= 0]
+        if not non_neg.empty:
+            nearest_dte = float(non_neg["DTE"].min())
+            valid = valid[valid["DTE"] == nearest_dte]
+        if valid.empty:
+            return None
     valid = valid.sort_values("Strike")
     below = valid[valid["Strike"] <= spot]
     above = valid[valid["Strike"] >= spot]
@@ -63,9 +70,27 @@ def atm_iv_interp(c: pd.DataFrame, spot: float) -> Optional[float]:
     iv_lo = float(below.iloc[-1]["IV%"])
     iv_hi = float(above.iloc[0]["IV%"])
     if k_hi == k_lo:
-        return iv_lo
+        return float(iv_lo)
     w = (spot - k_lo) / (k_hi - k_lo)
-    return round(iv_lo + w * (iv_hi - iv_lo), 2)
+    return float(iv_lo + w * (iv_hi - iv_lo))
+
+
+def atm_iv_interp(c: pd.DataFrame, spot: float,
+                  p: Optional[pd.DataFrame] = None) -> Optional[float]:
+    """Linear interpolation of IV at K=spot using the two nearest strikes.
+
+    If `p` (puts) is provided, the ATM IV is the average of the call-side
+    and put-side ATM interpolations (the OCC convention). This removes the
+    bias caused by ignoring put-side IV when call-side liquidity is thin.
+    """
+    if spot <= 0:
+        return None
+    iv_c = _interp_iv_one_side(c, spot)
+    iv_p = _interp_iv_one_side(p, spot) if p is not None else None
+    vals = [v for v in (iv_c, iv_p) if v is not None]
+    if not vals:
+        return None
+    return round(sum(vals) / len(vals), 2)
 
 
 def expected_move(spot: float, iv_pct: Optional[float],
