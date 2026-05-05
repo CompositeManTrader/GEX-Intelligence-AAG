@@ -51,9 +51,23 @@ def _anchored_vwap(df: pd.DataFrame) -> pd.Series:
 
 
 def _as_et(dt_series: pd.Series) -> pd.Series:
-    """Convert a UTC-aware or naive datetime series to US/Eastern."""
+    """Convert a UTC-aware or naive datetime series to US/Eastern.
+
+    Defensive against:
+      · Mixed-type input (string + Timestamp + numpy.datetime64) — coerce
+        all via `pd.to_datetime(errors="coerce")`.
+      · Already tz-aware in non-UTC zone — convert directly.
+      · All-NaT input (e.g., a chain that came through with bad dates) —
+        return the series unchanged so downstream `df.sort_values` and
+        `df["date_et"].dt.date.max()` don't raise.
+    """
     s = pd.to_datetime(dt_series, errors="coerce")
+    if s.isna().all():
+        return s  # nothing to convert; downstream handles empty/NaT
     if s.dt.tz is None:
+        # Naive → assume UTC (Schwab pricehistory returns epoch ms which
+        # we already pass through `utc=True`, but cached/pickled paths
+        # have been observed to drop tz on some pandas versions).
         s = s.dt.tz_localize("UTC")
     return s.dt.tz_convert("America/New_York")
 
