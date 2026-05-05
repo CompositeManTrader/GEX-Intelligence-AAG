@@ -587,3 +587,155 @@ def position_sizer(account_size: float, risk_pct: float,
 </div>
 """)
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  GAMMA ZONES PANEL  —  P1 / P2 / P3 ranked clusters
+# ─────────────────────────────────────────────────────────────────────────────
+def panel_zones_html(zones: list, spot: Optional[float] = None) -> str:
+    """Render a ranked-table of GammaZone objects (or their dicts) with
+    width, score, side and current spot location relative to each zone.
+
+    The table answers four questions at a glance:
+      · Where are the strongest gamma clusters?
+      · How wide is each cluster (pad for stops)?
+      · Which side (call / put / mixed)?
+      · Is the spot inside one of them right now?
+    """
+    if not zones:
+        return _box_err("Sin zonas detectables todavía.")
+
+    rows: list[str] = []
+    for z in zones:
+        zd = z if isinstance(z, dict) else z.to_dict()
+        rank = int(zd.get("rank") or 0)
+        label = zd.get("label") or f"P{rank}"
+        peak = float(zd.get("peak_strike") or 0)
+        low = float(zd.get("low_strike") or 0)
+        high = float(zd.get("high_strike") or 0)
+        width = float(zd.get("width") or 0)
+        score = float(zd.get("integrated_gex_mm") or 0)
+        side = zd.get("side") or "mixed"
+        dist_pct = float(zd.get("distance_pct") or 0)
+
+        # Side badge styling
+        if side == "call_dominant":
+            side_color = "#22c55e"
+            side_label = "CALL ▲"
+        elif side == "put_dominant":
+            side_color = "#f43f5e"
+            side_label = "PUT ▼"
+        else:
+            side_color = "#f59e0b"
+            side_label = "MIXED ◇"
+
+        # Is spot inside this zone right now?
+        in_zone = (spot is not None and low <= float(spot) <= high)
+        in_marker = (
+            '<span style="color:#fbbf24;font-weight:700">  ●  spot dentro</span>'
+            if in_zone else ''
+        )
+
+        # Width descriptor
+        width_str = (f"{width:.0f}" if width >= 1 else f"{width:.2f}")
+        range_str = (
+            f"${peak:,.0f}" if width < 0.01
+            else f"${low:,.0f} – ${high:,.0f}"
+        )
+
+        rows.append(
+            f'<tr>'
+            f'<td style="padding:5px 10px;color:{side_color};'
+            f'font-weight:800;font-family:JetBrains Mono,monospace;'
+            f'font-size:0.86rem">{label}</td>'
+            f'<td style="padding:5px 10px;color:#e0e0f0;'
+            f'font-family:JetBrains Mono,monospace">{range_str}</td>'
+            f'<td style="padding:5px 10px;color:#9090b0;text-align:right;'
+            f'font-family:JetBrains Mono,monospace">{width_str} pts</td>'
+            f'<td style="padding:5px 10px;color:#e0e0f0;text-align:right;'
+            f'font-family:JetBrains Mono,monospace;font-weight:700">'
+            f'${score:+,.0f}M</td>'
+            f'<td style="padding:5px 10px;color:{side_color};text-align:center;'
+            f'font-family:JetBrains Mono,monospace;font-size:0.74rem;'
+            f'font-weight:700">{side_label}</td>'
+            f'<td style="padding:5px 10px;color:#7070a0;text-align:right;'
+            f'font-family:JetBrains Mono,monospace;font-size:0.78rem">'
+            f'{dist_pct:+.2f}%{in_marker}</td>'
+            f'</tr>'
+        )
+
+    # Spot-context line below the table
+    spot_msg = ""
+    if spot is not None:
+        # Find the zone (if any) containing the spot
+        in_zone = None
+        for z in zones:
+            zd = z if isinstance(z, dict) else z.to_dict()
+            lo = float(zd.get("low_strike") or 0)
+            hi = float(zd.get("high_strike") or 0)
+            if lo <= float(spot) <= hi:
+                in_zone = zd
+                break
+        if in_zone is not None:
+            lbl = in_zone.get("label", "P?")
+            sd = in_zone.get("side", "mixed")
+            verb = ("posible PINNING (long-γ)" if sd == "call_dominant"
+                    else "posible REJECTION (put-dominant)" if sd == "put_dominant"
+                    else "zona mixta — sin sesgo claro")
+            spot_msg = (
+                f'<div style="margin-top:0.5rem;padding:0.45rem 0.7rem;'
+                f'background:rgba(251,191,36,0.10);border-left:3px solid #fbbf24;'
+                f'border-radius:0 4px 4px 0;font-family:JetBrains Mono,monospace;'
+                f'font-size:0.78rem;color:#e0e0f0">'
+                f'Spot <b>${float(spot):,.2f}</b> está dentro de <b>{lbl}</b> · '
+                f'{verb}</div>'
+            )
+        else:
+            # Find the nearest zone
+            best = None
+            best_d = float("inf")
+            for z in zones:
+                zd = z if isinstance(z, dict) else z.to_dict()
+                peak = float(zd.get("peak_strike") or 0)
+                d = abs(peak - float(spot))
+                if d < best_d:
+                    best_d = d
+                    best = zd
+            if best is not None:
+                lbl = best.get("label", "P?")
+                spot_msg = (
+                    f'<div style="margin-top:0.5rem;padding:0.45rem 0.7rem;'
+                    f'background:rgba(255,255,255,0.04);border-left:3px solid #7070a0;'
+                    f'border-radius:0 4px 4px 0;font-family:JetBrains Mono,monospace;'
+                    f'font-size:0.78rem;color:#9090b0">'
+                    f'Spot <b>${float(spot):,.2f}</b> entre zonas · más cerca '
+                    f'de <b>{lbl}</b> ({best_d:.2f} pts)</div>'
+                )
+
+    return (
+        '<div style="background:rgba(15,17,24,0.85);border:1px solid #1e2230;'
+        'border-radius:6px;padding:0.7rem 0.9rem;margin:0.5rem 0;'
+        'font-family:JetBrains Mono,monospace">'
+        '<div style="color:#9090b0;font-size:0.66rem;letter-spacing:0.14em;'
+        'margin-bottom:0.5rem;text-transform:uppercase">'
+        '⛰  GAMMA ZONES  ·  ranked clusters by integrated |GEX|</div>'
+        '<table style="width:100%;border-collapse:collapse;font-size:0.78rem">'
+        '<thead><tr>'
+        '<th style="text-align:left;padding:3px 10px;color:#606080;'
+        'font-weight:500;font-size:0.66rem;letter-spacing:0.10em">RANK</th>'
+        '<th style="text-align:left;padding:3px 10px;color:#606080;'
+        'font-weight:500;font-size:0.66rem;letter-spacing:0.10em">RANGO</th>'
+        '<th style="text-align:right;padding:3px 10px;color:#606080;'
+        'font-weight:500;font-size:0.66rem;letter-spacing:0.10em">ANCHO</th>'
+        '<th style="text-align:right;padding:3px 10px;color:#606080;'
+        'font-weight:500;font-size:0.66rem;letter-spacing:0.10em">SCORE</th>'
+        '<th style="text-align:center;padding:3px 10px;color:#606080;'
+        'font-weight:500;font-size:0.66rem;letter-spacing:0.10em">SIDE</th>'
+        '<th style="text-align:right;padding:3px 10px;color:#606080;'
+        'font-weight:500;font-size:0.66rem;letter-spacing:0.10em">VS SPOT</th>'
+        '</tr></thead><tbody>'
+        + "".join(rows) +
+        '</tbody></table>'
+        + spot_msg +
+        '</div>'
+    )
+

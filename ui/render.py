@@ -448,6 +448,14 @@ def show_dashboard() -> None:
         calls_all, puts_all, spot, max_dte=max_dte, min_oi=min_oi,
     )
 
+    # ── Gamma zones (P1/P2/P3) — top-K clusters with width + score ──────────
+    # Computed once from the aggregate GEX profile and threaded into every
+    # chart/widget that wants them (overview panel, profile chart bands,
+    # intraday hrects, persistence). Direction-agnostic ranking by
+    # integrated |GEX| — see quant.zones for the algorithm.
+    from quant.zones import find_gamma_zones, zones_to_records
+    gamma_zones = find_gamma_zones(gex_df, spot=spot, top_n=3)
+
     # ── ORDERFLOW: rolling history + per-DTE buckets + per-strike heatmap ──
     # Per-DTE-bucket exposures: 0DTE/week/month. Computed once, reused for
     # both the tick payload (aggregate persistence) and the per-strike
@@ -492,6 +500,11 @@ def show_dashboard() -> None:
                     dex_df=dex_buckets.get(bname, (None, {}))[0],
                     vex_df=vex_buckets.get(bname, (None, {}))[0],
                 )
+        # Persist gamma zones snapshot — top-N P1/P2/P3 ranges with score.
+        if gamma_zones:
+            from data.persistence import persist_zones_tick
+            persist_zones_tick(symbol, of_tick["timestamp"],
+                               zones_to_records(gamma_zones))
         st.session_state["_last_persisted_of_tick"] = of_tick
     # Roll a daily snapshot row (idempotent upsert) so post-mortems work.
     persist_daily_snapshot(symbol, spot, gex_sum, mp, iv_atm,
@@ -680,7 +693,11 @@ def show_dashboard() -> None:
         # 2. GEX FLIP ZONE — thermometer tactico
         _render_md(flip_zone_widget(spot, gex_sum))
 
-        # 3. DECISION PANEL legacy
+        # 3. GAMMA ZONES — P1/P2/P3 ranked clusters with width + score
+        from ui.widgets import panel_zones_html
+        _render_md(panel_zones_html(gamma_zones, spot=spot))
+
+        # 4. DECISION PANEL legacy
         _render_md('<p class="bb-header">DECISION PANEL  ·  Flow-weighted thesis</p>')
         panel = build_decision_panel(spot, gex_sum, vex_sum, cex_sum, dex_sum,
                                      iv_atm, em_lo, em_hi, dte_v, vol_regime_str)
@@ -870,6 +887,7 @@ def show_dashboard() -> None:
                     intra_df, spot, gex_sum, mp=mp,
                     em_lo=em_lo, em_hi=em_hi,
                     freq_min=intra_freq, symbol=symbol,
+                    zones=gamma_zones,
                 )
             except Exception as exc:
                 log.exception("render_intraday_chart crashed")
@@ -1030,6 +1048,7 @@ def show_dashboard() -> None:
                 fig_gex = chart_gex_profile(
                     gex_df, spot, gex_sum, symbol,
                     focus_pct=gex_pct, view=gex_view,
+                    zones=gamma_zones,
                 )
             if fig_gex:
                 # Stable component key: tied ONLY to the symbol + style.
