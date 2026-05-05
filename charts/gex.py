@@ -31,10 +31,13 @@ def chart_gex_profile(gex_df: pd.DataFrame, spot: float, summary: dict,
                       symbol: str,
                       focus_pct: Optional[float] = 0.08,
                       view: str = "all",
+                      zones: Optional[list] = None,
                       ) -> Optional[go.Figure]:
     """
     view ∈ {"all", "net", "call", "put"} — controls which series are rendered.
     focus_pct: None → all strikes; float → ±pct window around spot.
+    zones: optional list of `quant.zones.GammaZone` (or their dicts) to
+           overlay as horizontal bands tagged P1/P2/P3.
     """
     if gex_df is None or gex_df.empty:
         return None
@@ -112,6 +115,48 @@ def chart_gex_profile(gex_df: pd.DataFrame, spot: float, summary: dict,
                       annotation_text=f"  HVL ${hvl:.0f}",
                       annotation_font_size=9, annotation_font_color=CYAN,
                       annotation_position="bottom right")
+
+    # ── Gamma zones (P1/P2/P3) overlay ──────────────────────────────────
+    # Horizontal bands spanning each zone's [low, high] strike range.
+    # Stronger zones (P1) drawn with higher opacity. Side controls hue:
+    #   call_dominant → green-ish, put_dominant → red, mixed → amber.
+    if zones:
+        # Per-side band colors with opacity scaled by rank (P1 = strongest)
+        for z in zones:
+            zd = z if isinstance(z, dict) else z.to_dict()
+            rank = int(zd.get("rank") or 0)
+            side = zd.get("side") or "mixed"
+            label = zd.get("label") or f"P{rank}"
+            low = float(zd.get("low_strike") or 0)
+            high = float(zd.get("high_strike") or 0)
+            peak = float(zd.get("peak_strike") or 0)
+            score = float(zd.get("integrated_gex_mm") or 0)
+            if low == 0 or high == 0:
+                continue
+            # Opacity ramp: P1 = 0.18, P2 = 0.12, P3+ = 0.07
+            alpha = max(0.05, 0.20 - 0.06 * (rank - 1))
+            if side == "call_dominant":
+                fill = f"rgba(34,197,94,{alpha})"
+                stroke = "#22c55e"
+            elif side == "put_dominant":
+                fill = f"rgba(244,63,94,{alpha})"
+                stroke = "#f43f5e"
+            else:
+                fill = f"rgba(245,158,11,{alpha})"
+                stroke = "#f59e0b"
+            # The band: x spans the full GEX axis, y spans the strike cluster
+            fig.add_hrect(
+                y0=low, y1=high,
+                fillcolor=fill, opacity=1.0,
+                line=dict(color=stroke, width=0.6, dash="dot"),
+                layer="below",
+                annotation_text=(
+                    f"{label} · ${peak:.0f} · ${score:+.0f}M"
+                ),
+                annotation_position="top left",
+                annotation_font=dict(size=9, color=stroke, family=FONT_MONO),
+            )
+
     fig.add_vline(x=0, line_dash="solid",
                   line_color="rgba(255,255,255,0.12)", line_width=1)
 

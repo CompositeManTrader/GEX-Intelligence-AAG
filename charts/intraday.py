@@ -84,8 +84,17 @@ def render_intraday_chart(
     em_hi: Optional[float] = None,
     freq_min: int = 1,
     symbol: str = "",
+    zones: Optional[list] = None,
 ) -> Optional[go.Figure]:
-    """Return a Plotly candlestick + volume + GEX-levels figure."""
+    """Return a Plotly candlestick + volume + GEX-levels figure.
+
+    Parameters
+    ----------
+    zones : optional list of `quant.zones.GammaZone` (or dicts) to
+            overlay as semi-transparent horizontal bands behind the
+            candles. Encodes both the zone width and its side via fill
+            colour. Good complement to the single-strike CW/PW lines.
+    """
     if price_df is None or price_df.empty:
         return None
     df = price_df.copy().dropna(subset=["open", "high", "low", "close"])
@@ -172,6 +181,50 @@ def render_intraday_chart(
     _hline(mp, "#94a3b8", "MP", dash="longdash")
     _hline(em_hi, "#c084fc", "EM+", dash="dot")
     _hline(em_lo, "#c084fc", "EM-", dash="dot")
+
+    # ── Gamma-zone bands (P1/P2/P3) ─────────────────────────────────────
+    # Drawn as horizontal rectangles behind the candles so the trader can
+    # see both the wall WIDTH and how spot trades into / out of each zone.
+    # Lighter than CW/PW lines so they don't dominate the chart.
+    if zones:
+        for z in zones:
+            zd = z if isinstance(z, dict) else z.to_dict()
+            rank = int(zd.get("rank") or 0)
+            side = zd.get("side") or "mixed"
+            label = zd.get("label") or f"P{rank}"
+            low = float(zd.get("low_strike") or 0)
+            high = float(zd.get("high_strike") or 0)
+            score_mm = float(zd.get("integrated_gex_mm") or 0)
+            if low <= 0 or high <= 0:
+                continue
+            # Single-strike clusters need a tiny visual width so the rect
+            # is visible at all (otherwise add_hrect collapses to a line).
+            if abs(high - low) < 0.01:
+                pad = max(0.25, abs(high) * 0.001)
+                low_p, high_p = low - pad, high + pad
+            else:
+                low_p, high_p = low, high
+            alpha = max(0.04, 0.16 - 0.05 * (rank - 1))
+            if side == "call_dominant":
+                fill = f"rgba(34,197,94,{alpha})"
+                stroke_clr = "#22c55e"
+            elif side == "put_dominant":
+                fill = f"rgba(244,63,94,{alpha})"
+                stroke_clr = "#f43f5e"
+            else:
+                fill = f"rgba(245,158,11,{alpha})"
+                stroke_clr = "#f59e0b"
+            fig.add_hrect(
+                y0=low_p, y1=high_p,
+                fillcolor=fill, opacity=1.0,
+                line=dict(width=0),
+                layer="below",
+                annotation_text=f" {label} · ${score_mm:+.0f}M",
+                annotation_position="top left",
+                annotation_font=dict(size=9, color=stroke_clr,
+                                     family=FONT_MONO),
+                row=1, col=1,
+            )
 
     # ── Annotate last candle with live price tag ────────────────────────────
     last_ts = df["date_et"].iloc[-1]
