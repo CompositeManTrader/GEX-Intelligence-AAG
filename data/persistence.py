@@ -116,10 +116,28 @@ CREATE TABLE IF NOT EXISTS orderflow_strikes (
     PRIMARY KEY (symbol, ts, bucket, strike)
 );
 
-CREATE INDEX IF NOT EXISTS idx_of_symbol_ts   ON orderflow_ticks(symbol, ts);
-CREATE INDEX IF NOT EXISTS idx_hiro_symbol_ts ON hiro_ticks(symbol, ts);
-CREATE INDEX IF NOT EXISTS idx_ofs_sym_ts     ON orderflow_strikes(symbol, ts);
-CREATE INDEX IF NOT EXISTS idx_ofs_sym_strike ON orderflow_strikes(symbol, strike, ts);
+CREATE TABLE IF NOT EXISTS orderflow_zones (
+    ts                 TEXT NOT NULL,
+    symbol             TEXT NOT NULL,
+    rank               INTEGER NOT NULL,
+    label              TEXT,
+    peak_strike        REAL,
+    low_strike         REAL,
+    high_strike        REAL,
+    width              REAL,
+    peak_gex_mm        REAL,
+    integrated_gex_mm  REAL,
+    side               TEXT,
+    distance_pct       REAL,
+    is_above_spot      INTEGER,
+    PRIMARY KEY (symbol, ts, rank)
+);
+
+CREATE INDEX IF NOT EXISTS idx_of_symbol_ts    ON orderflow_ticks(symbol, ts);
+CREATE INDEX IF NOT EXISTS idx_hiro_symbol_ts  ON hiro_ticks(symbol, ts);
+CREATE INDEX IF NOT EXISTS idx_ofs_sym_ts      ON orderflow_strikes(symbol, ts);
+CREATE INDEX IF NOT EXISTS idx_ofs_sym_strike  ON orderflow_strikes(symbol, strike, ts);
+CREATE INDEX IF NOT EXISTS idx_ofz_sym_ts      ON orderflow_zones(symbol, ts);
 """
 
 # Per-DTE-bucket fields persisted on the wide aggregate table. Schema is
@@ -494,11 +512,115 @@ def purge_old_ticks(keep_days: int = 30) -> int:
                        (cutoff,)).rowcount
         n3 = c.execute("DELETE FROM orderflow_strikes WHERE ts<?",
                        (cutoff,)).rowcount
+        n4 = c.execute("DELETE FROM orderflow_zones WHERE ts<?",
+                       (cutoff,)).rowcount
         c.commit()
-        return int(n1 + n2 + n3)
+        return int(n1 + n2 + n3 + n4)
     except Exception:
         log.exception("purge_old_ticks failed")
         return 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Gamma zones (P1/P2/P3 …) — persisted per tick for replay + cross-session
+# ─────────────────────────────────────────────────────────────────────────────
+def persist_zones_tick(symbol: str, ts: str, zones: list[dict]) -> None:
+    """Persist a top-N gamma-zones snapshot. Zones are dicts produced by
+    :func:`quant.zones.GammaZone.to_dict`. Best-effort, silent on errors.
+    """
+    if not symbol or not ts or not zones:
+        return
+    try:
+        rows = [
+            (
+                ts, symbol,
+                int(z.get("rank") or 0),
+                str(z.get("label") or ""),
+                _safe_float(z.get("peak_strike")),
+                _safe_float(z.get("low_strike")),
+                _safe_float(z.get("high_strike")),
+                _safe_float(z.get("width")),
+                _safe_float(z.get("peak_gex_mm")),
+                _safe_float(z.get("integrated_gex_mm")),
+                str(z.get("side") or ""),
+                _safe_float(z.get("distance_pct")),
+                1 if z.get("is_above_spot") else 0,
+            )
+            for z in zones
+        ]
+        c = _conn()
+        c.executemany(
+            "INSERT OR IGNORE INTO orderflow_zones "
+            "(ts, symbol, rank, label, peak_strike, low_strike, high_strike, "
+            " width, peak_gex_mm, integrated_gex_mm, side, distance_pct, "
+            " is_above_spot) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        c.commit()
+    except Exception:
+        log.exception("persist_zones_tick failed")
+
+
+def load_zones_history(symbol: str, date: Optional[str] = None,
+                       limit: int = 5000) -> list[dict]:
+    """Return zones rows for `symbol` on the given ET date, sorted by
+    (ts ASC, rank ASC). Useful for replay and for the "zones drift"
+    visualisation (how the P1 strike migrated through the day).
+    """
+    if not symbol:
+        return []
+    d = date or _today_iso()
+    try:
+        c = _conn()
+        cur = c.execute(
+            "SELECT * FROM orderflow_zones "
+            "WHERE symbol=? AND substr(ts,1,10)=? "
+            "ORDER BY ts ASC, rank ASC LIMIT ?",
+            (symbol, d, limit),
+        )
+        out = []
+        for r in cur.fetchall():
+            row = dict(r)
+            row["timestamp"] = row.pop("ts", None)
+            row["is_above_spot"] = bool(row.get("is_above_spot"))
+            out.append(row)
+        return out
+    except Exception:
+        log.exception("load_zones_history failed")
+        return []
+
+
+def latest_zones(symbol: str) -> list[dict]:
+    """Return the most recently persisted zones for `symbol` as a list
+    of dicts, sorted by rank ASC. Empty if none."""
+    if not symbol:
+        return []
+    try:
+        c = _conn()
+        cur = c.execute(
+            "SELECT MAX(ts) AS t FROM orderflow_zones WHERE symbol=?",
+            (symbol,),
+        )
+        row = cur.fetchone()
+        last_ts = row["t"] if row else None
+        if not last_ts:
+            return []
+        cur = c.execute(
+            "SELECT * FROM orderflow_zones WHERE symbol=? AND ts=? "
+            "ORDER BY rank ASC",
+            (symbol, last_ts),
+        )
+        out = []
+        for r in cur.fetchall():
+            d = dict(r)
+            d["timestamp"] = d.pop("ts", None)
+            d["is_above_spot"] = bool(d.get("is_above_spot"))
+            out.append(d)
+        return out
+    except Exception:
+        log.exception("latest_zones failed")
+        return []
 
 
 # ─────────────────────────────────────────────────────────────────────────────
