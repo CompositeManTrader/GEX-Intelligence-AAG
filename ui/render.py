@@ -24,8 +24,7 @@ from auth.schwab import (
 from charts.flow import chart_hiro_oscillator, chart_hiro_strike
 from charts.gex import (
     chart_cum_gex, chart_cex_profile, chart_dex_profile, chart_gex_by_expiry,
-    chart_gex_curve, chart_gex_gexbot_style, chart_gex_profile,
-    chart_vex_profile,
+    chart_gex_curve, chart_gex_profile, chart_vex_profile,
 )
 from charts.intraday import chart_session_profile, render_intraday_chart
 from charts.orderflow import (
@@ -965,39 +964,25 @@ def show_dashboard() -> None:
         st.caption(
             "Calls → derecha (verde), Puts → izquierda (rojo), Net GEX → puntos "
             "azules. Walls: Call (verde dashed), Put (rojo dashed), Spot (blanco "
-            "sólido), Zero Γ (morado dotted). Modo GexBot superpone la curva del "
-            "spot intradía en cyan."
+            "sólido), Zero Γ (morado dotted). Bandas semitransparentes = zonas "
+            "gamma P1/P2/P3 (verde call-dominant · rojo put-dominant · ámbar mixed)."
         )
 
-        # ── Style + view + zoom controls ───────────────────────────────────
+        # ── View + zoom controls ───────────────────────────────────────────
         # Defensive widget-state pattern: read the last-known value from
         # session_state and pass it as the explicit `index=` so the
-        # selection survives every rerun (auto-refresh, button click, etc).
-        # `key=` alone is supposed to handle this, but Streamlit 1.x has
-        # known edge cases when widgets re-render inside a tab + columns
-        # layout — the explicit index is a belt-and-suspenders guarantee.
-        STYLE_OPTS = ["gexbot", "classic"]
+        # selection survives every rerun.
         VIEW_OPTS = ["all", "net", "call", "put"]
         ZOOM_OPTS = ["tight", "near", "mid", "wide", "all"]
 
-        prev_style = st.session_state.get("gex_style_mode", "gexbot")
         prev_view = st.session_state.get("gex_view_mode", "all")
-        prev_zoom = st.session_state.get("gex_zoom_mode")
+        prev_zoom = st.session_state.get("gex_zoom_mode", "mid")
+        if prev_view not in VIEW_OPTS:
+            prev_view = "all"
         if prev_zoom not in ZOOM_OPTS:
-            prev_zoom = "tight" if prev_style == "gexbot" else "mid"
+            prev_zoom = "mid"
 
-        cgx0, cgx1, cgx2 = st.columns([1.3, 1.5, 1.8])
-        with cgx0:
-            gex_style = st.radio(
-                "Estilo",
-                options=STYLE_OPTS,
-                format_func=lambda s: {"gexbot": "GexBot", "classic": "Clásico"}[s],
-                horizontal=True,
-                index=STYLE_OPTS.index(prev_style),
-                key="gex_style_mode",
-                help="GexBot: barras horizontales con precio intradía superpuesto. "
-                     "Clásico: barras horizontales sin overlay de precio.",
-            )
+        cgx1, cgx2 = st.columns([1.5, 2.0])
         with cgx1:
             gex_view = st.radio(
                 "Vista",
@@ -1028,31 +1013,17 @@ def show_dashboard() -> None:
         }[gex_zoom]
 
         if not gex_df.empty and gex_sum:
-            if gex_style == "gexbot":
-                # Bust cache every 30s to match the global auto-refresh.
-                gex_bust = int(time.time() // 30)
-                intra_for_gex, _ierr = fetch_intraday(
-                    symbol, 5, 1, cache_bust=gex_bust,
-                )
-                fig_gex = chart_gex_gexbot_style(
-                    gex_df, spot, gex_sum, symbol,
-                    intraday_df=intra_for_gex,
-                    focus_pct=gex_pct, view=gex_view,
-                )
-            else:
-                fig_gex = chart_gex_profile(
-                    gex_df, spot, gex_sum, symbol,
-                    focus_pct=gex_pct, view=gex_view,
-                    zones=gamma_zones,
-                )
+            fig_gex = chart_gex_profile(
+                gex_df, spot, gex_sum, symbol,
+                focus_pct=gex_pct, view=gex_view,
+                zones=gamma_zones,
+            )
             if fig_gex:
-                # Stable component key: tied ONLY to the symbol + style.
-                # Changing view/zoom no longer remounts (Plotly diffs
-                # the trace list). Auto-refresh ALSO no longer remounts
-                # because the key doesn't include any time-rotating value.
+                # Stable component key: tied ONLY to the symbol. Changing
+                # view/zoom no longer remounts (Plotly diffs the trace list).
                 st.plotly_chart(
                     fig_gex, use_container_width=True,
-                    key=f"gex_chart_{symbol}_{gex_style}",
+                    key=f"gex_chart_{symbol}",
                 )
             _render_md(interpret_gex_profile(gex_sum, spot))
         else:
