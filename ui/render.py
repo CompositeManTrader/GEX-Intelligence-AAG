@@ -658,7 +658,6 @@ def show_dashboard() -> None:
     TAB_LABELS = [
         "🎯 Overview",
         "📈 Intraday",
-        "💱 Arbs",
         "📊 GEX Total",
         "🌀 Orderflow",
         "🔥 GEX 0DTE",
@@ -674,7 +673,7 @@ def show_dashboard() -> None:
         "🕰️ Replay",
     ]
     tabs = st.tabs(TAB_LABELS)
-    (tab_overview, tab_intra, tab_arbs, tab_gex, tab_orderflow, tab_0dte,
+    (tab_overview, tab_intra, tab_gex, tab_orderflow, tab_0dte,
      tab_vex, tab_cex, tab_dex, tab_hiro, tab_ts, tab_smile, tab_oi, tab_vol,
      tab_chain, tab_replay) = tabs
 
@@ -960,10 +959,6 @@ def show_dashboard() -> None:
                 )
 
     # ── ARBS — quote USD/MXN para arbitrar entre brokers ────────────────────
-    with tab_arbs:
-        from ui.arbs import render_arbs_panel
-        render_arbs_panel(default_symbol=symbol)
-
     # ── 1. GEX TOTAL ────────────────────────────────────────────────────────
     with tab_gex:
         _render_md('<p class="bb-header">GEX PROFILE  ·  Gamma Exposure por Strike</p>')
