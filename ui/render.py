@@ -1295,56 +1295,176 @@ def show_dashboard() -> None:
             "Se ignora el min-OI global porque los contratos 0DTE típicamente "
             "tienen OI bajo pero volumen y gamma altos."
         )
-        if not zdte_c.empty or not zdte_p.empty:
-            # min_oi=0 for 0DTE: filtering by OI hides the most active 0DTE
-            # strikes (they have huge volume but low carry-over OI).
-            # Spot-grid flip ON: for a single-DTE bucket, the true zero-gamma
-            # crossing is well-defined and more accurate than the
-            # strike-cumulative fallback.
+
+        if zdte_c.empty and zdte_p.empty:
+            st.caption(
+                "No hay strikes con DTE = 0 en la cadena. "
+                "Este módulo solo aplica a símbolos con expiraciones diarias "
+                "(SPY/QQQ/SPX). En SPX el filtro se activa solo de lunes a viernes."
+            )
+        else:
+            # ── Compute the four 0DTE exposure profiles. min_oi=0 because
+            # 0DTE volume often dwarfs OI; spot-grid flip ON for accuracy
+            # on this single-bucket slice.
             zdte_df, zdte_sum = compute_gex_profile(
                 zdte_c, zdte_p, spot, symbol=symbol,
-                max_dte=0, min_oi=0,
-                use_spot_grid_flip=True,
+                max_dte=0, min_oi=0, use_spot_grid_flip=True,
             )
+            zdte_vex_df, zdte_vex_sum = compute_vex_profile(
+                zdte_c, zdte_p, spot, symbol=symbol, max_dte=0, min_oi=0,
+            )
+            zdte_cex_df, zdte_cex_sum = compute_cex_profile(
+                zdte_c, zdte_p, spot, symbol=symbol, max_dte=0, min_oi=0,
+            )
+            zdte_dex_df, zdte_dex_sum = compute_dex_profile(
+                zdte_c, zdte_p, spot, max_dte=0, min_oi=0,
+            )
+
             if not zdte_df.empty and zdte_sum:
-                total_m = zdte_sum.get("total_gex", 0) / 1e6
+                # 0DTE-specific gamma zones (P1/P2/P3) — independent from
+                # the aggregate `gamma_zones` already computed for the
+                # multi-DTE profile. 0DTE clusters often diverge from the
+                # structural ones, which is the actionable insight.
+                from quant.zones import find_gamma_zones, spot_in_zone
+                from ui.widgets import panel_zones_html
+                zdte_zones = find_gamma_zones(zdte_df, spot=spot, top_n=3)
+
+                # ── EOD risk badge — minutes to 16:00 ET. In 0DTE the
+                # charm and gamma dynamics accelerate geometrically in
+                # the last 30-60 minutes, so a visible countdown matters.
+                now_et = datetime.datetime.now(ET_TZ)
+                close_et = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+                minutes_to_close = max(0.0, (close_et - now_et).total_seconds() / 60.0)
+                if now_et.time() >= datetime.time(16, 0):
+                    risk_color, risk_label = "#7070a0", "MARKET CLOSED"
+                elif minutes_to_close <= 30:
+                    risk_color, risk_label = "#f43f5e", "EOD RISK · CHARM ACCELERATION"
+                elif minutes_to_close <= 90:
+                    risk_color, risk_label = "#f59e0b", "POWER HOUR"
+                else:
+                    risk_color, risk_label = "#22c55e", "REGULAR SESSION"
+                eod_html = (
+                    f'<div style="background:rgba(15,17,24,0.85);'
+                    f'border:1px solid #1e2230;border-left:4px solid {risk_color};'
+                    f'border-radius:0 4px 4px 0;padding:0.5rem 0.9rem;'
+                    f'margin:0.4rem 0 0.6rem;font-family:JetBrains Mono,monospace;'
+                    f'display:flex;justify-content:space-between;align-items:center">'
+                    f'<div><div style="color:#6b7280;font-size:0.62rem;'
+                    f'letter-spacing:0.14em">⏱ TIME TO CLOSE</div>'
+                    f'<div style="color:{risk_color};font-size:1.1rem;'
+                    f'font-weight:700">{int(minutes_to_close)} min</div></div>'
+                    f'<div style="color:{risk_color};font-size:0.82rem;'
+                    f'font-weight:700;letter-spacing:0.08em">{risk_label}</div>'
+                    f'</div>'
+                )
+                _render_md(eod_html)
+
+                # ── Headline metrics row 1: GEX / DEX / VEX / CEX 0DTE
+                total_g_m = zdte_sum.get("total_gex", 0) / 1e6
+                total_d_m = (zdte_dex_sum or {}).get("total_dex", 0) / 1e6
+                total_v_m = (zdte_vex_sum or {}).get("total_vex", 0) / 1e6
+                total_c_m = (zdte_cex_sum or {}).get("total_cex", 0) / 1e6
                 z1, z2, z3, z4 = st.columns(4)
                 z1.metric(
                     "0DTE Net GEX",
-                    f"${total_m:+.1f}M",
-                    "LONG Γ" if total_m >= 0 else "SHORT Γ",
+                    f"${total_g_m:+.1f}M",
+                    "LONG Γ" if total_g_m >= 0 else "SHORT Γ",
                 )
                 z2.metric(
-                    "0DTE Call Wall",
+                    "0DTE Net DEX",
+                    f"${total_d_m:+.1f}M",
+                    ("CALL-HEAVY" if total_d_m > 0
+                     else "PUT-HEAVY" if total_d_m < 0 else "NEUTRAL"),
+                )
+                z3.metric(
+                    "0DTE Net VEX",
+                    f"${total_v_m:+.1f}M/vol pt",
+                    help="Cambio en delta dealer por +1 pt IV. En 0DTE "
+                         "decae rápido (vanna → 0 con T → 0).",
+                )
+                z4.metric(
+                    "0DTE Net CEX",
+                    f"${total_c_m:+.1f}M/día",
+                    help="Delta decay del dealer por día. Geométricamente "
+                         "grande en 0DTE — drives end-of-day flow.",
+                )
+
+                # Headline metrics row 2: walls + flip + counts
+                z5, z6, z7, z8 = st.columns(4)
+                z5.metric(
+                    "Call Wall",
                     (f"${zdte_sum['call_wall']:.0f}"
                      if zdte_sum.get("call_wall") else "—"),
                 )
-                z3.metric(
-                    "0DTE Put Wall",
+                z6.metric(
+                    "Put Wall",
                     (f"${zdte_sum['put_wall']:.0f}"
                      if zdte_sum.get("put_wall") else "—"),
                 )
-                z4.metric(
-                    "0DTE HVL (pin)",
-                    (f"${zdte_sum['hvl']:.0f}"
-                     if zdte_sum.get("hvl") else "—"),
-                )
-                # Secondary row: gamma flip + strike counts
-                z5, z6, z7, z8 = st.columns(4)
                 gf = zdte_sum.get("gamma_flip")
-                z5.metric(
-                    "Zero Γ (0DTE)",
+                z7.metric(
+                    "Zero Γ",
                     f"${gf:.0f}" if gf else "—",
                     (f"{(gf - spot)/spot*100:+.2f}% vs spot"
                      if gf and spot else None),
                 )
-                z6.metric("# strikes", f"{zdte_sum.get('n_strikes', 0)}")
-                z7.metric("# calls 0DTE", f"{len(zdte_c)}")
-                z8.metric("# puts 0DTE", f"{len(zdte_p)}")
-                # Tighter focus for 0DTE — strikes are dense around ATM
+                z8.metric(
+                    "HVL (pin)",
+                    (f"${zdte_sum['hvl']:.0f}"
+                     if zdte_sum.get("hvl") else "—"),
+                    help="Strike con mayor |Net GEX|. Imán del pinning "
+                         "en régimen LONG Γ.",
+                )
+
+                # ── Gamma zones panel — same widget as Overview, scoped
+                # to the 0DTE profile.
+                _render_md(panel_zones_html(zdte_zones, spot=spot))
+
+                # ── View + Zoom controls (paridad con GEX Total) ────────
+                VIEW_OPTS = ["all", "net", "call", "put"]
+                ZOOM_OPTS = ["tight", "near", "mid", "wide", "all"]
+                prev_view = st.session_state.get("zdte_view_mode", "all")
+                prev_zoom = st.session_state.get("zdte_zoom_mode", "tight")
+                if prev_view not in VIEW_OPTS:
+                    prev_view = "all"
+                if prev_zoom not in ZOOM_OPTS:
+                    prev_zoom = "tight"
+                c0z1, c0z2 = st.columns([1.5, 2.0])
+                with c0z1:
+                    zdte_view = st.radio(
+                        "Vista",
+                        options=VIEW_OPTS,
+                        format_func=lambda v: {
+                            "all": "Todos", "net": "Solo Net",
+                            "call": "Solo Call", "put": "Solo Put",
+                        }[v],
+                        horizontal=True,
+                        index=VIEW_OPTS.index(prev_view),
+                        key="zdte_view_mode",
+                    )
+                with c0z2:
+                    zdte_zoom = st.radio(
+                        "Zoom",
+                        options=ZOOM_OPTS,
+                        format_func=lambda z: {
+                            "tight": "Tight ±1.5%", "near": "Near ±3%",
+                            "mid": "Mid ±5%", "wide": "Wide ±10%",
+                            "all": "All strikes",
+                        }[z],
+                        horizontal=True,
+                        index=ZOOM_OPTS.index(prev_zoom),
+                        key="zdte_zoom_mode",
+                    )
+                zdte_pct = {
+                    "tight": 0.015, "near": 0.03, "mid": 0.05,
+                    "wide": 0.10, "all": None,
+                }[zdte_zoom]
+
+                # ── Main 0DTE GEX profile with zones overlay
                 fig_z = chart_gex_profile(
                     zdte_df, spot, zdte_sum, f"{symbol} 0DTE",
-                    focus_pct=min(0.03, focus_pct),
+                    focus_pct=zdte_pct, view=zdte_view,
+                    zones=zdte_zones,
                 )
                 if fig_z:
                     st.plotly_chart(
@@ -1352,16 +1472,102 @@ def show_dashboard() -> None:
                         key=f"0dte_chart_{symbol}",
                     )
                 _render_md(interpret_0dte(zdte_sum, spot))
+
+                # ── Cumulative GEX + Scenario curve (paridad con GEX Total) ─
+                col_l, col_r = st.columns([1, 1])
+                with col_l:
+                    _render_md(
+                        '<p class="bb-header" style="margin-top:0.3rem">'
+                        '0DTE PERFIL ACUMULADO</p>'
+                    )
+                    st.caption(
+                        "Cumulative Net GEX por strike. El cruce por cero = "
+                        "Zero Gamma dinámico para hoy."
+                    )
+                    fig_cum_z = chart_cum_gex(zdte_df, spot, zdte_sum)
+                    if fig_cum_z:
+                        st.plotly_chart(
+                            fig_cum_z, use_container_width=True,
+                            key=f"0dte_cum_{symbol}",
+                        )
+                with col_r:
+                    _render_md(
+                        '<p class="bb-header" style="margin-top:0.3rem">'
+                        '0DTE GAMMA SCENARIO</p>'
+                    )
+                    st.caption(
+                        "Reprice 0DTE gamma sobre un grid de spot hipotético. "
+                        "El cruce por cero da el flip dinámico que el "
+                        "mercado vería si el spot saltara a ese precio."
+                    )
+                    try:
+                        zdte_curve = gex_curve_over_spot(
+                            zdte_c, zdte_p, spot, symbol=symbol,
+                            max_dte=0, min_oi=0,
+                            grid_pct=0.05, n_points=81,
+                        )
+                        fig_curve_z = chart_gex_curve(zdte_curve, spot, zdte_sum)
+                        if fig_curve_z:
+                            st.plotly_chart(
+                                fig_curve_z, use_container_width=True,
+                                key=f"0dte_curve_{symbol}",
+                            )
+                    except Exception as exc:
+                        log.exception("0DTE scenario curve failed")
+                        st.caption(f"Scenario no disponible: {exc}")
+
+                # ── Top 0DTE strikes — most actionable single panel for
+                # an intraday trader: where is the OI/volume/gamma actually
+                # concentrated TODAY?
+                _render_md(
+                    '<p class="bb-header" style="margin-top:0.4rem">'
+                    'TOP 0DTE STRIKES  ·  by |Net GEX|, OI y Volumen</p>'
+                )
+                # Build a combined view across calls + puts for the same
+                # strike so the trader sees both sides at once.
+                cs = (zdte_c[["Strike", "OI", "Volume", "Gamma"]]
+                      .rename(columns={"OI": "C_OI", "Volume": "C_Vol",
+                                       "Gamma": "C_Γ"})
+                      if not zdte_c.empty else pd.DataFrame())
+                ps = (zdte_p[["Strike", "OI", "Volume", "Gamma"]]
+                      .rename(columns={"OI": "P_OI", "Volume": "P_Vol",
+                                       "Gamma": "P_Γ"})
+                      if not zdte_p.empty else pd.DataFrame())
+                if not cs.empty and not ps.empty:
+                    merged = cs.merge(ps, on="Strike", how="outer").fillna(0)
+                else:
+                    merged = cs if not cs.empty else ps
+                # Bring in |Net GEX| from the computed profile to rank by it.
+                if not merged.empty and not zdte_df.empty:
+                    g_map = zdte_df.set_index("Strike")["Abs_GEX"].to_dict()
+                    merged["AbsGEX_M"] = (
+                        merged["Strike"].map(g_map).fillna(0) / 1e6
+                    )
+                    merged = merged.sort_values("AbsGEX_M", ascending=False).head(15)
+                    merged["Dist %"] = (
+                        (merged["Strike"] - spot) / spot * 100
+                    ).round(2)
+                    cols_order = ["Strike", "Dist %", "AbsGEX_M",
+                                  "C_OI", "P_OI", "C_Vol", "P_Vol",
+                                  "C_Γ", "P_Γ"]
+                    cols_show = [c for c in cols_order if c in merged.columns]
+                    st.dataframe(
+                        merged[cols_show].reset_index(drop=True),
+                        use_container_width=True, hide_index=True,
+                    )
+
+                # ── 0DTE Vanna + Charm narrative
+                cvn1, cvn2 = st.columns(2)
+                with cvn1:
+                    _render_md(interpret_vex(zdte_vex_sum)
+                               if zdte_vex_sum else "")
+                with cvn2:
+                    _render_md(interpret_cex(zdte_cex_sum, dte=0)
+                               if zdte_cex_sum else "")
             else:
                 st.caption(
                     "Sin datos 0DTE procesables (gamma = 0 o cadena vacía)."
                 )
-        else:
-            st.caption(
-                "No hay strikes con DTE = 0 en la cadena. "
-                "Este módulo solo aplica a símbolos con expiraciones diarias "
-                "(SPY/QQQ/SPX). En SPX el filtro se activa solo de lunes a viernes."
-            )
 
     # ── 3. VANNA ────────────────────────────────────────────────────────────
     with tab_vex:
