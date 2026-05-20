@@ -95,9 +95,25 @@ def atm_iv_interp(c: pd.DataFrame, spot: float,
 
 def expected_move(spot: float, iv_pct: Optional[float],
                   dte: int) -> tuple[Optional[float], Optional[float]]:
+    """1σ expected move band [spot − σ, spot + σ] where
+    σ = spot · IV · √T, IV in decimal.
+
+    For DTE > 0 the legacy formula √(dte/365) works fine. For DTE == 0
+    that collapses to zero (sqrt(0) = 0) and the band degenerates to
+    [spot, spot] — the bug the user reported. We delegate to
+    `bs.time_to_expiry_years` which has the fractional-hours-to-close
+    logic so 0DTE bands actually have width.
+    """
     if not spot or not iv_pct or dte is None:
         return None, None
-    move = spot * (iv_pct / 100.0) * np.sqrt(max(dte, 0) / CALENDAR_DAYS)
+    if dte <= 0:
+        # Lazy import to keep this module dependency-light when the BS
+        # path isn't needed (multi-DTE callers don't pay for it).
+        from quant import bs
+        T = float(bs.time_to_expiry_years(np.array([0]))[0])
+    else:
+        T = float(max(dte, 0)) / CALENDAR_DAYS
+    move = spot * (iv_pct / 100.0) * np.sqrt(T)
     return round(spot - move, 2), round(spot + move, 2)
 
 

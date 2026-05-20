@@ -1420,6 +1420,72 @@ def show_dashboard() -> None:
                 # to the 0DTE profile.
                 _render_md(panel_zones_html(zdte_zones, spot=spot))
 
+                # ── Expected-Move analyzer (0DTE) ────────────────────────
+                # The legacy 1σ EM in interpret_0dte stalled at [spot, spot]
+                # when dte=0 (sqrt(0)=0). The new analyzer uses fractional
+                # T from bs.time_to_expiry_years and produces multi-sigma
+                # bands plus an iron-condor strike picker.
+                from quant.expected_move import (
+                    compute_em_bands, suggest_iron_condor,
+                )
+                from quant.levels import _interp_iv_one_side
+                from charts.expected_move import chart_em_bands
+                from ui.widgets import panel_em_bands_html
+
+                iv_call_zdte = _interp_iv_one_side(zdte_c, spot)
+                iv_put_zdte = _interp_iv_one_side(zdte_p, spot)
+                # Controls for the trader: target POP for the IC + wing width.
+                _render_md(
+                    '<p class="bb-header" style="margin-top:0.4rem">'
+                    'EXPECTED MOVE 0DTE  ·  Bandas multi-σ + Iron Condor</p>'
+                )
+                cem1, cem2 = st.columns([1, 1])
+                with cem1:
+                    target_pop = st.slider(
+                        "Target POP iron condor (%)",
+                        min_value=50, max_value=90, value=70, step=5,
+                        key="zdte_ic_target_pop",
+                        help=("Probabilidad objetivo de que el spot termine "
+                              "dentro del rango [short_put, short_call]. "
+                              "Más alto = strikes más alejados = menor crédito."),
+                    )
+                with cem2:
+                    wing_width = st.slider(
+                        "Ancho del wing (pts)",
+                        min_value=1.0, max_value=20.0, value=5.0, step=1.0,
+                        key="zdte_ic_wing_width",
+                        help=("Distancia entre short y long en cada lado. "
+                              "Mayor wing = mayor crédito pero mayor max loss."),
+                    )
+                em_analysis = compute_em_bands(
+                    spot=spot,
+                    iv_call_pct=iv_call_zdte,
+                    iv_put_pct=iv_put_zdte,
+                    dte=0,
+                )
+                if em_analysis is not None:
+                    ic_suggestion = suggest_iron_condor(
+                        em_analysis,
+                        target_pop=target_pop / 100.0,
+                        wing_width=float(wing_width),
+                    )
+                    _render_md(panel_em_bands_html(em_analysis, ic_suggestion))
+                    fig_em = chart_em_bands(
+                        em_analysis, symbol=f"{symbol} 0DTE",
+                        ic_suggestion=ic_suggestion,
+                    )
+                    if fig_em is not None:
+                        st.plotly_chart(
+                            fig_em, use_container_width=True,
+                            key=f"0dte_em_{symbol}",
+                        )
+                else:
+                    st.caption(
+                        "Expected Move no disponible — IV ATM no se pudo "
+                        "resolver. Asegúrate de que la cadena 0DTE tenga "
+                        "strikes con IV%>1% cerca del spot."
+                    )
+
                 # ── View + Zoom controls (paridad con GEX Total) ────────
                 VIEW_OPTS = ["all", "net", "call", "put"]
                 ZOOM_OPTS = ["tight", "near", "mid", "wide", "all"]
