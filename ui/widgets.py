@@ -741,20 +741,20 @@ def panel_zones_html(zones: list, spot: Optional[float] = None) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  EXPECTED MOVE BANDS  —  multi-sigma + iron condor suggestion
+#  EXPECTED MOVE BANDS  —  multi-sigma table
 # ─────────────────────────────────────────────────────────────────────────────
-def panel_em_bands_html(analysis, ic_suggestion=None) -> str:
-    """Render a side-by-side card: left = multi-sigma EM band table,
-    right = iron condor suggestion. Both inputs are dataclasses from
-    `quant.expected_move`. Either argument can be None — the function
-    falls back gracefully.
+def panel_em_table_html(analysis) -> str:
+    """Render the multi-σ band table as a standalone card.
+
+    Caller is expected to lay this side-by-side with `panel_em_ic_html`
+    via `st.columns` — flexbox inside a single markdown chunk has been
+    flaky in Streamlit's CommonMark renderer.
     """
     if analysis is None:
         return _box_err(
             "Expected Move analyzer no disponible — IV ATM no resolvió.")
 
-    # ── Left card: multi-sigma table ────────────────────────────────────
-    sigma_rows: list[str] = []
+    rows: list[str] = []
     for b in analysis.bands:
         b_dict = b if isinstance(b, dict) else b.to_dict()
         sigma = float(b_dict.get("sigma") or 0)
@@ -764,7 +764,6 @@ def panel_em_bands_html(analysis, ic_suggestion=None) -> str:
         p_in = float(b_dict.get("p_inside") or 0)
         p_tlo = float(b_dict.get("p_touch_low") or 0)
         p_thi = float(b_dict.get("p_touch_high") or 0)
-        # Per-sigma palette aligned with the chart
         if sigma <= 0.5:
             color = "#22c55e"
         elif sigma <= 1.0:
@@ -773,138 +772,100 @@ def panel_em_bands_html(analysis, ic_suggestion=None) -> str:
             color = "#a855f7"
         else:
             color = "#f43f5e"
-        sigma_rows.append(
+        rows.append(
             f'<tr>'
-            f'<td style="padding:4px 9px;color:{color};font-weight:700">'
-            f'{sigma:.1f}σ</td>'
-            f'<td style="padding:4px 9px;text-align:right;color:#e0e0f0;'
-            f'font-family:JetBrains Mono,monospace">${low:,.2f}</td>'
-            f'<td style="padding:4px 9px;text-align:right;color:#e0e0f0;'
-            f'font-family:JetBrains Mono,monospace">${high:,.2f}</td>'
-            f'<td style="padding:4px 9px;text-align:right;color:#9090b0;'
-            f'font-family:JetBrains Mono,monospace">${width:,.2f}</td>'
-            f'<td style="padding:4px 9px;text-align:right;color:{color};'
-            f'font-family:JetBrains Mono,monospace;font-weight:700">'
-            f'{p_in*100:.0f}%</td>'
-            f'<td style="padding:4px 9px;text-align:right;color:#7070a0;'
-            f'font-family:JetBrains Mono,monospace;font-size:0.72rem">'
-            f'{p_tlo*100:.0f}/{p_thi*100:.0f}</td>'
+            f'<td style="padding:4px 8px;color:{color};font-weight:700">{sigma:.1f}σ</td>'
+            f'<td style="padding:4px 8px;text-align:right;color:#e0e0f0">${low:,.2f}</td>'
+            f'<td style="padding:4px 8px;text-align:right;color:#e0e0f0">${high:,.2f}</td>'
+            f'<td style="padding:4px 8px;text-align:right;color:#9090b0">${width:,.2f}</td>'
+            f'<td style="padding:4px 8px;text-align:right;color:{color};font-weight:700">{p_in*100:.0f}%</td>'
+            f'<td style="padding:4px 8px;text-align:right;color:#7070a0;font-size:0.72rem">{p_tlo*100:.0f}/{p_thi*100:.0f}</td>'
             f'</tr>'
         )
 
-    skew_tag = ("skew-adjusted" if analysis.skew_adjusted
-                else "symmetric (no skew)")
-    header_left = (
-        f'<div style="color:#9090b0;font-size:0.66rem;letter-spacing:0.12em;'
-        f'margin-bottom:0.45rem;text-transform:uppercase;'
-        f'font-family:JetBrains Mono,monospace">'
-        f'📏 EXPECTED MOVE  ·  spot ${analysis.spot:,.2f}  ·  '
-        f'T={analysis.minutes_to_close:.0f}min  ·  '
-        f'IV {analysis.iv_blend:.1f}%  ·  {skew_tag}</div>'
-    )
-    table_left = (
-        '<table style="width:100%;border-collapse:collapse;font-size:0.78rem">'
-        '<thead><tr>'
-        '<th style="text-align:left;padding:3px 9px;color:#606080;'
-        'font-weight:500;font-size:0.66rem;letter-spacing:0.10em">σ</th>'
-        '<th style="text-align:right;padding:3px 9px;color:#606080;'
-        'font-weight:500;font-size:0.66rem;letter-spacing:0.10em">LOW</th>'
-        '<th style="text-align:right;padding:3px 9px;color:#606080;'
-        'font-weight:500;font-size:0.66rem;letter-spacing:0.10em">HIGH</th>'
-        '<th style="text-align:right;padding:3px 9px;color:#606080;'
-        'font-weight:500;font-size:0.66rem;letter-spacing:0.10em">WIDTH</th>'
-        '<th style="text-align:right;padding:3px 9px;color:#606080;'
-        'font-weight:500;font-size:0.66rem;letter-spacing:0.10em">P-INSIDE</th>'
-        '<th style="text-align:right;padding:3px 9px;color:#606080;'
-        'font-weight:500;font-size:0.66rem;letter-spacing:0.10em">'
-        'PoT L/H %</th>'
-        '</tr></thead><tbody>'
-        + "".join(sigma_rows) +
-        '</tbody></table>'
-    )
-    left_card = (
-        '<div style="flex:1 1 0;background:rgba(15,17,24,0.85);'
-        'border:1px solid #1e2230;border-radius:6px;padding:0.6rem 0.85rem">'
-        + header_left + table_left +
-        '<div style="color:#606080;font-size:0.66rem;margin-top:0.4rem;'
-        'font-family:JetBrains Mono,monospace;line-height:1.4">'
-        'P-inside = prob. spot ∈ banda al cierre · '
-        'PoT = prob. de touch al low / high antes del cierre'
-        '</div></div>'
-    )
+    skew_tag = "skew-adjusted" if analysis.skew_adjusted else "symmetric"
+    body = _html(f"""
+<div style="background:rgba(15,17,24,0.85);border:1px solid #1e2230;border-radius:6px;padding:0.6rem 0.85rem;font-family:JetBrains Mono,monospace">
+<div style="color:#9090b0;font-size:0.66rem;letter-spacing:0.12em;margin-bottom:0.45rem;text-transform:uppercase">📏 EXPECTED MOVE  ·  spot ${analysis.spot:,.2f}  ·  T={analysis.minutes_to_close:.0f}min  ·  IV {analysis.iv_blend:.1f}%  ·  {skew_tag}</div>
+<table style="width:100%;border-collapse:collapse;font-size:0.78rem">
+<thead><tr>
+<th style="text-align:left;padding:3px 8px;color:#606080;font-weight:500;font-size:0.64rem;letter-spacing:0.08em">σ</th>
+<th style="text-align:right;padding:3px 8px;color:#606080;font-weight:500;font-size:0.64rem;letter-spacing:0.08em">LOW</th>
+<th style="text-align:right;padding:3px 8px;color:#606080;font-weight:500;font-size:0.64rem;letter-spacing:0.08em">HIGH</th>
+<th style="text-align:right;padding:3px 8px;color:#606080;font-weight:500;font-size:0.64rem;letter-spacing:0.08em">WIDTH</th>
+<th style="text-align:right;padding:3px 8px;color:#606080;font-weight:500;font-size:0.64rem;letter-spacing:0.08em">P-IN</th>
+<th style="text-align:right;padding:3px 8px;color:#606080;font-weight:500;font-size:0.64rem;letter-spacing:0.08em">PoT L/H %</th>
+</tr></thead><tbody>
+__ROWS__
+</tbody></table>
+<div style="color:#606080;font-size:0.65rem;margin-top:0.4rem;line-height:1.4">P-inside = prob. spot ∈ banda al cierre · PoT = prob. de touch al low/high antes del cierre</div>
+</div>
+""")
+    return body.replace("__ROWS__", "".join(rows))
 
-    # ── Right card: iron condor suggestion ──────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  IRON CONDOR SUGGESTION
+# ─────────────────────────────────────────────────────────────────────────────
+def panel_em_ic_html(ic_suggestion) -> str:
+    """Render the iron-condor suggestion as a standalone card.
+    Caller renders side-by-side with `panel_em_table_html` via columns.
+    """
     if ic_suggestion is None:
-        right_card = (
-            '<div style="flex:1 1 0;background:rgba(15,17,24,0.85);'
-            'border:1px solid #1e2230;border-radius:6px;padding:0.6rem 0.85rem">'
-            '<div style="color:#9090b0;font-size:0.66rem;letter-spacing:0.12em;'
-            'text-transform:uppercase;font-family:JetBrains Mono,monospace">'
-            '🦅 IRON CONDOR 0DTE</div>'
-            '<div style="color:#7070a0;font-size:0.78rem;padding:0.6rem 0;'
-            'font-family:JetBrains Mono,monospace">'
-            'Sugerencia no disponible — IV ATM o T insuficientes.</div>'
-            '</div>'
-        )
-    else:
-        ic = (ic_suggestion if isinstance(ic_suggestion, dict)
-              else ic_suggestion.to_dict())
-        pop = float(ic.get("prob_of_profit", 0)) * 100
-        pop_color = ("#22c55e" if pop >= 70 else
-                     "#f59e0b" if pop >= 50 else "#f43f5e")
-        right_card = (
-            f'<div style="flex:1 1 0;background:rgba(15,17,24,0.85);'
-            f'border:1px solid #1e2230;border-radius:6px;padding:0.6rem 0.85rem">'
-            f'<div style="display:flex;justify-content:space-between;'
-            f'align-items:center;margin-bottom:0.4rem">'
-            f'<div style="color:#9090b0;font-size:0.66rem;letter-spacing:0.12em;'
-            f'text-transform:uppercase;font-family:JetBrains Mono,monospace">'
-            f'🦅 IRON CONDOR 0DTE (target POP {int(ic["target_pop"]*100)}%)</div>'
-            f'<div style="color:{pop_color};font-size:0.95rem;font-weight:700;'
-            f'font-family:JetBrains Mono,monospace">POP {pop:.0f}%</div>'
-            f'</div>'
-            f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem">'
-            f'  <div style="background:rgba(244,63,94,0.07);padding:0.4rem 0.55rem;'
-            f'  border-left:3px solid #f43f5e;border-radius:0 4px 4px 0">'
-            f'    <div style="color:#7070a0;font-size:0.58rem;letter-spacing:0.10em">'
-            f'    PUT WING</div>'
-            f'    <div style="color:#f43f5e;font-weight:700;'
-            f'    font-family:JetBrains Mono,monospace">'
-            f'      Sell ${ic["short_put"]:,.0f}P'
-            f'    </div>'
-            f'    <div style="color:#9090b0;font-size:0.7rem;'
-            f'    font-family:JetBrains Mono,monospace">'
-            f'      Buy ${ic["long_put"]:,.0f}P (wing ${ic["wing_width"]:.0f})</div>'
-            f'    <div style="color:#7070a0;font-size:0.66rem;margin-top:0.2rem;'
-            f'    font-family:JetBrains Mono,monospace">'
-            f'      PoT short {float(ic["p_touch_short_put"])*100:.0f}%</div>'
-            f'  </div>'
-            f'  <div style="background:rgba(34,197,94,0.07);padding:0.4rem 0.55rem;'
-            f'  border-left:3px solid #22c55e;border-radius:0 4px 4px 0">'
-            f'    <div style="color:#7070a0;font-size:0.58rem;letter-spacing:0.10em">'
-            f'    CALL WING</div>'
-            f'    <div style="color:#22c55e;font-weight:700;'
-            f'    font-family:JetBrains Mono,monospace">'
-            f'      Sell ${ic["short_call"]:,.0f}C'
-            f'    </div>'
-            f'    <div style="color:#9090b0;font-size:0.7rem;'
-            f'    font-family:JetBrains Mono,monospace">'
-            f'      Buy ${ic["long_call"]:,.0f}C (wing ${ic["wing_width"]:.0f})</div>'
-            f'    <div style="color:#7070a0;font-size:0.66rem;margin-top:0.2rem;'
-            f'    font-family:JetBrains Mono,monospace">'
-            f'      PoT short {float(ic["p_touch_short_call"])*100:.0f}%</div>'
-            f'  </div>'
-            f'</div>'
-            f'<div style="color:#606080;font-size:0.66rem;margin-top:0.45rem;'
-            f'font-family:JetBrains Mono,monospace;line-height:1.4">'
-            f'Max loss = wing width ({ic["wing_width"]:.0f} pts) − credit. '
-            f'PoT = prob. de touch al strike short antes del cierre.'
-            f'</div></div>'
-        )
+        return _html("""
+<div style="background:rgba(15,17,24,0.85);border:1px solid #1e2230;border-radius:6px;padding:0.6rem 0.85rem;font-family:JetBrains Mono,monospace">
+<div style="color:#9090b0;font-size:0.66rem;letter-spacing:0.12em;text-transform:uppercase">🦅 IRON CONDOR 0DTE</div>
+<div style="color:#7070a0;font-size:0.78rem;padding:0.6rem 0">Sugerencia no disponible — IV ATM o T insuficientes.</div>
+</div>
+""")
 
-    return (
-        '<div style="display:flex;gap:0.5rem;margin:0.4rem 0">'
-        + left_card + right_card +
-        '</div>'
-    )
+    ic = (ic_suggestion if isinstance(ic_suggestion, dict)
+          else ic_suggestion.to_dict())
+    pop = float(ic.get("prob_of_profit", 0)) * 100
+    pop_color = ("#22c55e" if pop >= 70 else
+                 "#f59e0b" if pop >= 50 else "#f43f5e")
+    target_pop = int(float(ic.get("target_pop", 0.7)) * 100)
+    short_put = float(ic["short_put"])
+    long_put = float(ic["long_put"])
+    short_call = float(ic["short_call"])
+    long_call = float(ic["long_call"])
+    wing = float(ic["wing_width"])
+    pot_sp = float(ic["p_touch_short_put"]) * 100
+    pot_sc = float(ic["p_touch_short_call"]) * 100
 
+    return _html(f"""
+<div style="background:rgba(15,17,24,0.85);border:1px solid #1e2230;border-radius:6px;padding:0.6rem 0.85rem;font-family:JetBrains Mono,monospace">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
+<div style="color:#9090b0;font-size:0.66rem;letter-spacing:0.12em;text-transform:uppercase">🦅 IRON CONDOR 0DTE (target POP {target_pop}%)</div>
+<div style="color:{pop_color};font-size:1.05rem;font-weight:700">POP {pop:.0f}%</div>
+</div>
+<table style="width:100%;border-collapse:collapse;font-size:0.78rem;margin-top:0.2rem">
+<tr>
+<td style="padding:5px 8px;border-left:3px solid #f43f5e;background:rgba(244,63,94,0.07);width:50%;vertical-align:top">
+<div style="color:#7070a0;font-size:0.58rem;letter-spacing:0.08em">PUT WING</div>
+<div style="color:#f43f5e;font-weight:700">Sell ${short_put:,.0f}P</div>
+<div style="color:#9090b0;font-size:0.70rem">Buy ${long_put:,.0f}P (wing ${wing:.0f})</div>
+<div style="color:#7070a0;font-size:0.66rem;margin-top:0.2rem">PoT short {pot_sp:.0f}%</div>
+</td>
+<td style="padding:5px 8px;border-left:3px solid #22c55e;background:rgba(34,197,94,0.07);width:50%;vertical-align:top">
+<div style="color:#7070a0;font-size:0.58rem;letter-spacing:0.08em">CALL WING</div>
+<div style="color:#22c55e;font-weight:700">Sell ${short_call:,.0f}C</div>
+<div style="color:#9090b0;font-size:0.70rem">Buy ${long_call:,.0f}C (wing ${wing:.0f})</div>
+<div style="color:#7070a0;font-size:0.66rem;margin-top:0.2rem">PoT short {pot_sc:.0f}%</div>
+</td>
+</tr>
+</table>
+<div style="color:#606080;font-size:0.65rem;margin-top:0.45rem;line-height:1.4">Max loss = wing ({wing:.0f}pts) − credit. PoT = prob. de touch al short antes del cierre.</div>
+</div>
+""")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Back-compat wrapper (legacy callers expecting one function).
+# ─────────────────────────────────────────────────────────────────────────────
+def panel_em_bands_html(analysis, ic_suggestion=None) -> str:
+    """Deprecated combined version — kept so existing callers don't break.
+    New code should use `panel_em_table_html` + `panel_em_ic_html` with
+    `st.columns` for layout control.
+    """
+    return panel_em_table_html(analysis) + "\n" + panel_em_ic_html(ic_suggestion)

@@ -44,10 +44,8 @@ from config import (
 from data.fetch import fetch_chain, fetch_intraday, fetch_price_history, fetch_quote
 from data.parse import by_expiry, clean, parse_chain
 from data.persistence import (
-    available_replay_dates, db_stats, load_daily_snapshots,
-    load_hiro_history, load_orderflow_history, load_recent_hiro,
-    load_recent_orderflow, persist_daily_snapshot, persist_hiro_tick,
-    persist_orderflow_tick,
+    load_recent_hiro, load_recent_orderflow,
+    persist_daily_snapshot, persist_hiro_tick, persist_orderflow_tick,
 )
 from quant.exposures import (
     compute_cex_profile, compute_dex_profile, compute_gex_by_expiry,
@@ -669,12 +667,11 @@ def show_dashboard() -> None:
         "💰 Open Interest",
         "📊 Vol Analytics",
         "📋 Chain",
-        "🕰️ Replay",
     ]
     tabs = st.tabs(TAB_LABELS)
     (tab_overview, tab_intra, tab_gex, tab_orderflow, tab_0dte,
      tab_vex, tab_cex, tab_dex, tab_hiro, tab_ts, tab_smile, tab_oi, tab_vol,
-     tab_chain, tab_replay) = tabs
+     tab_chain) = tabs
 
     # ── OVERVIEW ────────────────────────────────────────────────────────────
     with tab_overview:
@@ -1430,7 +1427,7 @@ def show_dashboard() -> None:
                 )
                 from quant.levels import _interp_iv_one_side
                 from charts.expected_move import chart_em_bands
-                from ui.widgets import panel_em_bands_html
+                from ui.widgets import panel_em_table_html, panel_em_ic_html
 
                 iv_call_zdte = _interp_iv_one_side(zdte_c, spot)
                 iv_put_zdte = _interp_iv_one_side(zdte_p, spot)
@@ -1469,7 +1466,15 @@ def show_dashboard() -> None:
                         target_pop=target_pop / 100.0,
                         wing_width=float(wing_width),
                     )
-                    _render_md(panel_em_bands_html(em_analysis, ic_suggestion))
+                    # Lay the two cards side by side using st.columns —
+                    # more reliable than nested flexbox in a single
+                    # markdown chunk (Streamlit's CommonMark renderer
+                    # has been flaky with nested HTML flex layouts).
+                    cem_l, cem_r = st.columns([1, 1])
+                    with cem_l:
+                        _render_md(panel_em_table_html(em_analysis))
+                    with cem_r:
+                        _render_md(panel_em_ic_html(ic_suggestion))
                     fig_em = chart_em_bands(
                         em_analysis, symbol=f"{symbol} 0DTE",
                         ic_suggestion=ic_suggestion,
@@ -1870,117 +1875,6 @@ def show_dashboard() -> None:
         mode = st.radio("Vista", ["both", "calls", "puts"], index=0, horizontal=True,
                         key="chain_mode", label_visibility="collapsed")
         _render_md(build_table(calls, puts, spot, mode))
-
-    # ── REPLAY MODE ─────────────────────────────────────────────────────────
-    with tab_replay:
-        _render_md('<p class="bb-header">REPLAY  ·  Sesiones guardadas en SQLite local</p>')
-        st.caption(
-            "Cada tick de Orderflow + HIRO se persiste en `~/.options_terminal/intraday.db`. "
-            "Selecciona un día anterior para revivir cómo evolucionaron walls + spot. "
-            "Útil para post-mortems y entrenar tu lectura de niveles."
-        )
-
-        rep_dates = available_replay_dates(symbol, lookback_days=60)
-        if not rep_dates:
-            st.info(
-                f"Aún no hay datos guardados para **{symbol}**. "
-                "Mantén el dashboard abierto durante una sesión y vuelve mañana — "
-                "los ticks se acumulan automáticamente.",
-                icon="📭",
-            )
-        else:
-            r1, r2, r3 = st.columns([1.5, 1.5, 1])
-            with r1:
-                today_str = datetime.date.today().isoformat()
-                # Pick most recent that ISN'T today (replay = past, not live)
-                default_idx = 0
-                for i, d in enumerate(rep_dates):
-                    if d != today_str:
-                        default_idx = i
-                        break
-                sel_date = st.selectbox(
-                    "📅 Día a revivir",
-                    options=rep_dates,
-                    index=default_idx,
-                    format_func=lambda d: f"{d}  ({'HOY' if d == today_str else d})",
-                    key=SS.REPLAY_DATE,
-                )
-            with r2:
-                rep_view = st.selectbox(
-                    "Vista",
-                    ["Orderflow stack", "DEX timeseries", "GEX timeseries",
-                     "Convexity (VEX)"],
-                    key="replay_view",
-                )
-            with r3:
-                st.markdown("<div style='height:0.4rem'></div>", unsafe_allow_html=True)
-                refresh = st.button("🔄 Recargar", use_container_width=True)
-                if refresh:
-                    st.rerun()
-
-            of_rep = load_orderflow_history(symbol, date=sel_date, limit=5000)
-            hi_rep = load_hiro_history(symbol, date=sel_date, limit=5000)
-
-            if not of_rep:
-                st.warning(f"No hay ticks de orderflow guardados para {symbol} en {sel_date}.")
-            else:
-                first_ts = of_rep[0]["timestamp"]
-                last_ts = of_rep[-1]["timestamp"]
-                rsum1, rsum2, rsum3, rsum4 = st.columns(4)
-                rsum1.metric("Ticks orderflow", f"{len(of_rep):,}")
-                rsum2.metric("Ticks HIRO", f"{len(hi_rep):,}")
-                rsum3.metric("Inicio (UTC)", first_ts[11:19] if first_ts else "—")
-                rsum4.metric("Fin (UTC)", last_ts[11:19] if last_ts else "—")
-
-                if rep_view == "Orderflow stack":
-                    fig = chart_orderflow_stack(of_rep, symbol=symbol)
-                elif rep_view == "DEX timeseries":
-                    fig = chart_dex_timeseries(of_rep, symbol=symbol)
-                elif rep_view == "GEX timeseries":
-                    fig = chart_gex_timeseries(of_rep, symbol=symbol)
-                else:
-                    fig = chart_convexity_timeseries(of_rep, symbol=symbol)
-
-                if fig is not None:
-                    st.plotly_chart(fig, use_container_width=True,
-                                    key=f"replay_{sel_date}_{rep_view}")
-                else:
-                    st.info("Vista no disponible para esta sesión.")
-
-        # ── Daily snapshots table ──────────────────────────────────────────
-        _render_md(
-            '<p class="bb-header" style="margin-top:1.5rem">'
-            'DAILY SNAPSHOTS  ·  últimos 30 días</p>'
-        )
-        snaps = load_daily_snapshots(symbol, days=30)
-        if not snaps:
-            st.info("Sin snapshots diarios todavía.")
-        else:
-            snap_df = pd.DataFrame(snaps)
-            keep_cols = ["date", "spot_close", "regime", "total_gex",
-                         "call_wall", "put_wall", "gamma_flip", "hvl",
-                         "max_pain", "iv_atm"]
-            snap_df = snap_df[[c for c in keep_cols if c in snap_df.columns]]
-            # Friendly formatting
-            if "total_gex" in snap_df.columns:
-                snap_df["total_gex_$B"] = (snap_df["total_gex"] / 1e9).round(2)
-                snap_df = snap_df.drop(columns=["total_gex"])
-            st.dataframe(snap_df, use_container_width=True, hide_index=True)
-
-        # ── DB stats panel ─────────────────────────────────────────────────
-        _render_md(
-            '<p class="bb-header" style="margin-top:1.5rem">'
-            'STORAGE  ·  estadísticas del DB local</p>'
-        )
-        stats = db_stats()
-        if stats:
-            s1, s2, s3, s4, s5 = st.columns(5)
-            s1.metric("Orderflow rows", f"{stats.get('orderflow_rows', 0):,}")
-            s2.metric("HIRO rows", f"{stats.get('hiro_rows', 0):,}")
-            s3.metric("Daily rows", f"{stats.get('daily_rows', 0):,}")
-            s4.metric("Símbolos", stats.get("symbols", 0))
-            s5.metric("Tamaño", f"{stats.get('size_mb', 0):.2f} MB")
-            st.caption(f"📂 `{stats.get('path', '')}`")
 
     # ── FOOTER ──────────────────────────────────────────────────────────────
     st.markdown('<hr class="bb-divider">', unsafe_allow_html=True)
