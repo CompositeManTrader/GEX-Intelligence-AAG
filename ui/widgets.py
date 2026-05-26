@@ -861,6 +861,107 @@ def panel_em_ic_html(ic_suggestion) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  GEX gate badge (PASS/FAIL for 0DTE IC setup)
+# ─────────────────────────────────────────────────────────────────────────────
+def panel_gex_gate_html(gate: dict) -> str:
+    """Render a small badge summarising the GEX-regime gate verdict.
+    Pass `gate` = output of `quant.ic_picker.gex_gate_check`.
+    """
+    if not gate:
+        return _box_err("GEX gate no disponible.")
+    passed = bool(gate.get("pass"))
+    bar_color = "#22c55e" if passed else "#f43f5e"
+    label = "PASS" if passed else "FAIL"
+
+    def _chk(ok: bool, txt: str) -> str:
+        symbol = "✓" if ok else "✗"
+        clr = "#22c55e" if ok else "#f43f5e"
+        return (f'<span style="color:{clr};font-weight:700;'
+                f'margin-right:0.45rem">{symbol}</span>'
+                f'<span style="color:#c0c0d8">{txt}</span>')
+
+    net_bn = gate.get("net_gex_usd")
+    net_bn = (float(net_bn) / 1e9) if net_bn is not None else None
+    gf = gate.get("gamma_flip")
+    cushion = gate.get("cushion_pct")
+    regime = gate.get("regime") or "—"
+
+    checks = [
+        _chk(gate.get("regime_ok"), f"Régimen <b>{regime}</b>"),
+        _chk(gate.get("net_gex_ok"),
+             f"Net GEX <b>{net_bn:+.2f}B</b>" if net_bn is not None
+             else "Net GEX no disp."),
+        _chk(gate.get("above_flip_ok"),
+             f"spot > Zero Γ <b>${gf:,.0f}</b>" if gf is not None
+             else "Zero Γ no disp."),
+        _chk(gate.get("cushion_ok"),
+             f"colchón <b>{cushion:.2f}%</b>" if cushion is not None
+             else "colchón no disp."),
+    ]
+    verdict = gate.get("verdict") or ""
+    return _html(f"""
+<div style="background:rgba(15,17,24,0.85);border:1px solid #1e2230;border-left:4px solid {bar_color};border-radius:0 4px 4px 0;padding:0.55rem 0.85rem;margin:0.45rem 0;font-family:JetBrains Mono,monospace">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem">
+<div style="color:#9090b0;font-size:0.66rem;letter-spacing:0.14em;text-transform:uppercase">🚦 GEX GATE  ·  Iron Condor 0DTE</div>
+<div style="color:{bar_color};font-size:1.05rem;font-weight:800;letter-spacing:0.06em">{label}</div>
+</div>
+<div style="font-size:0.78rem;line-height:1.6">{' &nbsp;·&nbsp; '.join(checks)}</div>
+<div style="color:#7070a0;font-size:0.70rem;margin-top:0.35rem">{verdict}</div>
+</div>
+""")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Iron Condor strike-suggestion summary (one-liner)
+# ─────────────────────────────────────────────────────────────────────────────
+def panel_ic_strike_suggest_html(suggestion: dict,
+                                 walls: Optional[dict] = None) -> str:
+    """Render the strike suggestion produced by
+    `quant.ic_picker.suggest_strikes_from_walls`. Lightweight banner —
+    the rich detail lives in the wing-width comparison table."""
+    if not suggestion:
+        return _box_err("Sin sugerencia de strikes disponible.")
+    sp = suggestion.get("short_put")
+    sc = suggestion.get("short_call")
+    centre = suggestion.get("centre")
+    source = suggestion.get("source", "—")
+    notes = suggestion.get("notes") or []
+    pw = (walls or {}).get("put_wall")
+    cw = (walls or {}).get("call_wall")
+    notes_html = ""
+    if notes:
+        notes_html = (
+            '<div style="color:#7070a0;font-size:0.68rem;margin-top:0.35rem;'
+            'line-height:1.5">'
+            + "<br>".join(f"· {n}" for n in notes)
+            + '</div>'
+        )
+    return _html(f"""
+<div style="background:rgba(15,17,24,0.85);border:1px solid #1e2230;border-radius:6px;padding:0.55rem 0.85rem;margin:0.45rem 0;font-family:JetBrains Mono,monospace">
+<div style="color:#9090b0;font-size:0.66rem;letter-spacing:0.14em;text-transform:uppercase;margin-bottom:0.35rem">🎯 STRIKES SUGERIDOS  ·  fuente {source}</div>
+<div style="display:flex;gap:1rem;font-size:0.82rem">
+<div style="flex:1 1 0;border-left:3px solid #f43f5e;padding-left:0.6rem">
+<div style="color:#7070a0;font-size:0.58rem;letter-spacing:0.10em">SHORT PUT</div>
+<div style="color:#f43f5e;font-weight:700;font-size:1.0rem">{(f"${sp:,.0f}" if sp else "—")}</div>
+<div style="color:#7070a0;font-size:0.66rem">PW {(f"${pw:,.0f}" if pw else "—")}</div>
+</div>
+<div style="flex:1 1 0;border-left:3px solid #fbbf24;padding-left:0.6rem">
+<div style="color:#7070a0;font-size:0.58rem;letter-spacing:0.10em">CENTRO</div>
+<div style="color:#fbbf24;font-weight:700;font-size:1.0rem">{(f"${centre:,.0f}" if centre else "—")}</div>
+<div style="color:#7070a0;font-size:0.66rem">HVL / spot</div>
+</div>
+<div style="flex:1 1 0;border-left:3px solid #22c55e;padding-left:0.6rem">
+<div style="color:#7070a0;font-size:0.58rem;letter-spacing:0.10em">SHORT CALL</div>
+<div style="color:#22c55e;font-weight:700;font-size:1.0rem">{(f"${sc:,.0f}" if sc else "—")}</div>
+<div style="color:#7070a0;font-size:0.66rem">CW {(f"${cw:,.0f}" if cw else "—")}</div>
+</div>
+</div>
+{notes_html}
+</div>
+""")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  Back-compat wrapper (legacy callers expecting one function).
 # ─────────────────────────────────────────────────────────────────────────────
 def panel_em_bands_html(analysis, ic_suggestion=None) -> str:
