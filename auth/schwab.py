@@ -45,12 +45,21 @@ def refresh_access_token() -> None:
     if not tok:
         return
     expiry = tok.get("expiry")
+    # Sentinel for "expiry unknown" must be a finite tz-aware datetime in
+    # the past — using `datetime.min` (year 1) overflows when the line
+    # below subtracts the refresh margin (`expiry - timedelta(60s)` →
+    # year 0 → OverflowError → crash on every API call). Subtracting one
+    # day from now is safe, well-defined, and still triggers the refresh
+    # branch below.
+    now = utcnow()
     if expiry is None:
-        expiry = datetime.datetime.min.replace(tzinfo=utcnow().tzinfo)
+        expiry = now - datetime.timedelta(days=1)
     elif expiry.tzinfo is None:
-        expiry = expiry.replace(tzinfo=utcnow().tzinfo)
+        # Naïve expiry on disk → treat as UTC explicitly. Don't silently
+        # assume local tz, that has bitten this code before.
+        expiry = expiry.replace(tzinfo=datetime.timezone.utc)
 
-    if utcnow() < expiry - datetime.timedelta(seconds=TOKEN_REFRESH_MARGIN_S):
+    if now < expiry - datetime.timedelta(seconds=TOKEN_REFRESH_MARGIN_S):
         return
 
     try:

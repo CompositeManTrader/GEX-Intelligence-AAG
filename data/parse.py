@@ -73,11 +73,23 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     # mis-multiplied by 100 by the legacy heuristic. Real IV in decimal
     # almost never exceeds 3.0 (300% vol); seeing any value above that
     # means the data already arrived in percent.
+    #
+    # CRITICAL: Schwab uses sentinel values (typically -999) for "no IV
+    # available" on illiquid contracts. These leak through to_numeric (they
+    # ARE numeric, just garbage). If a chain has ONLY -999 values, the
+    # legacy heuristic would see `max ≤ 3.0` → multiply by 100 → write
+    # -99900 to every row. Pre-filter to a plausible IV range before
+    # judging units, and require a minimum count of plausible values so a
+    # broken chain doesn't pollute the decision.
     if "IV%" in df.columns:
         iv = pd.to_numeric(df["IV%"], errors="coerce")
-        valid = iv.dropna()
-        if not valid.empty and float(valid.max()) <= 3.0:
+        plausible = iv[(iv > 0) & (iv < 1000)]
+        if len(plausible) >= 3 and float(plausible.max()) <= 3.0:
             iv = iv * 100.0
+        # Replace sentinel-looking values with NaN explicitly so downstream
+        # filters (e.g. quant.exposures.filter_chain min IV gate) drop them
+        # cleanly rather than treating -99900 as a "real" extreme IV.
+        iv = iv.where((iv > 0) & (iv < 1000))
         df["IV%"] = iv.round(2)
 
     if "OI" in df.columns:
