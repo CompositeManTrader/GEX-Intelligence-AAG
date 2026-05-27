@@ -199,7 +199,19 @@ def fetch_quote(symbol: str) -> Tuple[dict, str]:
 #        different cache key, guaranteeing a real refresh on each tick even
 #        if Streamlit's TTL eviction is sluggish.
 # ─────────────────────────────────────────────────────────────────────────────
-@st.cache_data(ttl=5, show_spinner=False)
+# Note on cache config:
+#   · NO ttl. The legacy `ttl=5` invalidated the cache every 5s, which
+#     fought with the `cache_bust` arg the caller already rotates every
+#     `intra_auto` seconds (typically 20). Two mechanisms racing made
+#     fetches happen at the wrong cadence — sometimes every 5s (TTL
+#     win), wasting Schwab API calls; sometimes the cached row was
+#     stale because the bust hadn't ticked yet. Letting `cache_bust`
+#     be the SOLE invalidation key is simpler and correct.
+#   · max_entries=3 caps the cache at 3 distinct (symbol, freq, days,
+#     include_extended, cache_bust) combinations. Without this, every
+#     bust value adds an entry indefinitely (~180/hour) — the memory
+#     creep that contributed to the Streamlit Cloud OOM suspension.
+@st.cache_data(show_spinner=False, max_entries=3)
 def fetch_intraday(symbol: str, freq_min: int = 1,
                    days: int = 1,
                    include_extended: bool = False,

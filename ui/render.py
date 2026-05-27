@@ -785,7 +785,15 @@ def show_dashboard() -> None:
             "GF · HVL · MP · EM±</b>. Los niveles se recalculan cada refresh "
             "usando la cadena actual. VWAP anclado a la apertura en línea discontinua."
         )
-        c_ctrl1, c_ctrl2, c_ctrl3, c_ctrl4 = st.columns([1, 1, 1, 3])
+
+        # Market status FIRST — drives the default for include_extended.
+        m_status, now_et_m = market_status_et()
+        # Default to including extended hours when outside RTH so the
+        # chart shows actual current price action (pre/post market) and
+        # not just "yesterday's close stuck on screen".
+        ext_default = (m_status in ("PRE", "POST"))
+
+        c_ctrl1, c_ctrl2, c_ctrl3, c_ctrl4, c_ctrl5 = st.columns([1, 1, 1.1, 1.4, 2])
         with c_ctrl1:
             intra_freq = st.selectbox(
                 "Frecuencia", [1, 5, 15, 30], index=0,
@@ -804,54 +812,117 @@ def show_dashboard() -> None:
                 key="intra_auto_sec",
                 help="Actualización automática dentro de la tab intraday.",
             )
+        with c_ctrl4:
+            intra_ext = st.checkbox(
+                "Extended hours",
+                value=ext_default,
+                key="intra_extended",
+                help="Incluye pre-market (04:00–09:30 ET) y after-hours "
+                     "(16:00–20:00 ET). Auto-on cuando estás fuera de RTH "
+                     "para que veas acción de precio real.",
+            )
 
-        # ── Per-tab auto-refresh (independiente del global) ────────────────
+        # ── Per-tab auto-refresh ─────────────────────────────────────────
+        # IMPORTANT: ImportError on `streamlit_autorefresh` MUST surface
+        # to the user — the legacy `except ImportError: pass` made the
+        # auto-refresh dropdown a dead control without any indication.
+        autorefresh_active = False
         if intra_auto:
             try:
                 from streamlit_autorefresh import st_autorefresh
                 st_autorefresh(interval=int(intra_auto) * 1000,
                                key="intra_tab_autorefresh")
+                autorefresh_active = True
             except ImportError:
-                pass
+                st.warning(
+                    "⚠ `streamlit-autorefresh` no instalado. El auto-refresh "
+                    "del tab intraday NO funcionará. Instálalo con: "
+                    "`pip install streamlit-autorefresh>=1.0.1`. "
+                    "Mientras tanto, refresca manualmente con R."
+                )
 
-        # cache_bust rotates every `intra_auto` seconds (or every 30s by
-        # default if auto is off) → guarantees a real Schwab refetch even
-        # if Streamlit's TTL eviction lags.
-        bust_window = max(int(intra_auto) if intra_auto else 30, 5)
-        bust = int(time.time() // bust_window)
+        # `bust` rotates the cache key on a schedule. We tie it to the
+        # selected auto-refresh interval so the actual Schwab fetch
+        # happens at the same cadence the user asked for — and ONLY when
+        # auto-refresh is active. If the user set Auto=OFF they expect
+        # the chart NOT to refetch on every global rerun (legacy
+        # bust_window=30 forced fetches even with OFF, confusing).
+        if autorefresh_active and intra_auto:
+            bust_window = max(int(intra_auto), 5)
+            bust = int(time.time() // bust_window)
+        else:
+            # Auto OFF → static bust (no time-driven refetch). The user
+            # gets fresh data when they switch symbols / click R.
+            bust_window = None
+            bust = 0
         intra_df = pd.DataFrame()
         intra_err = ""
+        t0_fetch = time.time()
         try:
-            with st.spinner(f"Cargando velas {intra_freq}min…"):
-                intra_df, intra_err = fetch_intraday(
-                    symbol, intra_freq, intra_days,
-                    include_extended=False, cache_bust=bust,
-                )
+            # Use a transient placeholder for the spinner so it disappears
+            # cleanly on cache-hit (sub-millisecond) and only flashes
+            # when there's a real network roundtrip.
+            _spinner_slot = st.empty()
+            with _spinner_slot:
+                with st.spinner(f"Cargando velas {intra_freq}min…"):
+                    intra_df, intra_err = fetch_intraday(
+                        symbol, intra_freq, intra_days,
+                        include_extended=bool(intra_ext), cache_bust=bust,
+                    )
+            _spinner_slot.empty()
         except Exception as exc:
             log.exception("fetch_intraday crashed")
             intra_err = f"crash: {exc}"
+        fetch_secs = time.time() - t0_fetch
+        # Heuristic: <0.05s ≈ cache hit; longer = real network roundtrip.
+        cache_hit = fetch_secs < 0.05
 
-        m_status, now_et_m = market_status_et()
-
-        # Robust ET timestamp formatting — last_tick may be naive, NaT,
-        # or absent altogether. Guard every step so a single odd value
-        # cannot blank the chart caption.
+        # Compute last-tick freshness: timestamp, date label, and AGE
+        # vs `now` in minutes. The legacy display was just HH:MM:SS ET
+        # which gave no clue that the chart was from yesterday — the
+        # most common "real-time roto" symptom.
         last_tick_str = "—"
+        last_age_min = None
+        last_is_today = False
         if (not intra_df.empty
                 and "date" in intra_df.columns
                 and len(intra_df["date"]) > 0):
             try:
-                last_tick = intra_df["date"].iloc[-1]
-                ts = pd.Timestamp(last_tick)
-                if pd.isna(ts):
-                    last_tick_str = "—"
-                else:
+                ts = pd.Timestamp(intra_df["date"].iloc[-1])
+                if not pd.isna(ts):
                     if ts.tzinfo is None:
                         ts = ts.tz_localize("UTC")
-                    last_tick_str = ts.tz_convert(ET_TZ).strftime("%H:%M:%S ET")
+                    ts_et = ts.tz_convert(ET_TZ)
+                    today_et = now_et_m.date()
+                    last_is_today = (ts_et.date() == today_et)
+                    if last_is_today:
+                        last_tick_str = ts_et.strftime("%H:%M:%S ET")
+                    else:
+                        # Spell out the date when the last bar isn't today
+                        # so the trader sees the staleness immediately.
+                        last_tick_str = ts_et.strftime("%Y-%m-%d %H:%M ET")
+                    last_age_min = max(
+                        0.0, (now_et_m - ts_et).total_seconds() / 60.0
+                    )
             except Exception as exc:
                 log.warning("last_tick format failed: %s", exc)
                 last_tick_str = "—"
+
+        # Stale-data badge: red banner if RTH is open and the most recent
+        # bar is older than 5 minutes. Yellow when outside RTH (expected
+        # to be stale but the user should know).
+        stale_msg = ""
+        if last_age_min is not None:
+            if m_status == "OPEN" and last_age_min > 5:
+                stale_msg = (
+                    f'<span style="color:#f43f5e">⚠ Datos atrasados '
+                    f'{last_age_min:.0f} min</span>'
+                )
+            elif m_status != "OPEN" and not last_is_today:
+                stale_msg = (
+                    f'<span style="color:#f59e0b">⏸ Mercado {m_status} · '
+                    f'última vela es de {last_tick_str.split()[0]}</span>'
+                )
 
         st.caption(
             f"Estado mercado: <b style='color:"
@@ -859,19 +930,44 @@ def show_dashboard() -> None:
             f"{m_status}</b> · Símbolo: <code>{symbol}</code> · "
             f"Frec {intra_freq}m · {intra_days}d · "
             f"Última vela: <b>{last_tick_str}</b> · "
-            f"Ahora: {now_et_m.strftime('%H:%M:%S ET')}",
+            f"Ahora: {now_et_m.strftime('%H:%M:%S ET')}"
+            + (f" · {stale_msg}" if stale_msg else ""),
             unsafe_allow_html=True,
         )
 
         # Diagnostic expander — surfaces *exactly* what fetch_intraday
-        # returned so the user can see whether the issue is the API,
-        # the parsing, or the chart. This was added because "intraday no
-        # me funciona" without context is debug-blind.
+        # returned and HOW it was fetched. This is what you open when
+        # "intraday no se actualiza" — every meaningful state lives here.
         with st.expander("🔍 Diagnóstico intraday", expanded=False):
-            d1, d2, d3 = st.columns(3)
+            d1, d2, d3, d4 = st.columns(4)
             d1.metric("Filas devueltas", len(intra_df))
-            d2.metric("Símbolo", symbol or "—")
-            d3.metric("Error", "—" if not intra_err else "✗")
+            d2.metric(
+                "Fetch",
+                "cache" if cache_hit else "live",
+                f"{fetch_secs*1000:.0f} ms",
+            )
+            d3.metric(
+                "Auto-refresh",
+                "ON" if autorefresh_active else "OFF",
+                (f"cada {intra_auto}s" if autorefresh_active
+                 else "(rerun manual)"),
+            )
+            d4.metric(
+                "Última vela",
+                "hoy" if last_is_today else "atrasada",
+                (f"{last_age_min:.0f} min" if last_age_min is not None
+                 else "—"),
+                delta_color=("normal" if last_is_today else "inverse"),
+            )
+            # Cache-bust state — useful when debugging "why didn't it
+            # refetch?" The answer is usually "because bust didn't change
+            # since the last successful fetch".
+            st.caption(
+                f"`cache_bust={bust}`  ·  `window={bust_window}s`  ·  "
+                f"`extended={intra_ext}`  ·  "
+                f"`now_et={now_et_m.strftime('%H:%M:%S')}`",
+                unsafe_allow_html=True,
+            )
             if intra_err:
                 st.markdown(
                     f'<div style="background:rgba(244,63,94,0.10);'
