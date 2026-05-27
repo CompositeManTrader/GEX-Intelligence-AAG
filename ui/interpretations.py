@@ -381,18 +381,25 @@ def interpret_vol_analytics(analytics: dict, atm_iv: Optional[float]) -> str:
     skew = analytics.get("skewness")
     parts = []
     if ratio is not None:
+        # Tones use "warn" for both extreme IV regimes — the legacy code
+        # assigned "bull" to IV CARA and "bear" to IV BARATA, which gave
+        # the narrative box a green/red color that contradicted the KPI
+        # panel's regime coloring (which paints IV CARA red and BARATA
+        # green by directional convention). Both boxes used "bull/bear"
+        # for opposite intents. Using "warn" for both makes it a
+        # non-directional alert: "vol está rica/barata, ajusta estrategia".
         if ratio > 1.3:
             parts.append(
                 f"<b>IV CARA</b> ({ratio:.2f}x HV30). Vende vol: iron condors, "
                 "credit spreads, short strangles."
             )
-            tone = "bull"
+            tone = "warn"
         elif ratio < 0.8:
             parts.append(
                 f"<b>IV BARATA</b> ({ratio:.2f}x HV30). Compra vol: "
                 "straddles, calendars, debit spreads."
             )
-            tone = "bear"
+            tone = "warn"
         else:
             parts.append(f"IV neutral ({ratio:.2f}x HV30). Prioriza direccionales.")
             tone = "neutral"
@@ -420,10 +427,15 @@ def interpret_scenario(curve_df: pd.DataFrame, gex_sum: dict,
     if curve_df is None or curve_df.empty or not gex_sum:
         return _box("Sin datos para scenario.", "neutral")
     gf = gex_sum.get("gamma_flip")
-    max_gex = float(curve_df["GEX"].max()) / 1e9
-    min_gex = float(curve_df["GEX"].min()) / 1e9
-    max_spot = float(curve_df.loc[curve_df["GEX"].idxmax(), "Spot"])
-    min_spot = float(curve_df.loc[curve_df["GEX"].idxmin(), "Spot"])
+    # `idxmax()` / `idxmin()` raise ValueError on all-NaN series.
+    # Guard explicitly to handle degenerate scenario grids cleanly.
+    gex_col = pd.to_numeric(curve_df["GEX"], errors="coerce")
+    if not gex_col.notna().any():
+        return _box("Sin datos numéricos para scenario.", "neutral")
+    max_gex = float(gex_col.max()) / 1e9
+    min_gex = float(gex_col.min()) / 1e9
+    max_spot = float(curve_df.loc[gex_col.idxmax(), "Spot"])
+    min_spot = float(curve_df.loc[gex_col.idxmin(), "Spot"])
     parts = [
         f"Máx GEX: {_chip(f'${max_gex:+.2f}B', '34,197,94')} "
         f"en spot <b>${max_spot:.0f}</b>.",

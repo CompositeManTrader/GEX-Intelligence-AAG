@@ -206,11 +206,24 @@ def trade_setup_card(
                       f"Extremo {hiro_z:+.1f}σ"))
 
     if vex_sum:
-        vt = vex_sum.get("total_vex", 0)
-        if vt > 1e8:
-            votes.append(("Vanna", +1, "Long vanna — vol expansion amplifica al alza"))
-        elif vt < -1e8:
-            votes.append(("Vanna", -1, "Short vanna — vol expansion amplifica a la baja"))
+        # Relative threshold so the Vanna vote works across symbol sizes.
+        # The legacy absolute $100M threshold only fired on SPX/SPY-sized
+        # books; mid-cap names never got a Vanna vote, sistemáticamente
+        # sesgando el score-aggregate hacia GEX+DEX+HIRO. Now we compare
+        # |total_vex| against half of (|call_vex|+|put_vex|) — fires when
+        # one side dominates the other materially, independently of
+        # symbol notional.
+        vt = vex_sum.get("total_vex", 0) or 0
+        cvex = abs(vex_sum.get("call_vex", 0) or 0)
+        pvex = abs(vex_sum.get("put_vex", 0) or 0)
+        gross = cvex + pvex
+        if gross > 0:
+            if vt > 0.20 * gross:
+                votes.append(("Vanna", +1,
+                              "Long vanna — vol expansion amplifica al alza"))
+            elif vt < -0.20 * gross:
+                votes.append(("Vanna", -1,
+                              "Short vanna — vol expansion amplifica a la baja"))
 
     if dex_sum:
         bias = dex_sum.get("bias", "NEUTRAL")
@@ -821,10 +834,21 @@ def panel_em_ic_html(ic_suggestion) -> str:
 
     ic = (ic_suggestion if isinstance(ic_suggestion, dict)
           else ic_suggestion.to_dict())
-    pop = float(ic.get("prob_of_profit", 0)) * 100
+    # Defensive: any missing leg means the suggestion is incomplete (e.g.
+    # wing math failed at an edge case). Render the "no data" card
+    # instead of crashing with KeyError mid-panel.
+    required = ("short_put", "long_put", "short_call", "long_call")
+    if any(ic.get(k) is None for k in required):
+        return _html("""
+<div style="background:rgba(15,17,24,0.85);border:1px solid #1e2230;border-radius:6px;padding:0.6rem 0.85rem;font-family:JetBrains Mono,monospace">
+<div style="color:#9090b0;font-size:0.66rem;letter-spacing:0.12em;text-transform:uppercase">🦅 IRON CONDOR 0DTE</div>
+<div style="color:#7070a0;font-size:0.78rem;padding:0.6rem 0">Sugerencia incompleta — falta algún strike (wing math fuera de rango).</div>
+</div>
+""")
+    pop = float(ic.get("prob_of_profit", 0) or 0) * 100
     pop_color = ("#22c55e" if pop >= 70 else
                  "#f59e0b" if pop >= 50 else "#f43f5e")
-    target_pop = int(float(ic.get("target_pop", 0.7)) * 100)
+    target_pop = int(float(ic.get("target_pop", 0.7) or 0.7) * 100)
     short_put = float(ic["short_put"])
     long_put = float(ic["long_put"])
     short_call = float(ic["short_call"])

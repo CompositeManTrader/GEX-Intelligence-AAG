@@ -300,8 +300,18 @@ def show_dashboard() -> None:
     calls_all = clean(calls_raw)
     puts_all = clean(puts_raw)
 
+    # Invalidate SEL_EXP when the previously-selected expiry no longer
+    # exists in the current chain. Without this, after a weekly expires
+    # the selectbox holds a stale value, `by_expiry` returns empty, and
+    # every per-expiry panel silently blanks even though the chain is
+    # full of valid contracts.
+    _all_exps_now = st.session_state.get(SS.ALL_EXPS) or []
+    _prev_sel = st.session_state.get(SS.SEL_EXP)
+    if _prev_sel is not None and _all_exps_now and _prev_sel not in _all_exps_now:
+        st.session_state.pop(SS.SEL_EXP, None)
+
     sel_exp = st.session_state.get(SS.SEL_EXP,
-                                   (st.session_state.get(SS.ALL_EXPS) or [""])[0])
+                                   (_all_exps_now or [""])[0])
     calls = by_expiry(calls_all, sel_exp).sort_values("Strike") if not calls_all.empty else calls_all
     puts = by_expiry(puts_all, sel_exp).sort_values("Strike") if not puts_all.empty else puts_all
 
@@ -324,14 +334,20 @@ def show_dashboard() -> None:
     vol_u = int(ul.get("totalVolume", 0) or 0)
 
     # ── ANALYTICS ───────────────────────────────────────────────────────────
+    # Parse DTE explicitly (pd.to_numeric → mode/min) instead of the
+    # legacy `int(float(str(...).split(".")[0]))` chain wrapped in a
+    # bare except. Non-numeric DTE was silently swallowed to 0, then
+    # downstream narratives ("DTE 0d" → "charm acelera") fired wrongly.
     dte_v = 0
     if not calls.empty and "DTE" in calls.columns:
-        dte_vals = calls["DTE"].dropna()
-        if len(dte_vals) > 0:
+        dte_clean = pd.to_numeric(calls["DTE"], errors="coerce").dropna()
+        if not dte_clean.empty:
+            # Use the modal DTE inside the selected expiry (defensive
+            # against per-row noise in Schwab payload).
             try:
-                dte_v = int(float(str(dte_vals.values[0]).split(".")[0]))
+                dte_v = int(dte_clean.mode().iloc[0])
             except Exception:
-                dte_v = 0
+                dte_v = int(dte_clean.iloc[0])
 
     # Blend put-side IV when available (OCC convention) — see levels.py.
     iv_atm = (atm_iv_interp(calls_all, spot, p=puts_all)
@@ -1233,11 +1249,16 @@ def show_dashboard() -> None:
                 # DEX panel + commentary
                 _render_md('<p class="bb-header" style="margin-top:0.4rem">'
                            'DEX  ·  Aggregate Delta Exposure</p>')
+                # Stable keys (NO len(of_hist) suffix). Including a value
+                # that increments every tick forced Plotly to remount the
+                # iframe on every refresh → visible flicker. Plotly diffs
+                # the trace list internally; the key only needs to be
+                # stable across reruns for the same logical chart.
                 fig_dex_ts = chart_dex_timeseries(of_hist, symbol)
                 if fig_dex_ts:
                     st.plotly_chart(
                         fig_dex_ts, use_container_width=True,
-                        key=f"of_dex_{symbol}_{len(of_hist)}",
+                        key=f"of_dex_{symbol}",
                     )
                 _render_md(interpret_orderflow_dex(of_hist))
 
@@ -1248,7 +1269,7 @@ def show_dashboard() -> None:
                 if fig_gex_ts:
                     st.plotly_chart(
                         fig_gex_ts, use_container_width=True,
-                        key=f"of_gex_{symbol}_{len(of_hist)}",
+                        key=f"of_gex_{symbol}",
                     )
                 _render_md(interpret_orderflow_gex(of_hist, spot))
 
@@ -1259,7 +1280,7 @@ def show_dashboard() -> None:
                 if fig_vex_ts:
                     st.plotly_chart(
                         fig_vex_ts, use_container_width=True,
-                        key=f"of_vex_{symbol}_{len(of_hist)}",
+                        key=f"of_vex_{symbol}",
                     )
                 _render_md(interpret_orderflow_convexity(of_hist))
         else:
