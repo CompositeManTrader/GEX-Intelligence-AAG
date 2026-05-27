@@ -28,9 +28,11 @@ Design
 from __future__ import annotations
 
 import datetime
+import functools
 import json
 import os
 import sqlite3
+import threading
 from datetime import timezone
 from pathlib import Path
 from typing import Optional
@@ -169,6 +171,30 @@ def _migrate_orderflow_ticks(c: sqlite3.Connection) -> None:
     c.commit()
 
 
+# Single SQLite Connection is shared across all Streamlit sessions via
+# `st.cache_resource`. Python's sqlite3 Connection is NOT thread-safe;
+# concurrent execute() from multiple sessions can raise
+# "Recursive use of cursors not allowed" or interleave commits with
+# partial writes. We serialize every public DB operation through this
+# module-level lock. The cost is negligible (microseconds per acquire);
+# the gain is no more silently-dropped writes during peak refresh.
+_DB_LOCK = threading.Lock()
+
+
+def _db_locked(func):
+    """Decorator: serialize the wrapped function with `_DB_LOCK`.
+
+    Applied to every public reader/writer in this module so concurrent
+    Streamlit sessions can't trample each other on the shared
+    Connection. Release on exception is automatic via `with`.
+    """
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        with _DB_LOCK:
+            return func(*args, **kwargs)
+    return wrapper
+
+
 @st.cache_resource(show_spinner=False)
 def _conn() -> sqlite3.Connection:
     path = _db_path()
@@ -256,6 +282,7 @@ ORDERFLOW_FIELDS = [
 ]
 
 
+@_db_locked
 def persist_orderflow_tick(symbol: str, tick: dict) -> None:
     """INSERT OR IGNORE — dedup by (symbol, ts). Best-effort.
 
@@ -286,6 +313,7 @@ def persist_orderflow_tick(symbol: str, tick: dict) -> None:
         log.exception("persist_orderflow_tick failed")
 
 
+@_db_locked
 def load_orderflow_history(symbol: str, date: Optional[str] = None,
                            limit: int = 5000) -> list[dict]:
     """Return rows for the given symbol/date as plain dicts.
@@ -313,6 +341,7 @@ def load_orderflow_history(symbol: str, date: Optional[str] = None,
         return []
 
 
+@_db_locked
 def load_recent_orderflow(symbol: str, hours: int = 8,
                           limit: int = 1000) -> list[dict]:
     """Last N hours of orderflow ticks for a symbol — used to seed the
@@ -345,6 +374,7 @@ def load_recent_orderflow(symbol: str, hours: int = 8,
 HIRO_FIELDS = ["spot", "call_flow", "put_flow", "hiro", "ratio"]
 
 
+@_db_locked
 def persist_hiro_tick(symbol: str, tick: dict) -> None:
     if not symbol or not tick:
         return
@@ -366,6 +396,7 @@ def persist_hiro_tick(symbol: str, tick: dict) -> None:
         log.exception("persist_hiro_tick failed")
 
 
+@_db_locked
 def load_hiro_history(symbol: str, date: Optional[str] = None,
                       limit: int = 5000) -> list[dict]:
     if not symbol:
@@ -391,6 +422,7 @@ def load_hiro_history(symbol: str, date: Optional[str] = None,
         return []
 
 
+@_db_locked
 def load_recent_hiro(symbol: str, hours: int = 8,
                      limit: int = 1000) -> list[dict]:
     if not symbol:
@@ -418,6 +450,7 @@ def load_recent_hiro(symbol: str, hours: int = 8,
 # ─────────────────────────────────────────────────────────────────────────────
 #  Daily snapshots
 # ─────────────────────────────────────────────────────────────────────────────
+@_db_locked
 def persist_daily_snapshot(symbol: str, spot: float,
                            gex_sum: dict, max_pain_v: Optional[float],
                            iv_atm: Optional[float],
@@ -460,6 +493,7 @@ def persist_daily_snapshot(symbol: str, spot: float,
         log.exception("persist_daily_snapshot failed")
 
 
+@_db_locked
 def load_daily_snapshots(symbol: str, days: int = 30) -> list[dict]:
     if not symbol:
         return []
@@ -481,6 +515,7 @@ def load_daily_snapshots(symbol: str, days: int = 30) -> list[dict]:
 # ─────────────────────────────────────────────────────────────────────────────
 #  Replay support
 # ─────────────────────────────────────────────────────────────────────────────
+@_db_locked
 def available_replay_dates(symbol: str, lookback_days: int = 60) -> list[str]:
     """Distinct YYYY-MM-DD dates that have at least one orderflow tick stored
     for `symbol`, most recent first. Used to populate the replay date picker."""
@@ -501,6 +536,7 @@ def available_replay_dates(symbol: str, lookback_days: int = 60) -> list[str]:
         return []
 
 
+@_db_locked
 def db_stats() -> dict:
     """Quick summary for a 'storage' panel: total rows + unique symbols/days."""
     try:
@@ -526,6 +562,7 @@ def db_stats() -> dict:
         return {}
 
 
+@_db_locked
 def purge_old_ticks(keep_days: int = 30) -> int:
     """Delete tick data older than `keep_days`. Daily snapshots are kept."""
     cutoff = (datetime.datetime.now(timezone.utc)
@@ -550,6 +587,7 @@ def purge_old_ticks(keep_days: int = 30) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 #  Gamma zones (P1/P2/P3 …) — persisted per tick for replay + cross-session
 # ─────────────────────────────────────────────────────────────────────────────
+@_db_locked
 def persist_zones_tick(symbol: str, ts: str, zones: list[dict]) -> None:
     """Persist a top-N gamma-zones snapshot. Zones are dicts produced by
     :func:`quant.zones.GammaZone.to_dict`. Best-effort, silent on errors.
@@ -588,6 +626,7 @@ def persist_zones_tick(symbol: str, ts: str, zones: list[dict]) -> None:
         log.exception("persist_zones_tick failed")
 
 
+@_db_locked
 def load_zones_history(symbol: str, date: Optional[str] = None,
                        limit: int = 5000) -> list[dict]:
     """Return zones rows for `symbol` on the given ET date, sorted by
@@ -618,6 +657,7 @@ def load_zones_history(symbol: str, date: Optional[str] = None,
         return []
 
 
+@_db_locked
 def latest_zones(symbol: str) -> list[dict]:
     """Return the most recently persisted zones for `symbol` as a list
     of dicts, sorted by rank ASC. Empty if none."""
@@ -653,6 +693,7 @@ def latest_zones(symbol: str) -> list[dict]:
 # ─────────────────────────────────────────────────────────────────────────────
 #  Per-strike orderflow snapshots
 # ─────────────────────────────────────────────────────────────────────────────
+@_db_locked
 def persist_strike_tick(symbol: str, ts: str, bucket: str,
                         gex_df, dex_df=None, vex_df=None) -> None:
     """Persist a per-strike snapshot for one (symbol, ts, bucket).
@@ -712,6 +753,7 @@ def persist_strike_tick(symbol: str, ts: str, bucket: str,
         log.exception("persist_strike_tick failed")
 
 
+@_db_locked
 def load_strike_history(symbol: str, bucket: str = "month",
                         date: Optional[str] = None,
                         limit: int = 50000) -> list[dict]:
@@ -737,6 +779,7 @@ def load_strike_history(symbol: str, bucket: str = "month",
         return []
 
 
+@_db_locked
 def latest_two_strike_snapshots(symbol: str, bucket: str = "month"
                                 ) -> tuple[list[dict], list[dict]]:
     """Return (newest_snapshot, prior_snapshot) as two strike-keyed row
@@ -777,6 +820,7 @@ def latest_two_strike_snapshots(symbol: str, bucket: str = "month"
 # ─────────────────────────────────────────────────────────────────────────────
 #  Cross-session compare — "today at 10:30 vs same time over last N days"
 # ─────────────────────────────────────────────────────────────────────────────
+@_db_locked
 def load_intraday_at_time_of_day(symbol: str,
                                  hh: int, mm: int,
                                  days: int = 10,
