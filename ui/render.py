@@ -402,7 +402,7 @@ def show_dashboard() -> None:
         "LONG Γ" if (total_gex_bn or 0) >= 0 else "SHORT Γ",
     )
 
-    if em_lo and em_hi:
+    if em_lo and em_hi and spot and spot > 0:
         move_pct = round((em_hi - spot) / spot * 100, 1)
         st.markdown(
             f'<p style="font-size:0.72rem;color:#404060;'
@@ -539,7 +539,7 @@ def show_dashboard() -> None:
             ))
             # Distance to flip in $ + pct
             gf_now = (gex_sum or {}).get("gamma_flip")
-            if gf_now and spot:
+            if gf_now and spot and spot > 0:
                 dist_pct = (spot - gf_now) / spot * 100
                 dist_pts = (spot - gf_now) * (fut_spec.etf_ratio if fut_spec else 1.0)
                 color = "#22c55e" if dist_pct > 0.3 else (
@@ -1403,7 +1403,7 @@ def show_dashboard() -> None:
                     "Zero Γ",
                     f"${gf:.0f}" if gf else "—",
                     (f"{(gf - spot)/spot*100:+.2f}% vs spot"
-                     if gf and spot else None),
+                     if gf and spot and spot > 0 else None),
                 )
                 z8.metric(
                     "HVL (pin)",

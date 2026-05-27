@@ -22,6 +22,29 @@ def utcnow() -> datetime.datetime:
     return datetime.datetime.now(UTC)
 
 
+def safe_pct(numerator: Optional[float], denominator: Optional[float]
+             ) -> Optional[float]:
+    """Return `numerator / denominator * 100` guarded against zero/None.
+
+    Returns None if either operand is None, NaN, or denominator ≤ 0.
+    Used wherever we render a "X% vs spot"-style display — spot can be
+    transiently 0 if the live-quote fetcher returned an empty body and
+    the fallback chain decayed to `close=0`. The legacy code would then
+    raise ZeroDivisionError and blank an entire panel.
+    """
+    if numerator is None or denominator is None:
+        return None
+    try:
+        n = float(numerator)
+        d = float(denominator)
+    except (TypeError, ValueError):
+        return None
+    # NaN propagates as itself in float() — guard explicitly.
+    if n != n or d != d or d <= 0:
+        return None
+    return n / d * 100.0
+
+
 def market_status_et() -> tuple[str, datetime.datetime]:
     """Return ('OPEN'|'PRE'|'POST'|'CLOSED', now_et)."""
     now_et = datetime.datetime.now(ET_TZ)

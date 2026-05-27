@@ -430,7 +430,7 @@ def interpret_scenario(curve_df: pd.DataFrame, gex_sum: dict,
         f"Mín GEX: {_chip(f'${min_gex:+.2f}B', '244,63,94')} "
         f"en spot <b>${min_spot:.0f}</b>.",
     ]
-    if gf:
+    if gf and spot and spot > 0:
         dist_pct = (gf - spot) / spot * 100
         parts.append(
             f"Zero Γ dinámico en <b>${gf:.0f}</b> "
@@ -450,7 +450,7 @@ def interpret_0dte(zdte_sum: dict, spot: float) -> str:
     cw = zdte_sum.get("call_wall")
     pw = zdte_sum.get("put_wall")
     parts = [f"0DTE Net GEX: <b>${total_m:+.0f}M</b>."]
-    if hvl:
+    if hvl and spot and spot > 0:
         dist_pct = (hvl - spot) / spot * 100
         parts.append(
             f"<b>Pin strike</b>: ${hvl:.0f} ({dist_pct:+.2f}% del spot). "
@@ -557,7 +557,7 @@ def interpret_orderflow_gex(history: list, spot: Optional[float] = None) -> str:
             f"Spot ${spot:.2f} → "
             f"{'dentro' if pw <= spot <= cw else '<b>FUERA</b>'} del canal GEX."
         )
-    if spot and gf:
+    if spot and gf and spot > 0:
         dist_pct = (gf - spot) / spot * 100
         if abs(dist_pct) < 0.5:
             parts.append(
