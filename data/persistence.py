@@ -204,6 +204,29 @@ def _et_cutoff_iso(days: int) -> str:
     return (datetime.datetime.now(ET_TZ) - datetime.timedelta(days=days)).isoformat()
 
 
+def _et_date_to_utc_range(date_iso: str) -> tuple[str, str]:
+    """Convert 'YYYY-MM-DD' (interpreted as an ET trading date) into the
+    UTC ISO range `[start, end)` that covers the full 24-hour ET day.
+
+    Critical for filtering UTC-stored `ts` columns by ET date: after
+    ~20:00 ET the UTC date has already rolled to the next day, so the
+    legacy `substr(ts,1,10) = today_ET` filter missed the last few hours
+    of every session. Using a UTC-range query against the same UTC ts
+    column works regardless of the wall-clock skew between the two zones
+    and works for both EDT (UTC-4) and EST (UTC-5) without extra logic.
+    """
+    et_day = datetime.date.fromisoformat(date_iso)
+    midnight_naive = datetime.datetime.combine(et_day, datetime.time.min)
+    # Localize as ET — pytz needs `localize` rather than `replace`.
+    if hasattr(ET_TZ, "localize"):
+        start_et = ET_TZ.localize(midnight_naive)
+    else:  # zoneinfo path
+        start_et = midnight_naive.replace(tzinfo=ET_TZ)
+    end_et = start_et + datetime.timedelta(days=1)
+    return (start_et.astimezone(timezone.utc).isoformat(),
+            end_et.astimezone(timezone.utc).isoformat())
+
+
 def _safe_float(v) -> Optional[float]:
     if v is None:
         return None
@@ -271,12 +294,13 @@ def load_orderflow_history(symbol: str, date: Optional[str] = None,
         return []
     d = date or _today_iso()
     try:
+        start_utc, end_utc = _et_date_to_utc_range(d)
         c = _conn()
         cur = c.execute(
             "SELECT * FROM orderflow_ticks "
-            "WHERE symbol=? AND substr(ts,1,10)=? "
+            "WHERE symbol=? AND ts>=? AND ts<? "
             "ORDER BY ts ASC LIMIT ?",
-            (symbol, d, limit),
+            (symbol, start_utc, end_utc, limit),
         )
         rows = []
         for r in cur.fetchall():
@@ -348,11 +372,13 @@ def load_hiro_history(symbol: str, date: Optional[str] = None,
         return []
     d = date or _today_iso()
     try:
+        start_utc, end_utc = _et_date_to_utc_range(d)
         c = _conn()
         cur = c.execute(
-            "SELECT * FROM hiro_ticks WHERE symbol=? AND substr(ts,1,10)=? "
+            "SELECT * FROM hiro_ticks "
+            "WHERE symbol=? AND ts>=? AND ts<? "
             "ORDER BY ts ASC LIMIT ?",
-            (symbol, d, limit),
+            (symbol, start_utc, end_utc, limit),
         )
         rows = []
         for r in cur.fetchall():
@@ -572,12 +598,13 @@ def load_zones_history(symbol: str, date: Optional[str] = None,
         return []
     d = date or _today_iso()
     try:
+        start_utc, end_utc = _et_date_to_utc_range(d)
         c = _conn()
         cur = c.execute(
             "SELECT * FROM orderflow_zones "
-            "WHERE symbol=? AND substr(ts,1,10)=? "
+            "WHERE symbol=? AND ts>=? AND ts<? "
             "ORDER BY ts ASC, rank ASC LIMIT ?",
-            (symbol, d, limit),
+            (symbol, start_utc, end_utc, limit),
         )
         out = []
         for r in cur.fetchall():
@@ -696,12 +723,13 @@ def load_strike_history(symbol: str, bucket: str = "month",
         return []
     d = date or _today_iso()
     try:
+        start_utc, end_utc = _et_date_to_utc_range(d)
         c = _conn()
         cur = c.execute(
             "SELECT ts, strike, gex_mm, dex_mm, vex_mm FROM orderflow_strikes "
-            "WHERE symbol=? AND bucket=? AND substr(ts,1,10)=? "
+            "WHERE symbol=? AND bucket=? AND ts>=? AND ts<? "
             "ORDER BY ts ASC, strike ASC LIMIT ?",
-            (symbol, bucket, d, limit),
+            (symbol, bucket, start_utc, end_utc, limit),
         )
         return [dict(r) for r in cur.fetchall()]
     except Exception:
@@ -764,6 +792,16 @@ def load_intraday_at_time_of_day(symbol: str,
         return []
     fields = fields or ["spot", "net_gex_mm", "net_dex_mm", "net_vex_mm",
                         "call_wall", "put_wall", "gamma_flip"]
+    # SQL-injection hardening: whitelist `fields` against the actual
+    # persisted columns before interpolating into SQL. ORDERFLOW_FIELDS
+    # is the canonical list used by `persist_orderflow_tick`. Anything
+    # else is rejected silently so a future caller passing user input
+    # can't break out of the SELECT.
+    safe_fields = [f for f in fields if f in ORDERFLOW_FIELDS]
+    if not safe_fields:
+        log.warning("load_intraday_at_time_of_day: no valid fields after "
+                    "whitelist filter; aborting query")
+        return []
     try:
         import pandas as pd
         # Build the candidate dates list locally (ET).
@@ -773,20 +811,18 @@ def load_intraday_at_time_of_day(symbol: str,
         c = _conn()
         rows: list[dict] = []
         target_min = hh * 60 + mm
-        col_list = ", ".join(fields)
+        col_list = ", ".join(safe_fields)
         for d in dates:
-            # Pick the row whose ts (UTC ISO) corresponds to the smallest
-            # absolute minutes-of-day-difference vs target. We approximate
-            # by extracting hour+minute from the substring HH:MM in `ts`
-            # and converting UTC→ET via a fixed offset based on date —
-            # since DST varies, a precise filter is awkward in pure SQL.
-            # Cheapest: scan that day's rows and pick min(|HH:MM diff|) in
-            # Python after converting to ET.
+            # UTC-range filter so we capture the entire ET day even when
+            # the wall-clock zones disagree. Combined with the in-Python
+            # ET conversion below, this gives precise "closest minute"
+            # matching regardless of DST.
+            start_utc, end_utc = _et_date_to_utc_range(d)
             cur = c.execute(
                 f"SELECT ts, {col_list} FROM orderflow_ticks "
-                "WHERE symbol=? AND substr(ts,1,10)=? "
+                "WHERE symbol=? AND ts>=? AND ts<? "
                 "ORDER BY ts ASC",
-                (symbol, d),
+                (symbol, start_utc, end_utc),
             )
             best: Optional[dict] = None
             best_diff = 10 ** 9
