@@ -401,10 +401,16 @@ def chart_strike_heatmap(strike_history: list, symbol: str = "",
     pv = df.pivot_table(index="strike", columns="ts", values=metric,
                         aggfunc="mean").sort_index()
     z = pv.to_numpy()
-    if z.size == 0:
+    if z.size == 0 or not np.isfinite(z).any():
         return None
-    # Symmetric colorscale around 0 — so positive / negative GEX read clearly
-    vmax = float(np.nanpercentile(np.abs(z), 95)) if np.isfinite(z).any() else 1.0
+    # Symmetric colorscale around 0 — so positive / negative GEX read clearly.
+    # `np.nanpercentile` on an all-NaN slice raises RuntimeWarning AND
+    # returns NaN; `max(NaN, 1e-6)` then propagates the NaN → heatmap
+    # zmin/zmax = NaN → blank colorbar. Guard explicitly.
+    with np.errstate(all="ignore"):
+        vmax = float(np.nanpercentile(np.abs(z), 95))
+    if not np.isfinite(vmax) or vmax <= 0:
+        vmax = 1.0
     vmax = max(vmax, 1e-6)
     fig = go.Figure(data=go.Heatmap(
         z=z, x=pv.columns, y=pv.index,

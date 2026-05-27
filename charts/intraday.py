@@ -277,8 +277,15 @@ def chart_session_profile(price_df: pd.DataFrame,
     if df.empty:
         return None
     df["date_et"] = _as_et(df["date"])
+    # If `_as_et` returned an all-NaT series (its own fallback path on
+    # malformed timestamps), `.dt.date.max()` returns NaT and the next
+    # equality filter masks every row away → blank chart. Guard explicitly.
+    if df["date_et"].isna().all():
+        return None
     # Focus on the most recent session only
     last_day = df["date_et"].dt.date.max()
+    if pd.isna(last_day):
+        return None
     df = df[df["date_et"].dt.date == last_day]
     if df.empty:
         return None

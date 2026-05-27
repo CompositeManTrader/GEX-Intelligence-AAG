@@ -162,18 +162,22 @@ def chart_gex_timeseries(history: list,
             hovertemplate="%{x|%H:%M:%S}<br>Spot: $%{y:.2f}<extra></extra>",
         ), secondary_y=True)
 
-    # Latest wall references (as thin horizontal rules on the spot axis)
-    last = df.iloc[-1]
+    # Latest wall references (as thin horizontal rules on the spot axis).
+    # Use the most recent NON-NULL value per key, not strictly the last row:
+    # one mal-formed tick (e.g. a snapshot from a stale schema version) was
+    # making walls disappear from the chart even though prior ticks had them.
     for key, color, label in (
         ("call_wall", GREEN, "CW"),
         ("put_wall", RED, "PW"),
         ("gamma_flip", PURPLE, "GF"),
     ):
-        val = last.get(key)
-        if val is None or (isinstance(val, float) and pd.isna(val)):
+        if key not in df.columns:
+            continue
+        nn = df[key].dropna()
+        if nn.empty:
             continue
         try:
-            v = float(val)
+            v = float(nn.iloc[-1])
         except (TypeError, ValueError):
             continue
         if v <= 0:

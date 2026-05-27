@@ -369,7 +369,11 @@ def chart_dex_profile(dex_df: pd.DataFrame, spot: float, summary: dict,
                       symbol: str, focus_pct: float = 0.10) -> Optional[go.Figure]:
     if dex_df is None or dex_df.empty:
         return None
-    df = _focus_range(dex_df, spot, focus_pct).copy()
+    # CRITICAL: sort by Strike before cumsum. `_focus_range` does NOT
+    # guarantee strike order; the cumulative DEX trace was zigzagging
+    # whenever the upstream df arrived unsorted, drawing visually
+    # incorrect cumulative semantics (line jumped backward).
+    df = _focus_range(dex_df, spot, focus_pct).sort_values("Strike").copy()
     df["C_DEX_M"] = df["C_DEX"] / 1e6
     df["P_DEX_M"] = df["P_DEX"] / 1e6
     df["Net_DEX_M"] = df["Net_DEX"] / 1e6

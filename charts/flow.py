@@ -71,10 +71,19 @@ def chart_hiro_oscillator(history: list, symbol: str = "") -> Optional[go.Figure
     if not history or len(history) < 2:
         return None
     df = pd.DataFrame(history)
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    # Same tz handling as charts/orderflow.py: parse as UTC then convert
+    # to ET for display. Without `utc=True`, mixed tz-aware / naive
+    # strings (which can happen across persistence schema versions)
+    # produce object dtype and the wall-clock x-axis renders wrong.
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce",
+                                      utc=True)
     df = df.dropna(subset=["timestamp"]).sort_values("timestamp")
     if df.empty:
         return None
+    try:
+        df["timestamp"] = df["timestamp"].dt.tz_convert("America/New_York")
+    except Exception:
+        pass
 
     fig = make_subplots(
         rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05,
