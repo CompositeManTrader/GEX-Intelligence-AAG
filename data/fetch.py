@@ -41,6 +41,11 @@ def _build_session() -> requests.Session:
         status_forcelist=(429, 500, 502, 503, 504),
         allowed_methods=frozenset(["GET"]),
         raise_on_status=False,
+        # Respect Schwab's `Retry-After` header when present — it
+        # overrides the computed backoff. Default in urllib3 ≥1.26 is
+        # True but make it explicit so a downgrade doesn't silently
+        # regress the rate-limit behavior.
+        respect_retry_after_header=True,
     )
     adapter = HTTPAdapter(max_retries=retry, pool_connections=4, pool_maxsize=8)
     s = requests.Session()

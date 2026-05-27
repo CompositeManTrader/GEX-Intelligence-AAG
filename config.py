@@ -82,7 +82,14 @@ SCHWAB_BASE_URL = "https://api.schwabapi.com"
 
 HTTP_TIMEOUT = 20
 HTTP_RETRIES = 3
-HTTP_BACKOFF = 0.4
+# Backoff factor for `urllib3.Retry`. Total wait between attempts grows
+# as `backoff_factor * (2 ** attempt)`. With factor=0.4 the waits are
+# 0.4 + 0.8 + 1.6 = 2.8 s total — way under Schwab's typical
+# Retry-After (which urllib3 already respects when present). On a real
+# 429 burst that aggressive pattern hammers the API and prolongs the
+# ban. 1.0 gives 1 + 2 + 4 = 7 s, a saner cadence; Retry-After header
+# (when sent) still takes precedence over the computed backoff.
+HTTP_BACKOFF = 1.0
 
 TOKEN_REFRESH_MARGIN_S = 60
 
