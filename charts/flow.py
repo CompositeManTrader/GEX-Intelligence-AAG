@@ -92,9 +92,14 @@ def chart_hiro_oscillator(history: list, symbol: str = "") -> Optional[go.Figure
                         "Spot price"],
     )
 
-    # HIRO area
-    clrs = ["rgba(34,197,94,0.6)" if v >= 0 else "rgba(244,63,94,0.6)"
-            for v in df["hiro"]]
+    # HIRO area. NaN ticks get a transparent color (otherwise `NaN >= 0`
+    # is False → red, misclassifying empty ticks as bearish dealer flow).
+    clrs = [
+        "rgba(34,197,94,0.6)" if (pd.notna(v) and v >= 0)
+        else "rgba(244,63,94,0.6)" if pd.notna(v)
+        else "rgba(0,0,0,0)"
+        for v in df["hiro"]
+    ]
     fig.add_trace(go.Bar(
         x=df["timestamp"], y=df["hiro"], marker_color=clrs,
         marker_line_width=0, name="HIRO",

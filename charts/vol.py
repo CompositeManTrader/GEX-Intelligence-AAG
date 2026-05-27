@@ -65,7 +65,10 @@ def chart_iv_skew(skew_df: pd.DataFrame, spot: float) -> Optional[go.Figure]:
         hovertemplate="Strike %{x}<br>Put IV: %{y:.1f}%<extra></extra>",
     ), row=1, col=1)
     vline(fig, spot, row=1, col=1, label=False)
-    clrs = [RED if v > 0 else GREEN for v in skew_df["Skew"]]
+    # NaN guard: `NaN > 0` is False so NaN-skew bars used to be coloured
+    # GREEN silently. Same pattern as the smile chart's skew column.
+    clrs = [RED if (pd.notna(v) and v > 0) else GREEN
+            for v in skew_df["Skew"]]
     fig.add_trace(go.Bar(
         x=skew_df["Strike"], y=skew_df["Skew"],
         marker_color=clrs, marker_line_width=0,
@@ -181,7 +184,16 @@ def chart_term_structure(ts_df: pd.DataFrame) -> Optional[go.Figure]:
     front_iv = float(ts["ATM_IV"].iloc[0])
     # Per-point regime color: diff vs front month
     diffs = ts["ATM_IV"] - front_iv
-    colors = [GREEN if d > 0.3 else (RED if d < -0.3 else ORANGE) for d in diffs]
+    # NaN-safe: NaN comparisons return False, sending NaN-diffs to the
+    # ORANGE bucket silently. Mark NaN as neutral grey instead so they
+    # don't masquerade as "neutral term".
+    colors = [
+        GREEN if (pd.notna(d) and d > 0.3) else
+        RED if (pd.notna(d) and d < -0.3) else
+        "rgba(120,120,150,0.50)" if not pd.notna(d) else
+        ORANGE
+        for d in diffs
+    ]
     # Slope hint
     back_iv = float(ts["ATM_IV"].iloc[-1])
     net = back_iv - front_iv
@@ -211,12 +223,16 @@ def chart_term_structure(ts_df: pd.DataFrame) -> Optional[go.Figure]:
         name="ATM IV",
         showlegend=False,
     ))
-    # Label only first, last, and any tenor near 30/60 if present
+    # Label only first, last, and any tenor near 30/60 if present.
+    # `idxmin()` returns the index *label*; combined with `iloc[j]` it
+    # was fragile (only works because we did reset_index above). Use
+    # `argmin()` (numpy semantics, returns positional index) for an
+    # invariant that doesn't rely on the reset.
     n = len(ts)
     mark_idx = {0, n - 1}
     for target in (30, 60, 90):
         if n > 2:
-            j = int((ts["DTE"] - target).abs().idxmin())
+            j = int((ts["DTE"] - target).abs().to_numpy().argmin())
             if abs(ts["DTE"].iloc[j] - target) <= 5:
                 mark_idx.add(j)
     for i in mark_idx:
@@ -344,10 +360,19 @@ def chart_iv_hv_history(analytics: dict, atm_iv: Optional[float]
     if hv30_s is None or dates is None or len(hv30_s) < 10:
         return None
     hv30_s = hv30_s.dropna()
+    # After dropna, `hv30_s.index` are LABELS of surviving rows, not
+    # positions. `.iloc[labels]` only works coincidentally when the
+    # source index is a default RangeIndex. Use `.loc` (label-based)
+    # so we don't silently fall back to an integer 0..N x-axis when
+    # the caller passes a non-default index.
     try:
-        hv_dates = dates.iloc[hv30_s.index].reset_index(drop=True)
+        hv_dates = dates.loc[hv30_s.index].reset_index(drop=True)
     except Exception:
-        hv_dates = pd.Series(range(len(hv30_s)))
+        # Try positional fallback before giving up and using integers.
+        try:
+            hv_dates = dates.iloc[hv30_s.index].reset_index(drop=True)
+        except Exception:
+            hv_dates = pd.Series(range(len(hv30_s)))
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=hv_dates, y=hv30_s.values, name="HV30",
@@ -390,12 +415,15 @@ def chart_returns_dist(analytics: dict, symbol: str) -> Optional[go.Figure]:
         histnorm="probability density",
         hovertemplate="Retorno: %{x:.2f}%<br>Densidad: %{y:.4f}<extra></extra>",
     ))
-    x_norm = np.linspace(rets_pct.min(), rets_pct.max(), 200)
-    y_norm = (1.0 / (sig * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_norm - mu) / sig) ** 2)
-    fig.add_trace(go.Scatter(
-        x=x_norm, y=y_norm, name="Normal",
-        line=dict(color=ORANGE, width=2, dash="dot"), hoverinfo="skip",
-    ))
+    # Normal-fit overlay needs sig>0. Constant-return series (e.g. weekend
+    # gap-only OHLC) give sig=0 → divide-by-zero → inf trace → blown y-range.
+    if sig > 0:
+        x_norm = np.linspace(rets_pct.min(), rets_pct.max(), 200)
+        y_norm = (1.0 / (sig * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_norm - mu) / sig) ** 2)
+        fig.add_trace(go.Scatter(
+            x=x_norm, y=y_norm, name="Normal",
+            line=dict(color=ORANGE, width=2, dash="dot"), hoverinfo="skip",
+        ))
     for n, clr, lbl in [(1, "rgba(34,197,94,0.5)", "±1σ"),
                         (2, "rgba(244,63,94,0.4)", "±2σ")]:
         for sign in (-1, 1):

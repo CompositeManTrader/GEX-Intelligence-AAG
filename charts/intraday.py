@@ -298,15 +298,15 @@ def chart_session_profile(price_df: pd.DataFrame,
         close=("close", "last"),
     )
     grouped["label"] = grouped["bucket"].dt.strftime("%H:%M")
-    # Color: green if close ≥ open in that bucket, else red
+    # Color: green if close ≥ open in that bucket, else red.
+    # Mask NaN (close or open missing) explicitly — `NaN >= NaN` is False
+    # so legacy code colored those buckets red even though they're empty.
+    nan_mask = grouped["close"].isna() | grouped["open"].isna()
     grouped["color"] = np.where(
         grouped["close"] >= grouped["open"],
         "rgba(34,197,94,0.78)", "rgba(244,63,94,0.78)",
     )
-    # Mark market-hour buckets bold
-    grouped["is_mkt"] = grouped["bucket"].dt.time.between(
-        pd.Timestamp("09:30").time(), pd.Timestamp("15:30").time()
-    )
+    grouped.loc[nan_mask, "color"] = "rgba(120,120,150,0.30)"
 
     total_vol = grouped["volume"].sum() or 1
     grouped["pct"] = grouped["volume"] / total_vol * 100

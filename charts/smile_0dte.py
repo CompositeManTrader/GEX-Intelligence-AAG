@@ -58,12 +58,18 @@ def _wall_x(strike: float, x_axis: str, spot: float,
     if x_axis == "moneyness":
         return (float(strike) - spot) / spot * 100.0
     if x_axis == "delta":
-        # Pull delta from the nearest strike row in the smile
+        # Pull delta from the nearest strike row in the smile.
+        # `idxmin()` returns the index label; with the reset_index in
+        # `chart_smile_0dte` this aligns to position, but using `argmin`
+        # (positional) makes the call invariant to caller index state.
         if smile_df.empty or "Delta" not in smile_df.columns:
             return None
-        idx = (pd.to_numeric(smile_df["Strike"], errors="coerce")
-               - float(strike)).abs().idxmin()
-        v = pd.to_numeric(smile_df.loc[idx, "Delta"], errors="coerce")
+        diffs = (pd.to_numeric(smile_df["Strike"], errors="coerce")
+                 - float(strike)).abs().to_numpy()
+        if not np.isfinite(diffs).any():
+            return None
+        pos = int(np.nanargmin(diffs))
+        v = pd.to_numeric(smile_df["Delta"].iloc[pos], errors="coerce")
         return float(abs(v)) if pd.notna(v) else None
     return float(strike)
 
@@ -153,14 +159,19 @@ def chart_smile_0dte(
         ))
 
     # ── Spot vertical line
-    spot_x = _wall_x(spot, x_axis, spot, df)
-    if spot_x is not None:
-        fig.add_vline(
-            x=spot_x, line_dash="solid", line_color=ORANGE, line_width=2,
-            annotation_text=f"  SPOT ${spot:,.2f}",
-            annotation_font=dict(size=10, color=ORANGE, family=FONT_MONO),
-            annotation_position="top",
-        )
+    # In `delta` mode, spot maps to |Δ| ≈ 0.5 by definition (ATM call/put
+    # delta) regardless of which strike is the spot — so the vline always
+    # sits at the middle of the x-axis and conveys nothing. Skip drawing
+    # the spot line in delta mode; the smile minimum already marks ATM.
+    if x_axis != "delta":
+        spot_x = _wall_x(spot, x_axis, spot, df)
+        if spot_x is not None:
+            fig.add_vline(
+                x=spot_x, line_dash="solid", line_color=ORANGE, line_width=2,
+                annotation_text=f"  SPOT ${spot:,.2f}",
+                annotation_font=dict(size=10, color=ORANGE, family=FONT_MONO),
+                annotation_position="top",
+            )
 
     # ── Walls overlay
     walls = walls or {}

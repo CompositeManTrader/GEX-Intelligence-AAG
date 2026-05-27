@@ -105,12 +105,14 @@ def chart_gex_profile(gex_df: pd.DataFrame, spot: float, summary: dict,
                       annotation_text=f"  PUT WALL ${pw:.0f}",
                       annotation_font_size=10, annotation_font_color=RED,
                       annotation_position="bottom right")
-    if gf is not None and (not cw or abs(gf - cw) > 0.5) and (not pw or abs(gf - pw) > 0.5):
+    # `cw is None` rather than `not cw`: a legitimate strike of 0 on
+    # penny underliers would have falsely suppressed the GF/HVL lines.
+    if gf is not None and (cw is None or abs(gf - cw) > 0.5) and (pw is None or abs(gf - pw) > 0.5):
         fig.add_hline(y=gf, line_dash="dot", line_color=PURPLE, line_width=1.4,
                       annotation_text=f"  ZERO Γ ${gf:.0f}",
                       annotation_font_size=10, annotation_font_color=PURPLE,
                       annotation_position="top right")
-    if hvl is not None and (not cw or abs(hvl - cw) > 0.5) and (not pw or abs(hvl - pw) > 0.5):
+    if hvl is not None and (cw is None or abs(hvl - cw) > 0.5) and (pw is None or abs(hvl - pw) > 0.5):
         fig.add_hline(y=hvl, line_dash="dashdot", line_color=CYAN, line_width=1,
                       annotation_text=f"  HVL ${hvl:.0f}",
                       annotation_font_size=9, annotation_font_color=CYAN,
@@ -144,9 +146,18 @@ def chart_gex_profile(gex_df: pd.DataFrame, spot: float, summary: dict,
             else:
                 fill = f"rgba(245,158,11,{alpha})"
                 stroke = "#f59e0b"
+            # Single-strike clusters (low == high) collapse `add_hrect`
+            # to an invisible line. Same padding logic as intraday.py so
+            # the band is at least visible. ~0.5% of spot is a sensible
+            # half-width for an "atomic" cluster on equity-like underlyings.
+            if abs(high - low) < 0.01:
+                pad = max(0.25, abs(peak or spot) * 0.001)
+                low_p, high_p = low - pad, high + pad
+            else:
+                low_p, high_p = low, high
             # The band: x spans the full GEX axis, y spans the strike cluster
             fig.add_hrect(
-                y0=low, y1=high,
+                y0=low_p, y1=high_p,
                 fillcolor=fill, opacity=1.0,
                 line=dict(color=stroke, width=0.6, dash="dot"),
                 layer="below",

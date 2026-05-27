@@ -163,7 +163,18 @@ def chart_orderflow_pro_stack(history: list,
             pass
         v = vel_df["net_gex_mm_velocity_per_min"]
         v_clean = v.dropna()
-        sigma = float(v_clean.std(ddof=1)) if len(v_clean) > 2 else 0.0
+        # Use ddof=0 (population stdev) when len==2: ddof=1 with n=2
+        # returns NaN, which then makes `abs(x) >= 2 * sigma` always
+        # False (NaN comparison) → no anomaly coloring even on a real
+        # spike. Drop to ddof=0 in the low-sample regime to stay robust.
+        if len(v_clean) > 5:
+            sigma = float(v_clean.std(ddof=1))
+        elif len(v_clean) >= 2:
+            sigma = float(v_clean.std(ddof=0))
+        else:
+            sigma = 0.0
+        if not np.isfinite(sigma):
+            sigma = 0.0
         vmax_abs = float(v_clean.abs().max()) if not v_clean.empty else 0.0
         bar_colors = []
         for x in v:
@@ -424,15 +435,18 @@ def chart_strike_heatmap(strike_history: list, symbol: str = "",
         hovertemplate="%{x|%H:%M:%S}<br>K $%{y:.0f}<br>%{z:+.2f} $M<extra></extra>",
     ))
     # Spot overlay
+    spot_min = spot_max = None
     if spot_history:
         sdf = _prepare(spot_history)
-        if sdf is not None and "spot" in sdf.columns:
+        if sdf is not None and "spot" in sdf.columns and sdf["spot"].notna().any():
             fig.add_trace(go.Scatter(
                 x=sdf["timestamp"], y=sdf["spot"], mode="lines",
                 line=dict(color=ORANGE, width=2),
                 name="Spot",
                 hovertemplate="%{x|%H:%M:%S}<br>Spot $%{y:.2f}<extra></extra>",
             ))
+            spot_min = float(sdf["spot"].min())
+            spot_max = float(sdf["spot"].max())
     fig.update_layout(
         height=420,
         title=dict(
@@ -442,7 +456,18 @@ def chart_strike_heatmap(strike_history: list, symbol: str = "",
         **BASE,
     )
     fig.update_xaxes(**AX_NOZERO)
-    fig.update_yaxes(**AX_NOZERO, title_text="Strike")
+    # Expand y-axis to include the full spot trajectory in case it falls
+    # outside the strike grid present in this snapshot (e.g. spot moved
+    # 1% during the session but only nearest strikes were stored).
+    strike_min = float(pv.index.min())
+    strike_max = float(pv.index.max())
+    if spot_min is not None and spot_max is not None:
+        y_lo = min(strike_min, spot_min) - 1.0
+        y_hi = max(strike_max, spot_max) + 1.0
+        fig.update_yaxes(**AX_NOZERO, title_text="Strike",
+                          range=[y_lo, y_hi])
+    else:
+        fig.update_yaxes(**AX_NOZERO, title_text="Strike")
     return fig
 
 
