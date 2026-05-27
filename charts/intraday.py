@@ -85,15 +85,30 @@ def render_intraday_chart(
     freq_min: int = 1,
     symbol: str = "",
     zones: Optional[list] = None,
+    prev_close: Optional[float] = None,
+    days: int = 1,
 ) -> Optional[go.Figure]:
-    """Return a Plotly candlestick + volume + GEX-levels figure.
+    """Trading-grade intraday candlestick with full GEX overlay.
 
     Parameters
     ----------
     zones : optional list of `quant.zones.GammaZone` (or dicts) to
-            overlay as semi-transparent horizontal bands behind the
-            candles. Encodes both the zone width and its side via fill
-            colour. Good complement to the single-strike CW/PW lines.
+            overlay as horizontal bands behind the candles.
+    prev_close : optional previous-session close, plotted as a thin
+            reference line so the trader sees today's drift vs yesterday.
+    days : number of trading days currently being shown. Drives x-axis
+            rangebreaks (collapse weekends + overnight) for multi-day mode.
+
+    Visualisation features (vs the legacy basic version):
+      · Range-selector buttons (5m / 15m / 1H / Hoy / Todo)
+      · Crosshair cursor (x + y spikes) — pro-grade hover
+      · Y-axis autoranges to visible X window (zoom-friendly)
+      · Pre-market / after-hours background shading
+      · VWAP ±1σ bands around the anchored VWAP
+      · Day high / low markers with horizontal extension
+      · Walls annotated with `(±X%)` distance from spot
+      · Rangebreaks hide weekends and overnight gaps in multi-day mode
+      · Clean Plotly modebar (only useful tools)
     """
     if price_df is None or price_df.empty:
         return None
@@ -112,6 +127,10 @@ def render_intraday_chart(
     q_chg_p = (q_chg / q_open * 100) if q_open else 0.0
     hi_day = float(df["high"].max())
     lo_day = float(df["low"].min())
+    hi_idx = int(df["high"].idxmax())
+    lo_idx = int(df["low"].idxmin())
+    hi_ts = df["date_et"].iloc[hi_idx]
+    lo_ts = df["date_et"].iloc[lo_idx]
 
     # GEX levels
     cw = gex_summary.get("call_wall") if gex_summary else None
@@ -124,6 +143,80 @@ def render_intraday_chart(
         rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.02,
         row_heights=[0.78, 0.22],
     )
+
+    # ── Pre/after-market background shading ─────────────────────────────────
+    # Apply only when the chart actually contains bars in those windows
+    # (i.e., user enabled "Extended hours"). Use shape `add_vrect` per
+    # zone with x bounds from the actual data, not hardcoded times.
+    if not df.empty:
+        # Group by ET trading date and shade pre/post within each day
+        df_et_dates = df["date_et"].dt.date
+        for et_day in sorted(df_et_dates.unique()):
+            day_mask = df_et_dates == et_day
+            day_df = df.loc[day_mask]
+            if day_df.empty:
+                continue
+            day_min = day_df["date_et"].min()
+            day_max = day_df["date_et"].max()
+            # 09:30 and 16:00 ET on this day, as tz-aware Timestamps
+            try:
+                rth_open = day_min.replace(hour=9, minute=30,
+                                           second=0, microsecond=0)
+                rth_close = day_min.replace(hour=16, minute=0,
+                                            second=0, microsecond=0)
+            except Exception:
+                continue
+            # Pre-market shading
+            if day_min < rth_open:
+                fig.add_vrect(
+                    x0=day_min, x1=rth_open,
+                    fillcolor="rgba(245,158,11,0.04)",
+                    line=dict(width=0), layer="below",
+                    row=1, col=1,
+                )
+            # After-hours shading
+            if day_max > rth_close:
+                fig.add_vrect(
+                    x0=rth_close, x1=day_max,
+                    fillcolor="rgba(120,120,150,0.05)",
+                    line=dict(width=0), layer="below",
+                    row=1, col=1,
+                )
+
+    # ── Gamma-zone bands (BEFORE candles so they sit "below") ──────────────
+    if zones:
+        for z in zones:
+            zd = z if isinstance(z, dict) else z.to_dict()
+            rank = int(zd.get("rank") or 0)
+            side = zd.get("side") or "mixed"
+            label = zd.get("label") or f"P{rank}"
+            low = float(zd.get("low_strike") or 0)
+            high = float(zd.get("high_strike") or 0)
+            score_mm = float(zd.get("integrated_gex_mm") or 0)
+            if low <= 0 or high <= 0:
+                continue
+            if abs(high - low) < 0.01:
+                pad = max(0.25, abs(high) * 0.001)
+                low_p, high_p = low - pad, high + pad
+            else:
+                low_p, high_p = low, high
+            alpha = max(0.04, 0.16 - 0.05 * (rank - 1))
+            if side == "call_dominant":
+                fill, stroke_clr = f"rgba(34,197,94,{alpha})", "#22c55e"
+            elif side == "put_dominant":
+                fill, stroke_clr = f"rgba(244,63,94,{alpha})", "#f43f5e"
+            else:
+                fill, stroke_clr = f"rgba(245,158,11,{alpha})", "#f59e0b"
+            fig.add_hrect(
+                y0=low_p, y1=high_p,
+                fillcolor=fill, opacity=1.0,
+                line=dict(width=0), layer="below",
+                annotation_text=f" {label} · ${score_mm:+.0f}M",
+                annotation_position="top left",
+                annotation_font=dict(size=9, color=stroke_clr,
+                                     family=FONT_MONO),
+                row=1, col=1,
+            )
 
     # ── Candles ─────────────────────────────────────────────────────────────
     fig.add_trace(go.Candlestick(
@@ -141,8 +234,32 @@ def render_intraday_chart(
         hoverinfo="x+text",
     ), row=1, col=1)
 
-    # ── VWAP line (anchored to session open) ───────────────────────────────
+    # ── VWAP + ±1σ bands ────────────────────────────────────────────────────
     if not vwap.empty and vwap.notna().any():
+        # Compute rolling stdev of (typical price − VWAP) over the session.
+        # Bands ±1σ visualise the "fair-zone" — price excursions outside
+        # are mean-reversion candidates in POSITIVE Γ regime.
+        typical = (df["high"] + df["low"] + df["close"]) / 3.0
+        diff = (typical - vwap).astype(float)
+        # Expanding-window stdev (no look-ahead) then clip to a stable
+        # minimum so the band has visual presence at session open.
+        sd = diff.expanding(min_periods=3).std(ddof=1).fillna(0.0)
+        sd = sd.clip(lower=0.0)
+        upper = vwap + sd
+        lower = vwap - sd
+        # Band fill — upper trace fills down to the lower trace
+        fig.add_trace(go.Scatter(
+            x=df["date_et"], y=upper, mode="lines",
+            line=dict(color="rgba(167,139,250,0)", width=0),
+            hoverinfo="skip", showlegend=False,
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=df["date_et"], y=lower, mode="lines",
+            line=dict(color="rgba(167,139,250,0)", width=0),
+            fill="tonexty", fillcolor="rgba(167,139,250,0.08)",
+            hoverinfo="skip", showlegend=False,
+        ), row=1, col=1)
+        # VWAP line on top
         fig.add_trace(go.Scatter(
             x=df["date_et"], y=vwap, mode="lines", name="VWAP",
             line=dict(color="#a78bfa", width=1.2, dash="dash"),
@@ -150,24 +267,58 @@ def render_intraday_chart(
             showlegend=False,
         ), row=1, col=1)
 
-    # ── Volume bars ─────────────────────────────────────────────────────────
-    vol_colors = [
-        "rgba(38,166,154,0.55)" if c >= o else "rgba(239,83,80,0.55)"
-        for o, c in zip(df["open"], df["close"])
-    ]
+    # ── Day high / low markers ──────────────────────────────────────────────
+    # Plot as small triangles + annotation so the trader sees the time-of-day
+    # of the session extremes — useful for "is the high being retested?"
+    fig.add_trace(go.Scatter(
+        x=[hi_ts], y=[hi_day], mode="markers+text",
+        marker=dict(symbol="triangle-down", size=10, color="#22c55e",
+                    line=dict(color="#0b0b14", width=1)),
+        text=[f"H ${hi_day:.2f}"],
+        textposition="top center",
+        textfont=dict(size=9, color="#22c55e", family=FONT_MONO),
+        hoverinfo="skip", showlegend=False,
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=[lo_ts], y=[lo_day], mode="markers+text",
+        marker=dict(symbol="triangle-up", size=10, color="#f43f5e",
+                    line=dict(color="#0b0b14", width=1)),
+        text=[f"L ${lo_day:.2f}"],
+        textposition="bottom center",
+        textfont=dict(size=9, color="#f43f5e", family=FONT_MONO),
+        hoverinfo="skip", showlegend=False,
+    ), row=1, col=1)
+
+    # ── Volume bars with intensity grading ──────────────────────────────────
+    # Color by direction (green up, red down) AND alpha proportional to
+    # the bar's volume relative to the session max. Hot bars pop visually.
+    vmax = float(df["volume"].max()) if df["volume"].max() > 0 else 1.0
+    vol_colors = []
+    for o, c, v in zip(df["open"], df["close"], df["volume"]):
+        base = (38, 166, 154) if c >= o else (239, 83, 80)
+        intensity = 0.35 + 0.55 * min(1.0, float(v) / vmax)
+        vol_colors.append(f"rgba({base[0]},{base[1]},{base[2]},{intensity:.2f})")
     fig.add_trace(go.Bar(
         x=df["date_et"], y=df["volume"], marker_color=vol_colors,
         marker_line_width=0, name="Volume", showlegend=False,
         hovertemplate="Vol %{y:,.0f}<extra></extra>",
     ), row=2, col=1)
 
-    # ── Horizontal GEX levels on candles panel ──────────────────────────────
-    def _hline(y: Optional[float], color: str, label: str, dash: str = "dot"):
+    # ── Horizontal GEX levels — with distance % from spot ──────────────────
+    def _hline(y: Optional[float], color: str, label: str,
+               dash: str = "dot"):
         if y is None or float(y) <= 0:
             return
+        y_f = float(y)
+        # Annotate with distance % from spot when spot is valid
+        if spot and spot > 0 and label != "SPOT":
+            dist_pct = (y_f - spot) / spot * 100
+            ann = f" {label} {y_f:.2f}  ({dist_pct:+.2f}%)"
+        else:
+            ann = f" {label} {y_f:.2f}"
         fig.add_hline(
-            y=float(y), line_dash=dash, line_color=color, line_width=1.1,
-            annotation_text=f" {label} {float(y):.2f}",
+            y=y_f, line_dash=dash, line_color=color, line_width=1.1,
+            annotation_text=ann,
             annotation_font=dict(size=9, color=color, family=FONT_MONO),
             annotation_position="right",
             row=1, col=1,
@@ -181,52 +332,10 @@ def render_intraday_chart(
     _hline(mp, "#94a3b8", "MP", dash="longdash")
     _hline(em_hi, "#c084fc", "EM+", dash="dot")
     _hline(em_lo, "#c084fc", "EM-", dash="dot")
+    # Previous-session close — neutral grey, important reference.
+    _hline(prev_close, "#9ca3af", "PrevClose", dash="dot")
 
-    # ── Gamma-zone bands (P1/P2/P3) ─────────────────────────────────────
-    # Drawn as horizontal rectangles behind the candles so the trader can
-    # see both the wall WIDTH and how spot trades into / out of each zone.
-    # Lighter than CW/PW lines so they don't dominate the chart.
-    if zones:
-        for z in zones:
-            zd = z if isinstance(z, dict) else z.to_dict()
-            rank = int(zd.get("rank") or 0)
-            side = zd.get("side") or "mixed"
-            label = zd.get("label") or f"P{rank}"
-            low = float(zd.get("low_strike") or 0)
-            high = float(zd.get("high_strike") or 0)
-            score_mm = float(zd.get("integrated_gex_mm") or 0)
-            if low <= 0 or high <= 0:
-                continue
-            # Single-strike clusters need a tiny visual width so the rect
-            # is visible at all (otherwise add_hrect collapses to a line).
-            if abs(high - low) < 0.01:
-                pad = max(0.25, abs(high) * 0.001)
-                low_p, high_p = low - pad, high + pad
-            else:
-                low_p, high_p = low, high
-            alpha = max(0.04, 0.16 - 0.05 * (rank - 1))
-            if side == "call_dominant":
-                fill = f"rgba(34,197,94,{alpha})"
-                stroke_clr = "#22c55e"
-            elif side == "put_dominant":
-                fill = f"rgba(244,63,94,{alpha})"
-                stroke_clr = "#f43f5e"
-            else:
-                fill = f"rgba(245,158,11,{alpha})"
-                stroke_clr = "#f59e0b"
-            fig.add_hrect(
-                y0=low_p, y1=high_p,
-                fillcolor=fill, opacity=1.0,
-                line=dict(width=0),
-                layer="below",
-                annotation_text=f" {label} · ${score_mm:+.0f}M",
-                annotation_position="top left",
-                annotation_font=dict(size=9, color=stroke_clr,
-                                     family=FONT_MONO),
-                row=1, col=1,
-            )
-
-    # ── Annotate last candle with live price tag ────────────────────────────
+    # ── Last candle live-price tag ──────────────────────────────────────────
     last_ts = df["date_et"].iloc[-1]
     last_clr = GREEN if q_chg >= 0 else RED
     fig.add_annotation(
@@ -238,28 +347,105 @@ def render_intraday_chart(
         borderpad=3, row=1, col=1,
     )
 
-    # ── Layout ──────────────────────────────────────────────────────────────
+    # ── Layout + title ──────────────────────────────────────────────────────
     chg_sign = "+" if q_chg >= 0 else ""
-    title = (
-        f"  {symbol}  ·  ${q_last:.2f}  "
+    title_bits = [
+        f"  {symbol}",
+        f"${q_last:.2f}",
         f"<span style='color:{last_clr}'>{chg_sign}{q_chg:.2f} "
-        f"({q_chg_p:+.2f}%)</span>  ·  "
-        f"H ${hi_day:.2f}  L ${lo_day:.2f}  ·  {freq_min}m"
-    )
+        f"({q_chg_p:+.2f}%)</span>",
+        f"H ${hi_day:.2f}",
+        f"L ${lo_day:.2f}",
+        f"{freq_min}m",
+    ]
+    if prev_close and prev_close > 0:
+        vs_prev = (q_last - prev_close) / prev_close * 100
+        title_bits.insert(3, f"<span style='color:#9ca3af'>"
+                              f"vs prev {vs_prev:+.2f}%</span>")
+    title = "  ·  ".join(title_bits)
 
     fig.update_layout(
-        height=560, showlegend=False,
+        height=620, showlegend=False,
         title=dict(
-            text=title, font=dict(size=12, color="#c0c0d8", family=FONT_MONO), x=0,
+            text=title, font=dict(size=12, color="#c0c0d8", family=FONT_MONO),
+            x=0,
+        ),
+        dragmode="zoom",  # default drag is zoom-rectangle (not pan)
+        hovermode="x unified",  # one tooltip shared across rows
+        # Restrict the modebar to relevant trading tools
+        modebar=dict(
+            remove=["lasso2d", "select2d", "autoScale2d"],
+            bgcolor="rgba(0,0,0,0)",
+            color="#9090b0",
+            activecolor="#a78bfa",
         ),
         **BASE,
     )
-    fig.update_xaxes(**AX_NOZERO, rangeslider=dict(visible=False), row=1, col=1)
-    fig.update_xaxes(**AX_NOZERO, row=2, col=1)
-    fig.update_yaxes(**AX_NOZERO, title_text="Precio", row=1, col=1)
-    fig.update_yaxes(**AX_NOZERO, title_text="Vol", row=2, col=1)
-    # Disable plotly's range selector buttons for a cleaner look
-    fig.update_layout(xaxis_rangeslider_visible=False)
+
+    # ── X-axis: range selector + spikes + rangebreaks ──────────────────────
+    rangeselector = dict(
+        bgcolor="rgba(20,20,36,0.85)",
+        activecolor="rgba(167,139,250,0.85)",
+        bordercolor="#2a2a3a",
+        borderwidth=1,
+        font=dict(size=10, color="#c0c0d8", family=FONT_MONO),
+        x=0.0, y=1.06, xanchor="left",
+        buttons=[
+            dict(count=15, label="15m", step="minute", stepmode="backward"),
+            dict(count=1,  label="1H",  step="hour",   stepmode="backward"),
+            dict(count=4,  label="4H",  step="hour",   stepmode="backward"),
+            dict(step="day", count=1, label="Hoy",     stepmode="todate"),
+            dict(step="all", label="Todo"),
+        ],
+    )
+
+    # Range-breaks: when showing multiple days, collapse weekends and
+    # overnight gaps so candles aren't visually crushed by empty time.
+    # Skip rangebreaks on single-day view since there's nothing to hide.
+    rangebreaks = []
+    if days > 1:
+        rangebreaks = [
+            dict(bounds=["sat", "mon"]),       # hide weekends
+            dict(bounds=[20, 4], pattern="hour"),  # hide overnight
+        ]
+
+    fig.update_xaxes(
+        **AX_NOZERO,
+        rangeslider=dict(visible=False),
+        rangeselector=rangeselector,
+        rangebreaks=rangebreaks,
+        showspikes=True,
+        spikemode="across",
+        spikesnap="cursor",
+        spikedash="dot",
+        spikethickness=1,
+        spikecolor="rgba(255,255,255,0.30)",
+        row=1, col=1,
+    )
+    # Bottom (volume) x-axis: same rangebreaks but no selector
+    fig.update_xaxes(
+        **AX_NOZERO,
+        rangebreaks=rangebreaks,
+        row=2, col=1,
+    )
+
+    # ── Y-axis: spikes + autorange to visible X window ─────────────────────
+    fig.update_yaxes(
+        **AX_NOZERO, title_text="Precio",
+        showspikes=True,
+        spikemode="across",
+        spikesnap="cursor",
+        spikedash="dot",
+        spikethickness=1,
+        spikecolor="rgba(255,255,255,0.30)",
+        autorange=True,
+        fixedrange=False,
+        row=1, col=1,
+    )
+    fig.update_yaxes(
+        **AX_NOZERO, title_text="Vol",
+        fixedrange=False, row=2, col=1,
+    )
     return fig
 
 

@@ -991,11 +991,22 @@ def show_dashboard() -> None:
 
         if not intra_df.empty:
             try:
+                # Pull previous-session close from the chain's underlying
+                # block. Schwab's `underlying.close` is the prior-day close
+                # while the market is open; used as a reference line in
+                # the chart so the trader sees drift vs yesterday's settle.
+                _prev_close = ul.get("close")
+                try:
+                    _prev_close = float(_prev_close) if _prev_close else None
+                except (TypeError, ValueError):
+                    _prev_close = None
                 fig_intra = render_intraday_chart(
                     intra_df, spot, gex_sum, mp=mp,
                     em_lo=em_lo, em_hi=em_hi,
                     freq_min=intra_freq, symbol=symbol,
                     zones=gamma_zones,
+                    prev_close=_prev_close,
+                    days=int(intra_days),
                 )
             except Exception as exc:
                 log.exception("render_intraday_chart crashed")
