@@ -85,7 +85,13 @@ def refresh_access_token() -> None:
 
     # Distinguish hard auth errors (401/400 invalid_grant) from transient
     # 5xx so we only force re-login on the former.
-    if r.status_code in (400, 401, 403):
+    # 4xx of ANY kind = hard auth failure (the legacy code only listed
+    # 400/401/403; codes like 422/451 fell through to `raise_for_status`
+    # inside the try block, were caught and treated as transient → the
+    # session zombied with an expired token and every subsequent
+    # `_api_get` 401-spammed without recovery). Treat the whole 4xx
+    # range as hard so the user sees the prompt to reconnect.
+    if 400 <= r.status_code < 500:
         log.error("Token refresh hard-auth failure %s: %s",
                   r.status_code, r.text[:200])
         st.error("Sesión Schwab expirada. Reconéctate.")
@@ -98,12 +104,14 @@ def refresh_access_token() -> None:
                     r.status_code)
         return
     try:
-        r.raise_for_status()
         new = r.json()
+        # Guard `expires_in == 0` (Schwab edge case) → would cause the
+        # token to expire instantly → refresh loop on next `_api_get`.
+        expires_in = max(int(new.get("expires_in") or 0), 60)
         tok.update({
             "access_token": new["access_token"],
             "refresh_token": new.get("refresh_token", tok["refresh_token"]),
-            "expiry": utcnow() + datetime.timedelta(seconds=new.get("expires_in", 1800)),
+            "expiry": utcnow() + datetime.timedelta(seconds=expires_in),
         })
         st.session_state[SS.TOKENS] = tok
     except Exception:
