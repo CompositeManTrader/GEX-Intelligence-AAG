@@ -206,6 +206,7 @@ def show_dashboard() -> None:
                 value=prev,
                 help="Activa si tu cuenta Schwab tiene acceso a opciones de índice. "
                      "ETF proxy es más confiable; índice cash refleja mejor el GEX dealer.",
+                key="prefer_index_toggle",
             )
             if new != prev:
                 st.session_state[SS.PREFER_INDEX] = new
@@ -1227,6 +1228,7 @@ def show_dashboard() -> None:
                         symbol, et_now.hour, et_now.minute, days=10,
                     )
                 except Exception:
+                    log.exception("cross-session load failed")
                     cross_rows = []
                 _render_md(panel_cross_session_html(
                     cross_rows, "net_gex_mm", "Net GEX"))
@@ -1693,7 +1695,10 @@ def show_dashboard() -> None:
                         float(x.strip()) for x in widths_str.split(",")
                         if x.strip()
                     )
-                except Exception:
+                except ValueError:
+                    # User typed something non-numeric — fall back to
+                    # defaults silently. Anything else (KeyError etc.)
+                    # bubbles up as it should.
                     widths_tuple = (1.0, 3.0, 5.0, 10.0)
                 if widths_tuple:
                     ic_table = compare_wing_widths(

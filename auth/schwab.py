@@ -191,8 +191,26 @@ def exchange_code(code: str) -> bool:
         return False
     if not r.ok:
         log.error("exchange failed %s %s", r.status_code, r.text[:200])
-        st.error(f"Schwab HTTP {r.status_code}: `{r.text}`")
-        if "invalid_grant" in r.text:
+        # Parse JSON to get the structured error if possible, then redact
+        # before printing to the UI. Schwab error bodies have sometimes
+        # echoed the `code` or `redirect_uri` parameter — we don't want
+        # those in a screenshot or shared session. The full body still
+        # goes to the log (server-side only).
+        body_err = "(no body)"
+        invalid_grant = False
+        try:
+            err_json = r.json()
+            body_err = str(err_json.get("error_description")
+                           or err_json.get("error")
+                           or "(no description)")[:200]
+            invalid_grant = (err_json.get("error") == "invalid_grant")
+        except Exception:
+            # Fall back to a heavily-truncated raw body — never the full
+            # response — and a substring check for the well-known label.
+            body_err = (r.text or "")[:80]
+            invalid_grant = "invalid_grant" in (r.text or "")
+        st.error(f"Schwab HTTP {r.status_code}: `{body_err}`")
+        if invalid_grant:
             st.warning("**Código expirado** (~30s de vida). Reintenta.")
         return False
     tok = r.json()

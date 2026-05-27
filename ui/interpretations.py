@@ -239,13 +239,21 @@ def interpret_term_structure(ts_df: pd.DataFrame) -> str:
     if len(ts_df) >= 3:
         ordered = ts_df.sort_values("DTE")
         diffs = ordered["ATM_IV"].diff().dropna()
+
+        def _fmt_expiry(row_label) -> str:
+            """Format an Expiry value as a 10-char date string, with a
+            safe fallback when the value is NaT / None / unparseable."""
+            val = ordered.loc[row_label, "Expiry"]
+            if pd.isna(val):
+                return "?"
+            s = str(val)
+            return s[:10] if len(s) >= 10 else s
+
         if not diffs.empty and diffs.max() > 2.5:
-            kink_label = diffs.idxmax()
-            kink_exp = str(ordered.loc[kink_label, "Expiry"])[:10]
+            kink_exp = _fmt_expiry(diffs.idxmax())
             msg += f" &nbsp;🔺 Pico notable cerca de <b>{kink_exp}</b>."
         if not diffs.empty and diffs.min() < -2.5:
-            dip_label = diffs.idxmin()
-            dip_exp = str(ordered.loc[dip_label, "Expiry"])[:10]
+            dip_exp = _fmt_expiry(diffs.idxmin())
             msg += f" &nbsp;🔻 Caída notable en <b>{dip_exp}</b>."
     return _box(msg, tone)
 

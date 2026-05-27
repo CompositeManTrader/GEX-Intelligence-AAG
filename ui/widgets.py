@@ -385,21 +385,31 @@ def _derive_levels(
 
 def _recommend_expiry(dte: int, regime: str,
                       iv_hv_ratio: Optional[float]) -> str:
-    """Choose an expiry preset based on the regime and IV richness."""
-    # SHORT gamma + IV cara → short-dated debit (momentum, fast decay risk OK)
-    # SHORT gamma + IV barata → longer-dated debit
-    # LONG gamma + IV cara → short-dated credit spreads
-    # LONG gamma + IV barata → calendars or stay out
+    """Choose an expiry preset based on the regime, IV richness, and
+    the trader's currently-selected DTE on the dashboard.
+
+    The `dte` parameter is now used as an explicit lower bound: if the
+    user is already on a near-dated chain (≤ 7 DTE) the recommendation
+    won't suggest "30-45 DTE (calendars)" — that would be unactionable
+    without changing the selected expiry. Previously `dte` was unused.
+    """
     if iv_hv_ratio is None:
         iv_hv_ratio = 1.0
+    # Saturate the trader's anchor at a reasonable cap so a 0DTE
+    # selection doesn't completely lock out longer recommendations.
+    anchor_dte = max(0, int(dte))
     if regime == "NEGATIVE":
         if iv_hv_ratio > 1.3:
             return "0-2 DTE (debit)"
-        return "7-14 DTE (debit)"
+        # If trader is already on 0DTE, "7-14" is awkward; keep close.
+        return "0-2 DTE (debit)" if anchor_dte == 0 else "7-14 DTE (debit)"
     if regime == "POSITIVE":
         if iv_hv_ratio > 1.3:
             return "1-7 DTE (credit)"
-        return "30-45 DTE (calendars)"
+        # Avoid recommending 30-45d calendars when the trader is on
+        # weekly chains; the suggestion would require switching tab.
+        return ("1-7 DTE (credit)" if anchor_dte <= 7
+                else "30-45 DTE (calendars)")
     return "7-21 DTE"
 
 
@@ -559,7 +569,6 @@ def position_sizer(account_size: float, risk_pct: float,
         contracts = 0
     else:
         contracts = int(risk_dollars / risk_per_contract)
-    notional_per = fut_spec.point_value * 100  # rough — uses 100pts as a stand-in
     return _html(f"""
 <div style="background:rgba(15,17,24,0.85);border:1px solid #1e2230;
             border-radius:6px;padding:0.9rem 1rem;
