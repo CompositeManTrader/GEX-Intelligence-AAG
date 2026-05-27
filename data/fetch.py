@@ -130,19 +130,37 @@ def fetch_price_history(symbol: str, period: int = 1,
 # ─────────────────────────────────────────────────────────────────────────────
 #  Live quote — cached 8s (for real-time spot ticker in UI/chart)
 # ─────────────────────────────────────────────────────────────────────────────
+_QUOTE_KEYS = (
+    "last", "bid", "ask", "mark", "open", "high", "low", "close_prev",
+    "volume", "net_change", "pct_change", "quote_time_ms", "trade_time_ms",
+    "description",
+)
+
+
+def _empty_quote() -> dict:
+    """All-None dict with the contract shape of `fetch_quote`. Returning
+    a fully-populated dict on the error path (instead of `{}`) means
+    callers can do `quote["last"]` / `quote.get("last")` uniformly
+    without checking `err` first AND existence of the key. Several
+    panels in `ui/` had been making both checks defensively; this
+    contract is simpler and harder to misuse.
+    """
+    return {k: None for k in _QUOTE_KEYS}
+
+
 @st.cache_data(ttl=8, show_spinner=False)
 def fetch_quote(symbol: str) -> Tuple[dict, str]:
     try:
         r = _api_get("/marketdata/v1/quotes", params={"symbols": symbol})
     except Exception as exc:
         log.exception("fetch_quote network error")
-        return {}, str(exc)
+        return _empty_quote(), str(exc)
     if r.status_code != 200:
-        return {}, f"HTTP {r.status_code}"
+        return _empty_quote(), f"HTTP {r.status_code}"
     try:
         data = r.json().get(symbol, {})
     except Exception as exc:
-        return {}, f"parse: {exc}"
+        return _empty_quote(), f"parse: {exc}"
     quote = data.get("quote", {}) or {}
     ref = data.get("reference", {}) or {}
     return {

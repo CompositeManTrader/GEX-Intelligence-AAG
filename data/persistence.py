@@ -473,8 +473,17 @@ def persist_daily_snapshot(symbol: str, spot: float,
         "hvl": _safe_float(s.get("hvl")),
         "max_pain": _safe_float(max_pain_v),
         "iv_atm": _safe_float(iv_atm),
-        "regime": str(s.get("regime")) if s.get("regime") else None,
-        "extra_json": json.dumps(extra) if extra else None,
+        # `s.get("regime")` may be a non-None falsy value (e.g. empty
+        # string from a malformed upstream summary). Test against None
+        # explicitly so we preserve actual labels and reject only the
+        # missing case.
+        "regime": (str(s.get("regime"))
+                   if s.get("regime") is not None else None),
+        # `default=str` lets numpy scalars (np.float64, np.int64) and
+        # NaN serialise; without it `json.dumps` raises TypeError and
+        # the entire snapshot is silently lost (the outer except
+        # swallows it). Now we lose at most the `extra` field.
+        "extra_json": json.dumps(extra, default=str) if extra else None,
     }
     try:
         c = _conn()
@@ -731,6 +740,13 @@ def persist_strike_tick(symbol: str, ts: str, bucket: str,
         else:
             df["vex_mm"] = None
 
+        # Filter out NaN / non-finite strike values BEFORE the iterrows
+        # loop. `float(k)` raises on NaN-key, and the surrounding `except`
+        # would swallow the WHOLE snapshot, not just the bad row. Drop
+        # NaN strikes here so we lose at most the bad row.
+        import numpy as np
+        df = df[df.index.notna()]
+        df = df[np.isfinite(df.index.astype(float))]
         rows = [
             (ts, symbol, bucket, float(k),
              _safe_float(r.get("gex_mm")),

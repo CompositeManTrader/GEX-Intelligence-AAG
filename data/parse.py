@@ -99,11 +99,26 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     if "DTE" in df.columns:
         df["DTE"] = pd.to_numeric(df["DTE"], errors="coerce").fillna(0).astype(int)
     if "ITM" in df.columns:
-        df["ITM"] = df["ITM"].astype(bool)
+        # Explicit truthy mapping. `astype(bool)` makes `bool(None) = False`
+        # (silently misclassifying NULL Schwab fields as OTM) and
+        # `bool("false") = True` (any non-empty string is truthy). Coerce
+        # via an explicit dict so the only Trues come from real True
+        # markers and the rest fall back to False.
+        df["ITM"] = df["ITM"].map(
+            {True: True, "true": True, "True": True, 1: True, "1": True}
+        ).fillna(False).astype(bool)
     return df
 
 
-def by_expiry(df: pd.DataFrame, exp: Optional[str]) -> pd.DataFrame:
+def by_expiry(df: pd.DataFrame, exp) -> pd.DataFrame:
+    """Filter `df` to rows whose `Expiry` matches `exp`.
+
+    `Expiry` is stored as the stringified `YYYY-MM-DD` from Schwab's
+    `key.split(":")` upstream. If a caller passes a `datetime`/`date`
+    object the `==` comparison silently returns an empty DataFrame.
+    Coerce `exp` to `str` so the filter works regardless of how the
+    caller obtained the value.
+    """
     if df is None or df.empty or "Expiry" not in df.columns or exp is None:
         return df if df is not None else pd.DataFrame()
-    return df[df["Expiry"] == exp].copy()
+    return df[df["Expiry"] == str(exp)].copy()
