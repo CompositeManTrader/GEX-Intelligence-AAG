@@ -1003,3 +1003,78 @@ def panel_em_bands_html(analysis, ic_suggestion=None) -> str:
     `st.columns` for layout control.
     """
     return panel_em_table_html(analysis) + "\n" + panel_em_ic_html(ic_suggestion)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  EXPECTED-RANGE summary panel (RND stats + level probabilities)
+# ─────────────────────────────────────────────────────────────────────────────
+def panel_rnd_stats_html(stats: dict, spot: float) -> str:
+    """Render the risk-neutral-density summary: implied mean/std, skew,
+    excess kurtosis (vs Gaussian baseline of 0), and per-level
+    probabilities. `stats` is the output of
+    `quant.expected_range.rnd_stats`."""
+    if not stats:
+        return _box_err("Risk-neutral density no disponible (faltan IV por strike).")
+
+    mean = stats.get("mean")
+    std = stats.get("std")
+    std_pct = stats.get("std_pct")
+    skew = stats.get("skew", 0.0)
+    kurt = stats.get("excess_kurtosis", 0.0)
+
+    # Interpretation chips
+    skew_txt = ("sesgo bajista (cola izq. gorda)" if skew < -0.15
+                else "sesgo alcista (cola der. gorda)" if skew > 0.15
+                else "≈ simétrico")
+    skew_clr = ("#f43f5e" if skew < -0.15 else
+                "#22c55e" if skew > 0.15 else "#9090b0")
+    kurt_txt = ("colas GORDAS (riesgo de cola alto)" if kurt > 0.5
+                else "colas finas" if kurt < -0.5 else "≈ normal")
+    kurt_clr = "#f59e0b" if abs(kurt) > 0.5 else "#9090b0"
+
+    rows = ""
+    for name, info in (stats.get("level_probs") or {}).items():
+        lvl = info.get("level")
+        pb = info.get("p_below", 0) * 100
+        pa = info.get("p_above", 0) * 100
+        label = {
+            "call_wall": "Call Wall", "put_wall": "Put Wall",
+            "hvl": "HVL", "gamma_flip": "Zero Γ",
+        }.get(name, name)
+        rows += (
+            f'<tr>'
+            f'<td style="padding:3px 10px;color:#c0c0d8">{label} '
+            f'<span style="color:#7070a0">${lvl:,.0f}</span></td>'
+            f'<td style="padding:3px 10px;text-align:right;color:#f43f5e">'
+            f'P&lt; {pb:.0f}%</td>'
+            f'<td style="padding:3px 10px;text-align:right;color:#22c55e">'
+            f'P&gt; {pa:.0f}%</td>'
+            f'</tr>'
+        )
+
+    levels_table = (
+        '<table style="width:100%;border-collapse:collapse;font-size:0.76rem;'
+        'margin-top:0.4rem">'
+        '<thead><tr>'
+        '<th style="text-align:left;padding:2px 10px;color:#606080;'
+        'font-size:0.62rem;letter-spacing:0.10em">NIVEL</th>'
+        '<th style="text-align:right;padding:2px 10px;color:#606080;'
+        'font-size:0.62rem;letter-spacing:0.10em">P(CIERRE DEBAJO)</th>'
+        '<th style="text-align:right;padding:2px 10px;color:#606080;'
+        'font-size:0.62rem;letter-spacing:0.10em">P(CIERRE ARRIBA)</th>'
+        '</tr></thead><tbody>' + rows + '</tbody></table>'
+    ) if rows else ""
+
+    return _html(f"""
+<div style="background:rgba(15,17,24,0.85);border:1px solid #1e2230;border-radius:6px;padding:0.7rem 0.9rem;margin:0.5rem 0;font-family:JetBrains Mono,monospace">
+<div style="color:#9090b0;font-size:0.66rem;letter-spacing:0.14em;text-transform:uppercase;margin-bottom:0.5rem">🎲 RISK-NEUTRAL DENSITY · estadística implícita</div>
+<div style="display:flex;gap:1.2rem;flex-wrap:wrap;font-size:0.82rem">
+<div><div style="color:#6b7280;font-size:0.6rem">MEDIA IMPLÍCITA</div><div style="color:#e0e0f0;font-weight:700">${mean:,.2f}</div></div>
+<div><div style="color:#6b7280;font-size:0.6rem">σ IMPLÍCITA</div><div style="color:#e0e0f0;font-weight:700">${std:,.2f} ({std_pct:.2f}%)</div></div>
+<div><div style="color:#6b7280;font-size:0.6rem">SKEW</div><div style="color:{skew_clr};font-weight:700">{skew:+.2f}</div><div style="color:{skew_clr};font-size:0.62rem">{skew_txt}</div></div>
+<div><div style="color:#6b7280;font-size:0.6rem">EXCESS KURTOSIS</div><div style="color:{kurt_clr};font-weight:700">{kurt:+.2f}</div><div style="color:{kurt_clr};font-size:0.62rem">{kurt_txt}</div></div>
+</div>
+{levels_table}
+<div style="color:#606080;font-size:0.64rem;margin-top:0.45rem;line-height:1.4">Extraído del chain vía Breeden-Litzenberger (∂²C/∂K²). Skew &lt;0 = mercado teme caídas; kurtosis &gt;0 = colas más gordas que la normal → el modelo Gaussiano subestima movimientos extremos.</div>
+</div>
+""")

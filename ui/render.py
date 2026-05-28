@@ -675,6 +675,7 @@ def show_dashboard() -> None:
         "📊 GEX Total",
         "🌀 Orderflow",
         "🔥 GEX 0DTE",
+        "📐 Expected Range",
         "💎 Vanna (VEX)",
         "⏳ Charm (CEX)",
         "📈 Delta (DEX)",
@@ -686,7 +687,7 @@ def show_dashboard() -> None:
         "📋 Chain",
     ]
     tabs = st.tabs(TAB_LABELS)
-    (tab_overview, tab_intra, tab_gex, tab_orderflow, tab_0dte,
+    (tab_overview, tab_intra, tab_gex, tab_orderflow, tab_0dte, tab_erange,
      tab_vex, tab_cex, tab_dex, tab_hiro, tab_ts, tab_smile, tab_oi, tab_vol,
      tab_chain) = tabs
 
@@ -1933,6 +1934,137 @@ def show_dashboard() -> None:
             else:
                 st.caption(
                     "Sin datos 0DTE procesables (gamma = 0 o cadena vacía)."
+                )
+
+    # ── EXPECTED RANGE ───────────────────────────────────────────────────────
+    with tab_erange:
+        from quant.expected_range import (
+            compare_estimators, prob_cone, risk_neutral_density, rnd_stats,
+        )
+        from quant.levels import _interp_iv_one_side
+        from charts.expected_range import (
+            chart_estimator_comparison, chart_iv_vs_realized,
+            chart_prob_cone, chart_risk_neutral_density,
+        )
+        from ui.widgets import panel_rnd_stats_html
+
+        _render_md('<p class="bb-header">'
+                   'EXPECTED RANGE  ·  rango estadístico esperado de la sesión</p>')
+        st.caption(
+            "Cinco estimadores del rango esperado en paralelo: "
+            "<b>IV-Gaussian</b> (modelo clásico), <b>Skew-adjusted</b> "
+            "(put-IV abajo / call-IV arriba), <b>Straddle MMM</b> (lo que "
+            "el mercado cotiza, sin modelo), <b>Realized vol</b> (lo que el "
+            "subyacente entregó) y la <b>Risk-Neutral Density</b> (distribución "
+            "implícita completa del chain). Útil para sizing de iron condors, "
+            "strangles y para detectar si la IV está cara/barata."
+        )
+
+        # Horizon selector — defaults to the selected expiry's DTE
+        er_dte = st.selectbox(
+            "Horizonte (DTE)", [0, 1, 2, 5, 7],
+            index=0, key="er_dte",
+            help="0 = hoy (intradía, fracción de día a las 16:00 ET).",
+        )
+
+        # IV inputs: ATM call-side and put-side from the chain.
+        iv_call_side = _interp_iv_one_side(calls, spot) if not calls.empty else None
+        iv_put_side = _interp_iv_one_side(puts, spot) if not puts.empty else None
+        # Realized vol (Yang-Zhang HV30) from the vol analytics already
+        # computed for this symbol, if present.
+        hv_realized = None
+        if "analytics_full" in dir() and analytics_full:
+            hv_realized = (analytics_full.get("hv30_yang_zhang")
+                           or analytics_full.get("hv30"))
+
+        if not spot or spot <= 0 or (iv_call_side is None and iv_put_side is None):
+            st.warning("Expected Range requiere spot e IV ATM válidos en la cadena.")
+        else:
+            estimates, T_years = compare_estimators(
+                spot=spot, calls=calls, puts=puts,
+                iv_call_pct=iv_call_side, iv_put_pct=iv_put_side,
+                realized_vol_pct=hv_realized,
+                dte=int(er_dte),
+            )
+
+            # Headline metrics
+            em1, em2, em3, em4 = st.columns(4)
+            by_method = {e.method: e for e in estimates}
+            def _em_metric(col, method, label):
+                e = by_method.get(method)
+                col.metric(
+                    label,
+                    (f"±${e.em_dollars:.2f}" if e else "—"),
+                    (f"{e.em_pct:.2f}%" if e else None),
+                )
+            _em_metric(em1, "IV Gaussian", "IV Gaussian 1σ")
+            _em_metric(em2, "Straddle MMM", "Straddle MMM 1σ")
+            _em_metric(em3, "Skew-adjusted", "Skew-adj 1σ")
+            _em_metric(em4, "Realized vol", "Realized 1σ")
+
+            # 1. Estimator comparison chart
+            fig_cmp = chart_estimator_comparison(estimates, spot, symbol)
+            if fig_cmp is not None:
+                st.plotly_chart(fig_cmp, use_container_width=True,
+                                key=f"er_cmp_{symbol}")
+
+            # IV vs realized read
+            iv_blend_er = None
+            if iv_call_side is not None and iv_put_side is not None:
+                iv_blend_er = (iv_call_side + iv_put_side) / 2.0
+            elif iv_call_side is not None:
+                iv_blend_er = iv_call_side
+            elif iv_put_side is not None:
+                iv_blend_er = iv_put_side
+            if iv_blend_er and hv_realized:
+                ratio = iv_blend_er / hv_realized
+                rich = ("IV CARA — favor vender vol" if ratio > 1.2
+                        else "IV BARATA — favor comprar vol" if ratio < 0.9
+                        else "IV ≈ realized")
+                rclr = ("#f59e0b" if ratio > 1.2 else
+                        "#06b6d4" if ratio < 0.9 else "#9090b0")
+                _render_md(
+                    f'<div style="background:rgba(15,17,24,0.85);border-left:3px '
+                    f'solid {rclr};padding:0.5rem 0.8rem;border-radius:0 4px 4px 0;'
+                    f'font-family:JetBrains Mono,monospace;font-size:0.82rem;'
+                    f'margin:0.3rem 0">IV/HV = <b style="color:{rclr}">'
+                    f'{ratio:.2f}×</b> · {rich}  '
+                    f'<span style="color:#7070a0">(IV {iv_blend_er:.1f}% vs '
+                    f'HV {hv_realized:.1f}%)</span></div>'
+                )
+
+            # 2. Probability cone
+            cone = prob_cone(spot, iv_blend_er or iv_call_side or iv_put_side,
+                             dtes=(0, 1, 2, 5), sigmas=(1.0, 2.0))
+            if not cone.empty:
+                fig_cone = chart_prob_cone(cone, spot, symbol)
+                if fig_cone is not None:
+                    st.plotly_chart(fig_cone, use_container_width=True,
+                                    key=f"er_cone_{symbol}")
+
+            # 3. Risk-neutral density (the institutional feature)
+            _render_md('<p class="bb-header" style="margin-top:0.5rem">'
+                       'RISK-NEUTRAL DENSITY  ·  distribución implícita</p>')
+            rnd = risk_neutral_density(calls, spot=spot, dte=int(er_dte))
+            if rnd is not None and not rnd.empty:
+                levels = {
+                    "call_wall": (gex_sum or {}).get("call_wall"),
+                    "put_wall": (gex_sum or {}).get("put_wall"),
+                    "hvl": (gex_sum or {}).get("hvl"),
+                    "gamma_flip": (gex_sum or {}).get("gamma_flip"),
+                }
+                stats = rnd_stats(rnd, spot=spot, levels=levels)
+                _render_md(panel_rnd_stats_html(stats, spot))
+                fig_rnd = chart_risk_neutral_density(
+                    rnd, spot=spot, levels=levels, symbol=symbol)
+                if fig_rnd is not None:
+                    st.plotly_chart(fig_rnd, use_container_width=True,
+                                    key=f"er_rnd_{symbol}")
+            else:
+                st.caption(
+                    "Risk-neutral density requiere ≥5 strikes con IV% válida "
+                    "en calls. Prueba con un símbolo líquido (SPY/SPX/QQQ) o "
+                    "un DTE con más strikes."
                 )
 
     # ── 3. VANNA ────────────────────────────────────────────────────────────
