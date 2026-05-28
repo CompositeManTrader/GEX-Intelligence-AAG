@@ -1938,15 +1938,16 @@ def show_dashboard() -> None:
 
     # ── EXPECTED RANGE ───────────────────────────────────────────────────────
     with tab_erange:
-        from quant.expected_range import (
-            compare_estimators, prob_cone, risk_neutral_density, rnd_stats,
-        )
+        from quant.expected_range import compare_estimators, prob_cone
+        from quant.rnd import build_rnd, rnd_levels
         from quant.levels import _interp_iv_one_side
         from charts.expected_range import (
             chart_estimator_comparison, chart_iv_vs_realized,
             chart_prob_cone, chart_risk_neutral_density,
         )
-        from ui.widgets import panel_rnd_stats_html
+        from ui.widgets import panel_rnd_levels_html
+        from config import dividend_yield_for
+        from quant.bs import rate_for_dte
 
         _render_md('<p class="bb-header">'
                    'EXPECTED RANGE  ·  rango estadístico esperado de la sesión</p>')
@@ -2042,10 +2043,26 @@ def show_dashboard() -> None:
                     st.plotly_chart(fig_cone, use_container_width=True,
                                     key=f"er_cone_{symbol}")
 
-            # 3. Risk-neutral density (the institutional feature)
+            # 3. Risk-neutral density — THE CENTRAL MODEL (SVI-based)
             _render_md('<p class="bb-header" style="margin-top:0.5rem">'
-                       'RISK-NEUTRAL DENSITY  ·  distribución implícita</p>')
-            rnd = risk_neutral_density(calls, spot=spot, dte=int(er_dte))
+                       'RISK-NEUTRAL DENSITY  ·  modelo central (SVI)</p>')
+            st.caption(
+                "Distribución de probabilidad implícita extraída del chain "
+                "vía SVI (Gatheral) + Breeden-Litzenberger. Ajuste "
+                "arbitrage-free en espacio (log-moneyness, varianza total), "
+                "centrado en el forward, con colas extrapoladas. Los niveles "
+                "salen por inversión exacta de la CDF — son los más precisos "
+                "del tab.",
+            )
+            _r = rate_for_dte(int(er_dte))
+            try:
+                _r = float(np.atleast_1d(_r)[0])
+            except Exception:
+                _r = 0.045
+            _q = dividend_yield_for(symbol)
+            rnd, rnd_meta = build_rnd(
+                calls, puts, spot=spot, dte=int(er_dte), r=_r, q=_q,
+            )
             if rnd is not None and not rnd.empty:
                 levels = {
                     "call_wall": (gex_sum or {}).get("call_wall"),
@@ -2053,18 +2070,20 @@ def show_dashboard() -> None:
                     "hvl": (gex_sum or {}).get("hvl"),
                     "gamma_flip": (gex_sum or {}).get("gamma_flip"),
                 }
-                stats = rnd_stats(rnd, spot=spot, levels=levels)
-                _render_md(panel_rnd_stats_html(stats, spot))
+                lv = rnd_levels(rnd, spot=spot, levels=levels)
+                _render_md(panel_rnd_levels_html(lv, spot, meta=rnd_meta))
                 fig_rnd = chart_risk_neutral_density(
-                    rnd, spot=spot, levels=levels, symbol=symbol)
+                    rnd, spot=spot, levels=levels, symbol=symbol,
+                    rnd_levels_data=lv, method=rnd_meta.get("method"),
+                )
                 if fig_rnd is not None:
                     st.plotly_chart(fig_rnd, use_container_width=True,
                                     key=f"er_rnd_{symbol}")
             else:
                 st.caption(
-                    "Risk-neutral density requiere ≥5 strikes con IV% válida "
-                    "en calls. Prueba con un símbolo líquido (SPY/SPX/QQQ) o "
-                    "un DTE con más strikes."
+                    "Risk-neutral density requiere ≥5 strikes con IV% válida. "
+                    "Prueba con un símbolo líquido (SPY/SPX/QQQ) o un DTE con "
+                    "más strikes."
                 )
 
     # ── 3. VANNA ────────────────────────────────────────────────────────────

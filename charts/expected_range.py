@@ -153,50 +153,90 @@ def chart_prob_cone(cone_df: pd.DataFrame, spot: float,
 # ─────────────────────────────────────────────────────────────────────────────
 def chart_risk_neutral_density(rnd: pd.DataFrame, spot: float,
                                levels: Optional[dict] = None,
-                               symbol: str = "") -> Optional[go.Figure]:
-    """The implied PDF extracted from the chain (Breeden-Litzenberger).
-    Overlays a matched-σ Gaussian so the trader sees skew / fat-tails by
-    comparison, plus vertical markers for key levels (walls)."""
+                               symbol: str = "",
+                               rnd_levels_data: Optional[dict] = None,
+                               method: Optional[str] = None) -> Optional[go.Figure]:
+    """The implied PDF extracted from the chain (SVI → Breeden-Litzenberger).
+
+    Overlays:
+      · a matched-σ Gaussian (visual skew / fat-tail comparison)
+      · the inter-quartile range (P25–P75) shaded — the "likely zone"
+      · percentile markers P10 / P25 / P50 / P75 / P90 as vertical lines
+      · key levels (walls) with their implied P(below)
+    `rnd_levels_data` is the dict from `quant.rnd.rnd_levels`.
+    """
     if rnd is None or rnd.empty:
         return None
     k = rnd["strike"].to_numpy()
     p = rnd["pdf"].to_numpy()
 
     fig = go.Figure()
-    # Implied density (filled area)
+
+    pct = (rnd_levels_data or {}).get("percentiles", {})
+
+    # ── Inter-quartile shaded zone (P25–P75) — the likely close range
+    p25 = pct.get("p25")
+    p75 = pct.get("p75")
+    if p25 is not None and p75 is not None:
+        mask = (k >= p25) & (k <= p75)
+        if mask.any():
+            fig.add_trace(go.Scatter(
+                x=k[mask], y=p[mask], mode="lines",
+                line=dict(width=0),
+                fill="tozeroy", fillcolor="rgba(34,197,94,0.16)",
+                name="IQR (P25–P75)", hoverinfo="skip",
+            ))
+
+    # ── Implied density curve
     fig.add_trace(go.Scatter(
         x=k, y=p, mode="lines", name="Implied PDF (RND)",
-        line=dict(color=CYAN, width=2.2),
-        fill="tozeroy", fillcolor="rgba(6,182,212,0.14)",
-        hovertemplate="K $%{x:,.0f}<br>dens %{y:.4f}<extra></extra>",
+        line=dict(color=CYAN, width=2.4),
+        fill="tozeroy", fillcolor="rgba(6,182,212,0.10)",
+        hovertemplate="K $%{x:,.1f}<br>dens %{y:.5f}<extra></extra>",
     ))
 
-    # Matched-σ lognormal/normal overlay for visual skew comparison
-    dk = k[1] - k[0]
-    mean = float(np.sum(k * p) * dk)
-    var = float(np.sum((k - mean) ** 2 * p) * dk)
+    # ── Matched-σ Gaussian overlay (skew/fat-tail comparison)
+    dk = np.gradient(k)
+    mean = float(np.sum(k * p * dk))
+    var = float(np.sum((k - mean) ** 2 * p * dk))
     sd = float(np.sqrt(max(var, 1e-12)))
     if sd > 0:
         gauss = np.exp(-0.5 * ((k - mean) / sd) ** 2) / (sd * np.sqrt(2 * np.pi))
         fig.add_trace(go.Scatter(
             x=k, y=gauss, mode="lines", name="Gaussiana (mismo σ)",
             line=dict(color="#9090b0", width=1.2, dash="dot"),
-            hovertemplate="K $%{x:,.0f}<br>normal %{y:.4f}<extra></extra>",
+            hovertemplate="K $%{x:,.1f}<br>normal %{y:.5f}<extra></extra>",
         ))
 
-    # Spot + key levels
+    # ── Percentile markers (P10/25/50/75/90)
+    pct_specs = [
+        ("p10", "#f59e0b", "P10"), ("p25", "#22c55e", "P25"),
+        ("p50", "#e0e0f0", "P50 (mediana)"),
+        ("p75", "#22c55e", "P75"), ("p90", "#f59e0b", "P90"),
+    ]
+    for key, color, label in pct_specs:
+        v = pct.get(key)
+        if v is None:
+            continue
+        fig.add_vline(
+            x=v, line_dash="dot", line_color=color, line_width=1.0,
+            annotation_text=f"{label} ${v:,.1f}",
+            annotation_font=dict(size=8, color=color, family=FONT_MONO),
+            annotation_position="top",
+        )
+
+    # ── Spot
     fig.add_vline(x=spot, line_dash="solid", line_color=ORANGE, line_width=2,
-                  annotation_text=f"SPOT ${spot:,.0f}",
+                  annotation_text=f"SPOT ${spot:,.1f}",
                   annotation_font=dict(size=10, color=ORANGE, family=FONT_MONO),
                   annotation_position="top")
-    level_colors = {
-        "call_wall": GREEN, "put_wall": RED,
-        "hvl": CYAN, "gamma_flip": PURPLE,
-    }
-    level_labels = {
-        "call_wall": "CW", "put_wall": "PW",
-        "hvl": "HVL", "gamma_flip": "Zero Γ",
-    }
+
+    # ── Key levels (walls) with implied P(below)
+    level_colors = {"call_wall": GREEN, "put_wall": RED,
+                    "hvl": CYAN, "gamma_flip": PURPLE}
+    level_labels = {"call_wall": "CW", "put_wall": "PW",
+                    "hvl": "HVL", "gamma_flip": "Zero Γ"}
+    lp = (rnd_levels_data or {}).get("level_probs", {})
     for key, lvl in (levels or {}).items():
         if lvl is None:
             continue
@@ -204,21 +244,25 @@ def chart_risk_neutral_density(rnd: pd.DataFrame, spot: float,
             lvl = float(lvl)
         except (TypeError, ValueError):
             continue
+        prob_txt = ""
+        if key in lp:
+            prob_txt = f" · P&lt;{lp[key]['p_below']*100:.0f}%"
         fig.add_vline(
             x=lvl, line_dash="dash",
             line_color=level_colors.get(key, "#9090b0"), line_width=1.1,
-            annotation_text=f"{level_labels.get(key, key)} ${lvl:,.0f}",
+            annotation_text=f"{level_labels.get(key, key)} ${lvl:,.0f}{prob_txt}",
             annotation_font=dict(size=8,
                                  color=level_colors.get(key, "#9090b0"),
                                  family=FONT_MONO),
             annotation_position="bottom",
         )
 
+    method_tag = f"  ·  fit: {method.upper()}" if method else ""
     fig.update_layout(
-        height=400,
+        height=420,
         title=dict(
             text=f"  RISK-NEUTRAL DENSITY  ·  {symbol}  ·  "
-                 f"distribución implícita del mercado",
+                 f"distribución implícita{method_tag}",
             font=dict(size=12, color="#c0c0d8", family=FONT_MONO), x=0,
         ),
         legend=dict(orientation="h", yanchor="bottom", y=1.02,

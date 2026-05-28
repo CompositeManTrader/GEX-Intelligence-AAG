@@ -1078,3 +1078,121 @@ def panel_rnd_stats_html(stats: dict, spot: float) -> str:
 <div style="color:#606080;font-size:0.64rem;margin-top:0.45rem;line-height:1.4">Extraído del chain vía Breeden-Litzenberger (∂²C/∂K²). Skew &lt;0 = mercado teme caídas; kurtosis &gt;0 = colas más gordas que la normal → el modelo Gaussiano subestima movimientos extremos.</div>
 </div>
 """)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  RND EXACT LEVELS panel (SVI model — central Expected Range model)
+# ─────────────────────────────────────────────────────────────────────────────
+def panel_rnd_levels_html(levels_data: dict, spot: float,
+                          meta: Optional[dict] = None) -> str:
+    """Render the exact level table from the SVI risk-neutral density:
+    percentiles (P5…P95), mode, 1σ-equivalent band, plus per-wall
+    probabilities and a fit-quality footer. `levels_data` is the output
+    of `quant.rnd.rnd_levels`; `meta` is the dict from `quant.rnd.build_rnd`.
+    """
+    if not levels_data:
+        return _box_err("Risk-neutral density no disponible "
+                        "(faltan IV por strike o el ajuste falló).")
+
+    pct = levels_data.get("percentiles", {})
+    mode = levels_data.get("mode")
+    mean = levels_data.get("mean")
+    std = levels_data.get("std")
+    std_pct = levels_data.get("std_pct")
+    skew = levels_data.get("skew", 0.0)
+    kurt = levels_data.get("excess_kurtosis", 0.0)
+    p16 = levels_data.get("p16")
+    p84 = levels_data.get("p84")
+
+    skew_clr = ("#f43f5e" if skew < -0.15 else
+                "#22c55e" if skew > 0.15 else "#9090b0")
+    skew_txt = ("sesgo bajista" if skew < -0.15
+                else "sesgo alcista" if skew > 0.15 else "≈ simétrico")
+    kurt_clr = "#f59e0b" if abs(kurt) > 0.5 else "#9090b0"
+    kurt_txt = ("colas GORDAS" if kurt > 0.5
+                else "colas finas" if kurt < -0.5 else "≈ normal")
+
+    # Percentile ladder as a horizontal strip
+    pcells = ""
+    pct_order = [("p5", "#f43f5e"), ("p10", "#f59e0b"), ("p25", "#22c55e"),
+                 ("p50", "#e0e0f0"), ("p75", "#22c55e"), ("p90", "#f59e0b"),
+                 ("p95", "#f43f5e")]
+    for key, clr in pct_order:
+        v = pct.get(key)
+        if v is None:
+            continue
+        lbl = key.upper().replace("P", "P")
+        pcells += (
+            f'<div style="flex:1 1 0;text-align:center;padding:0.35rem 0.2rem;'
+            f'border-bottom:2px solid {clr}">'
+            f'<div style="color:#7070a0;font-size:0.58rem">{lbl}</div>'
+            f'<div style="color:{clr};font-weight:700;font-size:0.84rem;'
+            f'font-family:JetBrains Mono,monospace">${v:,.1f}</div></div>'
+        )
+
+    # Per-wall probability rows
+    rows = ""
+    for name, info in (levels_data.get("level_probs") or {}).items():
+        if name == "spot":
+            continue
+        label = {"call_wall": "Call Wall", "put_wall": "Put Wall",
+                 "hvl": "HVL", "gamma_flip": "Zero Γ"}.get(name, name)
+        lvl = info.get("level")
+        pb = info.get("p_below", 0) * 100
+        pa = info.get("p_above", 0) * 100
+        pt = info.get("p_touch", 0) * 100
+        rows += (
+            f'<tr>'
+            f'<td style="padding:3px 10px;color:#c0c0d8">{label} '
+            f'<span style="color:#7070a0">${lvl:,.0f}</span></td>'
+            f'<td style="padding:3px 10px;text-align:right;color:#f43f5e">{pb:.0f}%</td>'
+            f'<td style="padding:3px 10px;text-align:right;color:#22c55e">{pa:.0f}%</td>'
+            f'<td style="padding:3px 10px;text-align:right;color:#fbbf24">{pt:.0f}%</td>'
+            f'</tr>'
+        )
+    levels_table = (
+        '<table style="width:100%;border-collapse:collapse;font-size:0.76rem;'
+        'margin-top:0.5rem"><thead><tr>'
+        '<th style="text-align:left;padding:2px 10px;color:#606080;font-size:0.6rem">NIVEL</th>'
+        '<th style="text-align:right;padding:2px 10px;color:#606080;font-size:0.6rem">P&lt; CIERRE</th>'
+        '<th style="text-align:right;padding:2px 10px;color:#606080;font-size:0.6rem">P&gt; CIERRE</th>'
+        '<th style="text-align:right;padding:2px 10px;color:#606080;font-size:0.6rem">P TOUCH</th>'
+        '</tr></thead><tbody>' + rows + '</tbody></table>'
+    ) if rows else ""
+
+    # Fit-quality footer
+    foot = ""
+    if meta:
+        method = (meta.get("method") or "—").upper()
+        rmse = meta.get("rmse")
+        arb = meta.get("arb_free")
+        fwd = meta.get("forward")
+        arb_txt = ("✓ arbitrage-free" if arb is True
+                   else "⚠ no verificado" if arb is None else "✗ con arbitraje")
+        arb_clr = "#22c55e" if arb is True else "#f59e0b"
+        rmse_txt = f"RMSE {rmse:.1e}" if rmse is not None else ""
+        foot = (
+            f'<div style="color:#606080;font-size:0.64rem;margin-top:0.5rem;'
+            f'line-height:1.4">Modelo: <b>{method}</b> · forward '
+            f'${fwd:,.2f} · {rmse_txt} · '
+            f'<span style="color:{arb_clr}">{arb_txt}</span>. '
+            f'Niveles por inversión exacta de la CDF (no interpolación).</div>'
+        )
+
+    return _html(f"""
+<div style="background:rgba(15,17,24,0.85);border:1px solid #1e2230;border-radius:6px;padding:0.7rem 0.9rem;margin:0.5rem 0;font-family:JetBrains Mono,monospace">
+<div style="color:#9090b0;font-size:0.66rem;letter-spacing:0.14em;text-transform:uppercase;margin-bottom:0.5rem">🎯 NIVELES EXACTOS · risk-neutral density (SVI)</div>
+<div style="display:flex;gap:1.2rem;flex-wrap:wrap;font-size:0.82rem;margin-bottom:0.4rem">
+<div><div style="color:#6b7280;font-size:0.6rem">MODE (+probable)</div><div style="color:#06b6d4;font-weight:700">${mode:,.2f}</div></div>
+<div><div style="color:#6b7280;font-size:0.6rem">MEDIANA P50</div><div style="color:#e0e0f0;font-weight:700">${pct.get('p50',0):,.2f}</div></div>
+<div><div style="color:#6b7280;font-size:0.6rem">1σ-equiv (P16–P84)</div><div style="color:#e0e0f0;font-weight:700">${p16:,.1f} – ${p84:,.1f}</div></div>
+<div><div style="color:#6b7280;font-size:0.6rem">σ IMPLÍCITA</div><div style="color:#e0e0f0;font-weight:700">${std:,.2f} ({std_pct:.2f}%)</div></div>
+<div><div style="color:#6b7280;font-size:0.6rem">SKEW</div><div style="color:{skew_clr};font-weight:700">{skew:+.2f} <span style="font-size:0.6rem">{skew_txt}</span></div></div>
+<div><div style="color:#6b7280;font-size:0.6rem">KURTOSIS</div><div style="color:{kurt_clr};font-weight:700">{kurt:+.2f} <span style="font-size:0.6rem">{kurt_txt}</span></div></div>
+</div>
+<div style="color:#7070a0;font-size:0.6rem;letter-spacing:0.1em;margin:0.3rem 0 0.1rem">ESCALERA DE PERCENTILES (probabilidad de cierre)</div>
+<div style="display:flex;gap:0.15rem">{pcells}</div>
+{levels_table}
+{foot}
+</div>
+""")
