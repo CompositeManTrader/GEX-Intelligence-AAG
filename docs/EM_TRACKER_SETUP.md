@@ -40,23 +40,34 @@ automatically on first run.
 
 ---
 
-## Step 2 — Get your Schwab refresh token
+## Step 2 — Get your Schwab refresh token (use the helper script)
 
-You already have Schwab API credentials (the app uses them). You need
-three values:
+You need three Schwab values:
 
-- `SCHWAB_APP_KEY`     — your app key
+- `SCHWAB_APP_KEY`     — your app key (from developer.schwab.com)
 - `SCHWAB_APP_SECRET`  — your app secret
-- `SCHWAB_REFRESH_TOKEN` — the current refresh token
+- `SCHWAB_REFRESH_TOKEN` — minted by the helper below
 
-The refresh token is obtained by completing the OAuth login once (the
-dashboard's "Connect Schwab" flow). After connecting, the refresh token
-is what persists. If you're not sure where it is, run the dashboard,
-connect, and the token lives in your session — or use Schwab's OAuth
-playground to mint one.
+**Run the helper from your terminal** (in the project folder):
 
+```bash
+python -m scripts.get_refresh_token
+```
+
+It will:
+1. Ask for your APP_KEY / APP_SECRET / CALLBACK_URL (default
+   `https://127.0.0.1` — must match your Schwab app registration).
+2. Print a Schwab authorization URL.
+3. You open it → log in → approve. Your browser redirects to your
+   callback URL with `?code=...` in the address bar (it may show a
+   "can't reach this page" error — that's normal, the code is still
+   in the URL bar).
+4. Paste that **full redirected URL** back into the terminal.
+5. The script prints your **refresh token** — copy it.
+
+> ⚠️ The `code` expires in ~30 seconds — paste promptly.
 > ⚠️ Schwab refresh tokens **expire every 7 days** and cannot be renewed
-> via API — see the last section.
+> via API — re-run this helper weekly (see the last section).
 
 ---
 
