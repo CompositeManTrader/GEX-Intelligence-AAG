@@ -1,0 +1,76 @@
+name: EM Accuracy Tracker
+
+# Records the RND prediction near the open and settles it after the close.
+# Times are in UTC (GitHub cron only accepts UTC). The job itself res-
+# olves ET internally, so DST is handled in code — but the cron fires
+# at a fixed UTC time, so during EST (winter) the ET wall-clock shifts
+# by an hour. We schedule both an EDT-aligned and EST-aligned slot and
+# the code's INSERT-OR-IGNORE / date guards make double-fires harmless.
+#
+# predict  ~09:35 ET  → 13:35 UTC (EDT) / 14:35 UTC (EST)
+# settle   ~16:05 ET  → 20:05 UTC (EDT) / 21:05 UTC (EST)
+
+on:
+  schedule:
+    - cron: "35 13 * * 1-5"   # predict, EDT
+    - cron: "35 14 * * 1-5"   # predict, EST
+    - cron: "5 20 * * 1-5"    # settle, EDT
+    - cron: "5 21 * * 1-5"    # settle, EST
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "predict or settle"
+        required: true
+        default: "predict"
+        type: choice
+        options: [predict, settle]
+
+# Never expose secrets to fork PRs: this workflow only runs on schedule
+# and manual dispatch from the default branch, not on pull_request.
+permissions:
+  contents: read
+
+concurrency:
+  group: em-tracker
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      SCHWAB_APP_KEY: ${{ secrets.SCHWAB_APP_KEY }}
+      SCHWAB_APP_SECRET: ${{ secrets.SCHWAB_APP_SECRET }}
+      SCHWAB_REFRESH_TOKEN: ${{ secrets.SCHWAB_REFRESH_TOKEN }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      EM_SYMBOLS: ${{ vars.EM_SYMBOLS || 'SPY' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pandas scipy requests psycopg2-binary pytz
+
+      - name: Decide mode
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=${{ github.event.inputs.mode }}" >> "$GITHUB_OUTPUT"
+          else
+            HOUR_UTC=$(date -u +%H)
+            # 13/14 UTC → predict ; 20/21 UTC → settle
+            if [ "$HOUR_UTC" -lt 17 ]; then
+              echo "mode=predict" >> "$GITHUB_OUTPUT"
+            else
+              echo "mode=settle" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Run tracker
+        run: python -m scripts.record_session --mode ${{ steps.mode.outputs.mode }}

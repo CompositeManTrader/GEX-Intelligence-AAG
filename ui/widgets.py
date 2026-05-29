@@ -1196,3 +1196,72 @@ def panel_rnd_levels_html(levels_data: dict, spot: float,
 {foot}
 </div>
 """)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  EM ACCURACY TRACKER panel
+# ─────────────────────────────────────────────────────────────────────────────
+def panel_em_accuracy_html(stats: dict, backend: str = "—") -> str:
+    """Render the EM accuracy / calibration summary. `stats` is the output
+    of `quant.em_tracker.accuracy_stats`. Shows hit-rates vs the expected
+    68/80/90% targets and the calibration verdict."""
+    from quant.em_tracker import verdict_text
+    if not stats:
+        return _box_err("Tracker sin datos todavía.")
+
+    n_clean = stats.get("n_clean", 0)
+    n_settled = stats.get("n_settled", 0)
+    ready = stats.get("ready", False)
+    vlabel, vclr = verdict_text(stats)
+
+    def _row(label, observed, expected):
+        if observed is None:
+            obs_txt, clr = "—", "#9090b0"
+        else:
+            obs = observed * 100
+            # green if within ±6pts of target, amber otherwise
+            clr = "#22c55e" if abs(obs - expected) <= 6 else "#f59e0b"
+            obs_txt = f"{obs:.0f}%"
+        return (
+            f'<tr><td style="padding:3px 10px;color:#c0c0d8">{label}</td>'
+            f'<td style="padding:3px 10px;text-align:right;color:{clr};'
+            f'font-weight:700">{obs_txt}</td>'
+            f'<td style="padding:3px 10px;text-align:right;color:#7070a0">'
+            f'{expected:.0f}%</td></tr>'
+        )
+
+    ratio = stats.get("avg_move_ratio")
+    ratio_txt = ""
+    if ratio is not None:
+        rclr = ("#f43f5e" if ratio > 1.1 else
+                "#22c55e" if ratio < 0.9 else "#9090b0")
+        rmsg = ("realizado &gt; implícito → IV barata" if ratio > 1.1
+                else "realizado &lt; implícito → IV cara" if ratio < 0.9
+                else "realizado ≈ implícito")
+        ratio_txt = (
+            f'<div style="margin-top:0.4rem;font-size:0.78rem">'
+            f'Move ratio medio: <b style="color:{rclr}">{ratio:.2f}×</b> '
+            f'<span style="color:#7070a0">({rmsg})</span></div>'
+        )
+
+    return _html(f"""
+<div style="background:rgba(15,17,24,0.85);border:1px solid #1e2230;border-left:4px solid {vclr};border-radius:0 4px 4px 0;padding:0.7rem 0.9rem;margin:0.5rem 0;font-family:JetBrains Mono,monospace">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem">
+<div style="color:#9090b0;font-size:0.66rem;letter-spacing:0.14em;text-transform:uppercase">📊 EM ACCURACY · calibración del modelo</div>
+<div style="color:#7070a0;font-size:0.66rem">{n_clean} limpias · {n_settled} liquidadas · {backend}</div>
+</div>
+<div style="color:{vclr};font-size:0.92rem;font-weight:700;margin-bottom:0.5rem">{vlabel}</div>
+<table style="width:100%;border-collapse:collapse;font-size:0.78rem">
+<thead><tr>
+<th style="text-align:left;padding:2px 10px;color:#606080;font-size:0.6rem">BANDA</th>
+<th style="text-align:right;padding:2px 10px;color:#606080;font-size:0.6rem">OBSERVADO</th>
+<th style="text-align:right;padding:2px 10px;color:#606080;font-size:0.6rem">ESPERADO</th>
+</tr></thead><tbody>
+{_row("Cierre dentro P10–P90", stats.get("hit_p10_p90"), 80)}
+{_row("Cierre dentro P05–P95", stats.get("hit_p05_p95"), 90)}
+{_row("Cierre dentro 1σ (P16–P84)", stats.get("hit_1sigma"), 68)}
+</tbody></table>
+{ratio_txt}
+<div style="color:#606080;font-size:0.64rem;margin-top:0.45rem;line-height:1.4">Si OBSERVADO &gt; ESPERADO consistentemente → el modelo sobre-estima la vol (IV cara, favor vender). Si &lt; → sub-estima (colas gordas, compra/amplía). Se registra automático cada sesión vía el job headless.</div>
+</div>
+""")

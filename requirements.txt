@@ -8,5 +8,10 @@ requests>=2.31.0
 urllib3>=2.0.0
 pytz>=2024.1
 
+# EM accuracy tracker — Postgres (Neon) backend for the headless runner.
+# Optional for the Streamlit dashboard (falls back to local SQLite when
+# DATABASE_URL is unset), required for the GitHub Actions cron job.
+psycopg2-binary>=2.9.0
+
 # Dev / tests (optional for prod Streamlit Cloud install)
 pytest>=8.0.0

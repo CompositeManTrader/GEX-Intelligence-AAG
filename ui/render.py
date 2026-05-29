@@ -1945,7 +1945,7 @@ def show_dashboard() -> None:
             chart_estimator_comparison, chart_iv_vs_realized,
             chart_prob_cone, chart_risk_neutral_density,
         )
-        from ui.widgets import panel_rnd_levels_html
+        from ui.widgets import panel_rnd_levels_html, panel_em_accuracy_html
         from config import dividend_yield_for
         from quant.bs import rate_for_dte
 
@@ -2084,6 +2084,31 @@ def show_dashboard() -> None:
                     "Risk-neutral density requiere ≥5 strikes con IV% válida. "
                     "Prueba con un símbolo líquido (SPY/SPX/QQQ) o un DTE con "
                     "más strikes."
+                )
+
+            # 4. EM Accuracy tracker — calibration (auto-recorded headless)
+            _render_md('<p class="bb-header" style="margin-top:0.5rem">'
+                       'EM ACCURACY  ·  ¿el modelo acierta?</p>')
+            try:
+                from data import em_store
+                from quant.em_tracker import accuracy_stats
+                hist = em_store.load_history(symbol, limit=250)
+                if hist:
+                    stats = accuracy_stats(hist, only_clean=True)
+                    _render_md(panel_em_accuracy_html(
+                        stats, backend=em_store.backend_info().get("backend", "—")))
+                else:
+                    st.caption(
+                        "Aún sin registros para este símbolo. El job headless "
+                        "(GitHub Actions) graba una predicción cada apertura y "
+                        "la liquida al cierre — necesita ~10 sesiones para un "
+                        "veredicto de calibración. Ver `docs/EM_TRACKER_SETUP.md`."
+                    )
+            except Exception as exc:
+                log.warning("EM accuracy panel failed: %s", exc)
+                st.caption(
+                    "Tracker no disponible (¿DATABASE_URL configurado?). "
+                    "Ver `docs/EM_TRACKER_SETUP.md`."
                 )
 
     # ── 3. VANNA ────────────────────────────────────────────────────────────
