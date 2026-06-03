@@ -220,6 +220,43 @@ h1, h2, h3 { color: #e0e0f0 !important; }
     background-color: #f97316 !important;
 }
 
+/* ─── Toolbar / command-bar polish ─────────────────────────────────────── */
+[data-testid="stTextInput"] input {
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.92rem !important; font-weight: 600 !important;
+    letter-spacing: 0.05em; padding: 0.6rem 0.85rem !important;
+    background: linear-gradient(135deg,#101019,#13131f) !important;
+    transition: border-color .15s, box-shadow .15s;
+}
+[data-testid="stTextInput"] input::placeholder {
+    color: #45456a !important; font-weight: 400 !important; letter-spacing: 0;
+}
+[data-testid="stTextInput"] input:focus {
+    border-color: #f97316 !important;
+    box-shadow: 0 0 0 1px rgba(249,115,22,0.4),
+                0 0 14px rgba(249,115,22,0.14) !important;
+}
+[data-baseweb="select"] > div {
+    background: #101019 !important; border-color: #24243a !important;
+    font-family: 'JetBrains Mono', monospace !important; font-size: 0.8rem !important;
+    border-radius: 5px !important; transition: border-color .15s, box-shadow .15s;
+}
+[data-baseweb="select"]:focus-within > div {
+    border-color: #f97316 !important;
+    box-shadow: 0 0 0 1px rgba(249,115,22,0.35) !important;
+}
+[data-testid="stButton"] button {
+    padding: 0.5rem 0.55rem !important; font-size: 0.7rem !important;
+    letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600 !important;
+    background: linear-gradient(135deg,#101019,#13131f) !important;
+}
+/* Widget labels (toggles, sliders, selects) → finer mono */
+[data-testid="stWidgetLabel"] p, [data-testid="stToggle"] label p {
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.7rem !important; color: #8585a8 !important;
+    letter-spacing: 0.04em;
+}
+
 /* ─── Anti-flicker on auto-refresh ───────────────────────────────────────
  * When st_autorefresh fires every 30s, Streamlit shows a "RUNNING…" pill
  * and re-paints status overlays. That visible flash is what you perceive

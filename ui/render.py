@@ -172,54 +172,19 @@ def show_dashboard() -> None:
     if not symbol:
         return
 
-    # ── PARÁMETROS (expiry · strikes · GEX calibration) ─────────────────────
-    with st.expander("⚙  PARÁMETROS  ·  expiración · strikes · calibración GEX",
-                     expanded=False):
-        p1, p2 = st.columns([1.5, 1.0])
-        with p1:
-            all_exps = st.session_state.get(SS.ALL_EXPS, ["—"])
-            st.selectbox(
-                "Expiración (alimenta Chain · Greeks · Open Interest · Max Pain)",
-                options=all_exps, key=SS.SEL_EXP,
-            )
-        with p2:
-            strike_count = st.selectbox(
-                "Strikes a cargar", options=[10, 15, 20, 25, 30, 40, 50, 60],
-                index=4,
-            )
-        f1, f2, f3 = st.columns(3)
-        with f1:
-            max_dte = st.slider(
-                "Max DTE (para exposures)", 7, 365, 60, step=1,
-                help="Filtra opciones con DTE > este valor. 45-60d = estándar gexbot.",
-            )
-        with f2:
-            min_oi = st.slider(
-                "Min OI por strike", 0, 1000, 0, step=50,
-                help="Filtra strikes ilíquidos. 100+ para SPY/QQQ, 0 para small-caps.",
-            )
-        with f3:
-            focus_pct = st.slider(
-                "Focus ± % del spot", 3, 25, 8, step=1, format="±%d%%",
-                help="Rango de strikes en los charts. 8-10% estándar para índices.",
-            ) / 100.0
-        # Futures-specific toggle
-        if fut_spec is not None:
-            prev = st.session_state.get(SS.PREFER_INDEX, FUTURES_PREFER_INDEX)
-            new = st.toggle(
-                f"📊 Usar cadena del índice ({fut_spec.underlying}) en vez del ETF "
-                f"({fut_spec.etf_proxy})",
-                value=prev,
-                help="Activa si tu cuenta Schwab tiene acceso a opciones de índice. "
-                     "ETF proxy es más confiable; índice cash refleja mejor el GEX dealer.",
-                key="prefer_index_toggle",
-            )
-            if new != prev:
-                st.session_state[SS.PREFER_INDEX] = new
-                st.session_state.pop(SS.CHAIN_DATA, None)
-                st.rerun()
-
-    st.markdown('<hr class="bb-divider">', unsafe_allow_html=True)
+    # ── PARÁMETROS ──────────────────────────────────────────────────────────
+    # The actual widgets live in the "⚙ Ajustes" tab (rendered later). Their
+    # values are read HERE from session_state so the chain load + exposures
+    # downstream see them. Streamlit updates session_state the moment a widget
+    # changes and reruns top-to-bottom, so there is no one-cycle lag.
+    st.session_state.setdefault("p_strikes", 30)
+    st.session_state.setdefault("p_max_dte", 60)
+    st.session_state.setdefault("p_min_oi", 0)
+    st.session_state.setdefault("p_focus", 8)
+    strike_count = int(st.session_state["p_strikes"])
+    max_dte = int(st.session_state["p_max_dte"])
+    min_oi = int(st.session_state["p_min_oi"])
+    focus_pct = float(st.session_state["p_focus"]) / 100.0
 
     # ── AUTO-REFRESH HANDLER (must run BEFORE chain load) ──────────────────
     # Wiring the pop here means the in-flight rerun (started by
@@ -406,23 +371,6 @@ def show_dashboard() -> None:
         updated=last_refresh.strftime("%H:%M:%S"),
         market_status=_mh_status,
     ))
-
-    # ── DIAGNOSTICS (debug-only · demoted below the header) ─────────────────
-    with st.expander("🔍 Diagnóstico", expanded=False):
-        d1, d2, d3, d4 = st.columns(4)
-        d1.metric("calls_all", len(calls_all))
-        d2.metric("puts_all", len(puts_all))
-        d3.metric("ATM IV", f"{iv_atm:.1f}%" if iv_atm else "None ⚠️")
-        d4.metric("price rows", len(price_df))
-        d5, d6, d7, d8 = st.columns(4)
-        iv_c = int((calls_all["IV%"] > 1.0).sum() if "IV%" in calls_all.columns else 0)
-        iv_p = int((puts_all["IV%"] > 1.0).sum() if "IV%" in puts_all.columns else 0)
-        d5.metric("IV válidos calls", iv_c)
-        d6.metric("IV válidos puts", iv_p)
-        d7.metric("skew rows", len(skew_df))
-        d8.metric("HIRO history", len(hist))
-        if price_err:
-            st.error(f"Price history: {price_err}")
 
     st.markdown('<hr class="bb-divider">', unsafe_allow_html=True)
 
@@ -677,11 +625,81 @@ def show_dashboard() -> None:
         "💰 Open Interest",
         "📊 Vol Analytics",
         "📋 Chain",
+        "⚙ Ajustes",
     ]
     tabs = st.tabs(TAB_LABELS)
     (tab_overview, tab_intra, tab_gex, tab_orderflow, tab_0dte, tab_erange,
      tab_vex, tab_cex, tab_dex, tab_hiro, tab_ts, tab_smile, tab_oi, tab_vol,
-     tab_chain) = tabs
+     tab_chain, tab_settings) = tabs
+
+    # ── ⚙ AJUSTES — parámetros + diagnóstico (movidos fuera del header) ─────
+    with tab_settings:
+        _render_md('<p class="bb-header">PARÁMETROS  ·  expiración · strikes · '
+                   'calibración GEX</p>')
+        st.caption(
+            "Estos controles alimentan el modelo: la <b>expiración</b> filtra "
+            "Chain · Greeks · Open Interest · Max Pain · Expected Range; "
+            "<b>Max DTE / Min OI</b> calibran las exposiciones GEX/VEX/CEX/DEX.",
+            unsafe_allow_html=True,
+        )
+        sa, sb = st.columns([1.6, 1.0])
+        with sa:
+            all_exps = st.session_state.get(SS.ALL_EXPS, ["—"])
+            st.selectbox(
+                "Expiración",
+                options=all_exps, key=SS.SEL_EXP,
+            )
+        with sb:
+            st.selectbox(
+                "Strikes a cargar",
+                options=[10, 15, 20, 25, 30, 40, 50, 60], key="p_strikes",
+            )
+        sf1, sf2, sf3 = st.columns(3)
+        with sf1:
+            st.slider(
+                "Max DTE (exposures)", 7, 365, step=1, key="p_max_dte",
+                help="Filtra opciones con DTE > este valor. 45-60d = estándar gexbot.",
+            )
+        with sf2:
+            st.slider(
+                "Min OI por strike", 0, 1000, step=50, key="p_min_oi",
+                help="Filtra strikes ilíquidos. 100+ para SPY/QQQ, 0 para small-caps.",
+            )
+        with sf3:
+            st.slider(
+                "Focus ± % del spot", 3, 25, step=1, format="±%d%%", key="p_focus",
+                help="Rango de strikes en los charts. 8-10% estándar para índices.",
+            )
+        if fut_spec is not None:
+            prev = st.session_state.get(SS.PREFER_INDEX, FUTURES_PREFER_INDEX)
+            new = st.toggle(
+                f"📊 Usar cadena del índice ({fut_spec.underlying}) en vez del ETF "
+                f"({fut_spec.etf_proxy})",
+                value=prev, key="prefer_index_toggle",
+                help="Activa si tu cuenta Schwab tiene acceso a opciones de índice. "
+                     "ETF proxy es más confiable; índice cash refleja mejor el GEX dealer.",
+            )
+            if new != prev:
+                st.session_state[SS.PREFER_INDEX] = new
+                st.session_state.pop(SS.CHAIN_DATA, None)
+                st.rerun()
+
+        st.markdown('<hr class="bb-divider">', unsafe_allow_html=True)
+        _render_md('<p class="bb-header">DIAGNÓSTICO  ·  estado del pipeline</p>')
+        d1, d2, d3, d4 = st.columns(4)
+        d1.metric("calls_all", len(calls_all))
+        d2.metric("puts_all", len(puts_all))
+        d3.metric("ATM IV", f"{iv_atm:.1f}%" if iv_atm else "None ⚠️")
+        d4.metric("price rows", len(price_df))
+        d5, d6, d7, d8 = st.columns(4)
+        iv_c = int((calls_all["IV%"] > 1.0).sum() if "IV%" in calls_all.columns else 0)
+        iv_p = int((puts_all["IV%"] > 1.0).sum() if "IV%" in puts_all.columns else 0)
+        d5.metric("IV válidos calls", iv_c)
+        d6.metric("IV válidos puts", iv_p)
+        d7.metric("skew rows", len(skew_df))
+        d8.metric("HIRO history", len(hist))
+        if price_err:
+            st.error(f"Price history: {price_err}")
 
     # ── OVERVIEW ────────────────────────────────────────────────────────────
     with tab_overview:
