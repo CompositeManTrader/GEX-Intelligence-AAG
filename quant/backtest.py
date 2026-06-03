@@ -77,7 +77,8 @@ class BacktestStats:
     median_r: float = 0.0
     sum_r: float = 0.0          # total R earned
     profit_factor: float = 0.0  # |gross win| / |gross loss|
-    sharpe: float = 0.0         # mean / std of R-multiples (sqrt(n) scaled)
+    sharpe: float = 0.0         # per-trade Sharpe = mean / std of R (NO sqrt-N)
+    t_stat: float = 0.0         # t-stat of mean R vs 0 = Sharpe·sqrt(N)
     max_drawdown_r: float = 0.0
     best_trade_r: float = 0.0
     worst_trade_r: float = 0.0
@@ -441,9 +442,15 @@ def compute_stats(trades: list[Trade]) -> BacktestStats:
     gross_loss = float(-rs[rs < 0].sum()) if (rs < 0).any() else 0.0
     s.profit_factor = round(gross_win / gross_loss, 3) if gross_loss > 0 else float("inf")
 
-    if rs.std(ddof=1) > 0:
-        # Per-trade Sharpe-like: mean / std of R, scaled by sqrt(N).
-        s.sharpe = round(float(rs.mean() / rs.std(ddof=1) * math.sqrt(len(rs))), 3)
+    sd = float(rs.std(ddof=1))
+    if sd > 0:
+        # Per-trade Sharpe ratio = mean / std of R-multiples. Deliberately
+        # NOT sqrt(N)-scaled: a Sharpe must be sample-size invariant.
+        s.sharpe = round(float(rs.mean()) / sd, 3)
+        # t-statistic of mean R vs 0 (= Sharpe·sqrt(N)). This is a
+        # statistical-significance measure of edge (|t|>2 ≈ real), and it
+        # GROWS with sample size by construction — do not read it as Sharpe.
+        s.t_stat = round(float(rs.mean()) / sd * math.sqrt(len(rs)), 3)
 
     # Equity curve in cumulative R, max drawdown
     eq = np.cumsum(rs)

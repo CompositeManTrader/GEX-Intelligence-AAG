@@ -170,6 +170,13 @@ def risk_reversal_25d(c: pd.DataFrame, p: pd.DataFrame) -> Optional[float]:
         return None
     dte_col = "DTE" if "DTE" in c.columns else None
     if dte_col:
+        # Restrict to non-expired tenors BEFORE taking the nearest expiry —
+        # a stale/expired row with DTE<0 would otherwise be picked as the
+        # "shortest" expiry (model-validation finding).
+        c = c[c[dte_col] >= 0]
+        p = p[p[dte_col] >= 0]
+        if c.empty or p.empty:
+            return None
         nearest_dte = int(c[dte_col].min())
         c = c[c[dte_col] == nearest_dte]
         p = p[p[dte_col] == nearest_dte]
@@ -294,7 +301,10 @@ def skew_metrics(c_all: pd.DataFrame, p_all: pd.DataFrame,
     atm_iv = ((atm_row["C_IV"] or 0) + (atm_row["P_IV"] or 0)) / 2 if \
         pd.notna(atm_row["C_IV"]) and pd.notna(atm_row["P_IV"]) else \
         (atm_row["C_IV"] if pd.notna(atm_row["C_IV"]) else atm_row["P_IV"])
-    # 25Δ proxy: use ±10% moneyness as a robust approximation when delta absent
+    # NOTE (model-validation): these are NOT true 25-delta wings. They are a
+    # robust ±7%-MONEYNESS proxy (averaging up to 3 strikes per wing) used
+    # because reliable per-strike delta isn't always present. Keep that in
+    # mind when comparing rr25/bf25 to a broker's true-25Δ risk reversal.
     wing_lo = sm[sm["Moneyness"] <= -7].sort_values("Moneyness").tail(3)
     wing_hi = sm[sm["Moneyness"] >= 7].sort_values("Moneyness").head(3)
     put_wing = wing_lo["P_IV"].mean() if not wing_lo.empty else None

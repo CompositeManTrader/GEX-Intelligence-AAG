@@ -196,16 +196,21 @@ class ICCandidate:
     vrp_call_side: float
     net_vrp_iv_points: float
     # Credit / max loss / efficiency
+    # NOTE (model-validation): the "vrp_*" fields are NOT variance risk
+    # premium (IV²−RV²). They are IV-SKEW GRADIENTS across each wing:
+    # vrp_put = IV(short put) − IV(long put), vrp_call = IV(short call) −
+    # IV(long call). Positive ⇒ you sell richer IV than you buy. Treat them
+    # as a wing-richness score, not as a true VRP.
     credit: float
     max_loss: float
-    vrp_per_max_loss: float    # IV points per $ of max loss
+    vrp_per_max_loss: float    # wing IV-skew points per $ of max loss
     credit_per_max_loss: float  # ROI (%) ≈ credit / max_loss × 100
     # Probabilities
     delta_short_put: float
     delta_short_call: float
     p_touch_put: float
     p_touch_call: float
-    pop: float                 # 1 - max(p_touch_put, p_touch_call)
+    pop: float                 # 1 − (Δ_short_put + Δ_short_call), clipped [0,1]
     # Provenance
     credit_source: str         # "mark" | "iv_proxy" | "empty"
 
@@ -487,7 +492,12 @@ def gex_gate_check(
       1. Net GEX > `min_net_gex_usd` (dealers long-Γ → pinning expected)
       2. Regime label is POSITIVE
       3. spot > gamma_flip (we're on the long-Γ side of the flip)
-      4. (spot − gamma_flip) / spot >= min_cushion_pct%   (away from flip)
+      4. (spot − gamma_flip) / spot >= min_cushion_pct   (away from flip)
+
+    UNITS TRAP (model-validation): `cushion_pct` and `min_cushion_pct` are
+    in PERCENT POINTS. The default 0.30 means 0.30%, NOT 30%. A 30% cushion
+    would never trigger intraday, so do not "fix" 0.30 to 30. For SPY≈580
+    that default is ~$1.7 above the flip.
 
     Returns dict with `pass`, individual checks, and a `verdict` string.
     """
