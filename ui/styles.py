@@ -87,22 +87,19 @@ h1, h2, h3 { color: #e0e0f0 !important; }
 [data-testid="stExpander"] summary:hover { color: #f97316 !important; }
 [data-testid="stExpander"] summary svg { fill: #f97316 !important; }
 
-/* Brand mark (top-left logo lockup) */
-.brand { display:flex; align-items:center; gap:11px; padding-top:1px; }
-.brand-glyph {
-    width:33px; height:33px; border-radius:9px; flex-shrink:0;
-    background:linear-gradient(135deg,#f97316 0%,#9a3412 100%);
-    display:flex; align-items:center; justify-content:center;
-    color:#0a0a12; font-weight:800; font-size:1.1rem;
-    font-family:'JetBrains Mono',monospace;
-    box-shadow:0 0 15px rgba(249,115,22,0.35),0 2px 6px rgba(0,0,0,0.45);
-}
-.brand-name { font-family:'JetBrains Mono',monospace; font-weight:800;
-    font-size:0.88rem; color:#f5f5ff; letter-spacing:0.05em; line-height:1;
-    white-space:nowrap; }
-.brand-name span { color:#f97316; margin-left:5px; font-weight:600; }
-.brand-tag { font-size:0.5rem; color:#5b5b80; letter-spacing:0.24em;
-    margin-top:4px; font-family:'JetBrains Mono',monospace; white-space:nowrap; }
+/* Brand mark — terminal prompt lockup ( ❯ GEX ▮ ) */
+@keyframes brand-blink { 50% { opacity: 0; } }
+.brand { display:flex; flex-direction:column; justify-content:center; padding-top:1px; }
+.brand-line { display:flex; align-items:center; gap:8px; }
+.brand-prompt { color:#f97316; font-family:'JetBrains Mono',monospace;
+    font-size:1.35rem; font-weight:800; line-height:1; }
+.brand-word { color:#f5f5ff; font-family:'JetBrains Mono',monospace;
+    font-size:1.22rem; font-weight:800; letter-spacing:0.11em; line-height:1; }
+.brand-cursor { display:inline-block; width:10px; height:1.12rem; background:#f97316;
+    box-shadow:0 0 8px rgba(249,115,22,0.5);
+    animation:brand-blink 1.1s steps(1) infinite; }
+.brand-tag { font-family:'JetBrains Mono',monospace; font-size:0.5rem; color:#5b5b80;
+    letter-spacing:0.28em; margin-top:6px; white-space:nowrap; }
 
 .bb-header {
     font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; font-weight: 700;

@@ -113,9 +113,11 @@ def show_dashboard() -> None:
     )
     with b_brand:
         st.markdown(
-            '<div class="brand"><div class="brand-glyph">Γ</div>'
-            '<div><div class="brand-name">OPTIONS<span>TERMINAL</span></div>'
-            '<div class="brand-tag">GEX INTELLIGENCE</div></div></div>',
+            '<div class="brand">'
+            '<div class="brand-line"><span class="brand-prompt">❯</span>'
+            '<span class="brand-word">GEX</span>'
+            '<span class="brand-cursor"></span></div>'
+            '<div class="brand-tag">INTELLIGENCE TERMINAL</div></div>',
             unsafe_allow_html=True,
         )
     with b_sym:
