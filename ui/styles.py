@@ -54,17 +54,40 @@ button[kind="primary"]:hover { background: #fb923c !important; color: #000 !impo
 }
 [data-testid="stMetricDelta"] { font-size: 0.72rem !important; font-family: 'JetBrains Mono', monospace !important; }
 
+/* ─── Tabs — terminal nav with a sliding orange underline ──────────────── */
 .stTabs [data-baseweb="tab-list"] {
-    background: #0e0e1a !important; border-radius: 4px !important;
-    gap: 2px !important; padding: 2px !important;
-    border: 1px solid #1e1e30 !important;
+    background: transparent !important;
+    border: none !important; border-radius: 0 !important;
+    gap: 1px !important; padding: 0 0 1px !important;
+    scrollbar-width: thin; scrollbar-color: #24243a transparent;
 }
+.stTabs [data-baseweb="tab-list"]::-webkit-scrollbar { height: 5px; }
+.stTabs [data-baseweb="tab-list"]::-webkit-scrollbar-thumb {
+    background: #24243a; border-radius: 3px;
+}
+.stTabs [data-baseweb="tab-list"]::-webkit-scrollbar-thumb:hover { background: #34344e; }
+.stTabs [data-baseweb="tab-list"]::-webkit-scrollbar-track { background: transparent; }
 .stTabs [data-baseweb="tab"] {
-    border-radius: 3px !important; padding: 5px 18px !important;
-    color: #606080 !important; font-size: 0.78rem !important;
-    font-weight: 500 !important; font-family: 'JetBrains Mono', monospace !important;
+    background: transparent !important; border-radius: 4px 4px 0 0 !important;
+    padding: 7px 13px !important; margin: 0 !important;
+    color: #57577a !important; font-size: 0.73rem !important;
+    font-weight: 600 !important; font-family: 'JetBrains Mono', monospace !important;
+    letter-spacing: 0.03em; white-space: nowrap;
+    transition: color .15s, background .15s;
 }
-.stTabs [aria-selected="true"] { background: #1e1e30 !important; color: #f97316 !important; }
+.stTabs [data-baseweb="tab"]:hover {
+    color: #b4b4d6 !important; background: rgba(249,115,22,0.05) !important;
+}
+.stTabs [aria-selected="true"] {
+    background: rgba(249,115,22,0.06) !important; color: #f97316 !important;
+    text-shadow: 0 0 12px rgba(249,115,22,0.25);
+}
+/* baseweb's own underline track + sliding highlight → themed */
+.stTabs [data-baseweb="tab-border"] { background-color: #18182a !important; }
+.stTabs [data-baseweb="tab-highlight"] {
+    background-color: #f97316 !important; height: 2px !important;
+    box-shadow: 0 0 8px rgba(249,115,22,0.5);
+}
 
 .stCaption p, [data-testid="stCaptionContainer"] p { color: #505070 !important; font-size: 0.72rem !important; }
 p, .stMarkdown p { color: #a0a0c0 !important; }
