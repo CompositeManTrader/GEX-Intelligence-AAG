@@ -90,7 +90,6 @@ def market_header(
     cells = ""
     cells += cell("BID / ASK", ba)
     cells += cell("VOLUMEN", _humanize(vol) if vol else "—")
-    cells += cell("DTE", f"{dte}d" if dte is not None else "—")
     cells += cell("ATM IV", f"{iv_atm:.1f}%" if iv_atm else "—", "#22d3ee")
     cells += cell("P/C RATIO", f"{p_c:.2f}" if p_c else "—")
     cells += cell("MAX PAIN", f"${mp:,.0f}" if mp else "—", "#c4b5fd")

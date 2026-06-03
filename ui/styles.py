@@ -75,9 +75,34 @@ h1, h2, h3 { color: #e0e0f0 !important; }
 [data-testid="stSlider"] div { color: #a0a0c0 !important; }
 
 [data-testid="stExpander"] {
-    background: #0e0e1a !important; border: 1px solid #1e1e30 !important; border-radius: 4px !important;
+    background: linear-gradient(135deg,#0b0b15,#0d0d18) !important;
+    border: 1px solid #181828 !important; border-radius: 7px !important;
+    margin-bottom: 0.35rem !important;
 }
-[data-testid="stExpander"] summary { color: #8080a0 !important; }
+[data-testid="stExpander"] summary {
+    color: #7777a0 !important; font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.68rem !important; letter-spacing: 0.09em !important;
+    text-transform: uppercase; padding: 0.45rem 0.85rem !important;
+}
+[data-testid="stExpander"] summary:hover { color: #f97316 !important; }
+[data-testid="stExpander"] summary svg { fill: #f97316 !important; }
+
+/* Brand mark (top-left logo lockup) */
+.brand { display:flex; align-items:center; gap:11px; padding-top:1px; }
+.brand-glyph {
+    width:33px; height:33px; border-radius:9px; flex-shrink:0;
+    background:linear-gradient(135deg,#f97316 0%,#9a3412 100%);
+    display:flex; align-items:center; justify-content:center;
+    color:#0a0a12; font-weight:800; font-size:1.1rem;
+    font-family:'JetBrains Mono',monospace;
+    box-shadow:0 0 15px rgba(249,115,22,0.35),0 2px 6px rgba(0,0,0,0.45);
+}
+.brand-name { font-family:'JetBrains Mono',monospace; font-weight:800;
+    font-size:0.88rem; color:#f5f5ff; letter-spacing:0.05em; line-height:1;
+    white-space:nowrap; }
+.brand-name span { color:#f97316; margin-left:5px; font-weight:600; }
+.brand-tag { font-size:0.5rem; color:#5b5b80; letter-spacing:0.24em;
+    margin-top:4px; font-family:'JetBrains Mono',monospace; white-space:nowrap; }
 
 .bb-header {
     font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; font-weight: 700;

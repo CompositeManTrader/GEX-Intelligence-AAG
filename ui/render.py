@@ -106,17 +106,19 @@ def show_dashboard() -> None:
     today = datetime.date.today()
 
     # ── TOP BAR ─────────────────────────────────────────────────────────────
-    b1, b2, b3, b4, b5, b8, b6, b7 = st.columns(
-        [1.0, 1.4, 1.6, 0.9, 0.9, 0.9, 0.6, 0.7]
+    # Command bar: brand mark · symbol · (spacer) · auto · trading · exit · user.
+    # Expiry + strike-count moved into the "Parámetros" panel below to declutter.
+    b_brand, b_sym, b_spc, b5, b8, b6, b7 = st.columns(
+        [1.8, 2.3, 2.4, 1.0, 1.1, 0.7, 0.8]
     )
-    with b1:
+    with b_brand:
         st.markdown(
-            "<span style='font-family:JetBrains Mono,monospace;font-size:1rem;"
-            "font-weight:800;color:#f97316;letter-spacing:0.12em;line-height:2.4;"
-            "display:block'>▤ OPTIONS</span>",
+            '<div class="brand"><div class="brand-glyph">Γ</div>'
+            '<div><div class="brand-name">OPTIONS<span>TERMINAL</span></div>'
+            '<div class="brand-tag">GEX INTELLIGENCE</div></div></div>',
             unsafe_allow_html=True,
         )
-    with b2:
+    with b_sym:
         raw_sym = st.text_input(
             "sym", value=st.session_state.get(SS.SYMBOL, "SPY"),
             placeholder="SPY · ES · NQ · AAPL…", label_visibility="collapsed",
@@ -137,15 +139,6 @@ def show_dashboard() -> None:
                 f"</div>",
                 unsafe_allow_html=True,
             )
-    with b3:
-        all_exps = st.session_state.get(SS.ALL_EXPS, ["—"])
-        st.selectbox("exp", options=all_exps, label_visibility="collapsed",
-                     key=SS.SEL_EXP)
-    with b4:
-        strike_count = st.selectbox(
-            "strikes", options=[10, 15, 20, 25, 30, 40, 50, 60],
-            index=4, label_visibility="collapsed",
-        )
     with b5:
         auto_refresh = st.toggle("Auto 30s", value=False, key=SS.AUTO_REFRESH)
     with b8:
@@ -179,8 +172,21 @@ def show_dashboard() -> None:
     if not symbol:
         return
 
-    # ── ADVANCED FILTERS ────────────────────────────────────────────────────
-    with st.expander("⚙️ Filtros avanzados (GEX calibration)", expanded=False):
+    # ── PARÁMETROS (expiry · strikes · GEX calibration) ─────────────────────
+    with st.expander("⚙  PARÁMETROS  ·  expiración · strikes · calibración GEX",
+                     expanded=False):
+        p1, p2 = st.columns([1.5, 1.0])
+        with p1:
+            all_exps = st.session_state.get(SS.ALL_EXPS, ["—"])
+            st.selectbox(
+                "Expiración (alimenta Chain · Greeks · Open Interest · Max Pain)",
+                options=all_exps, key=SS.SEL_EXP,
+            )
+        with p2:
+            strike_count = st.selectbox(
+                "Strikes a cargar", options=[10, 15, 20, 25, 30, 40, 50, 60],
+                index=4,
+            )
         f1, f2, f3 = st.columns(3)
         with f1:
             max_dte = st.slider(
@@ -387,7 +393,21 @@ def show_dashboard() -> None:
     # Best-effort persist (won't crash UI on DB lock)
     persist_hiro_tick(symbol, hiro_tick)
 
-    # ── DIAGNOSTICS ─────────────────────────────────────────────────────────
+    # ── MARKET HEADER (terminal-style strip) ────────────────────────────────
+    # Replaces the legacy 8× st.metric row + EM caption with one cohesive
+    # panel. Pure presentation — same values, no model change. Shown FIRST so
+    # it owns the prime real estate; diagnostics demoted below it.
+    _mh_status, _ = market_status_et()
+    _render_md(market_header(
+        symbol=symbol, spot=spot, chg=chg, chg_p=chg_p,
+        bid=bid_u, ask=ask_u, vol=vol_u,
+        iv_atm=iv_atm, p_c=p_c, mp=mp, net_gex_bn=total_gex_bn,
+        em_lo=em_lo, em_hi=em_hi,
+        updated=last_refresh.strftime("%H:%M:%S"),
+        market_status=_mh_status,
+    ))
+
+    # ── DIAGNOSTICS (debug-only · demoted below the header) ─────────────────
     with st.expander("🔍 Diagnóstico", expanded=False):
         d1, d2, d3, d4 = st.columns(4)
         d1.metric("calls_all", len(calls_all))
@@ -403,19 +423,6 @@ def show_dashboard() -> None:
         d8.metric("HIRO history", len(hist))
         if price_err:
             st.error(f"Price history: {price_err}")
-
-    # ── MARKET HEADER (terminal-style strip) ────────────────────────────────
-    # Replaces the legacy 8× st.metric row + EM caption with one cohesive
-    # panel. Pure presentation — same values, no model change.
-    _mh_status, _ = market_status_et()
-    _render_md(market_header(
-        symbol=symbol, spot=spot, chg=chg, chg_p=chg_p,
-        bid=bid_u, ask=ask_u, vol=vol_u, dte=dte_v,
-        iv_atm=iv_atm, p_c=p_c, mp=mp, net_gex_bn=total_gex_bn,
-        em_lo=em_lo, em_hi=em_hi,
-        updated=last_refresh.strftime("%H:%M:%S"),
-        market_status=_mh_status,
-    ))
 
     st.markdown('<hr class="bb-divider">', unsafe_allow_html=True)
 
