@@ -23,12 +23,15 @@ def test_d1_returns_nan_on_invalid():
 
 
 def test_gamma_symmetric_call_put():
-    # Gamma is the same for both sides (q>=0)
+    # Gamma is the same for both sides (no `side` arg) and positive.
+    # NOTE (model validation): the legacy assertion `g2 < g1` (claiming
+    # dividends always reduce gamma) is FALSE in general — q shifts d1
+    # as well as the e^(-qT) factor, so the net effect on φ(d1)/(Sσ√T)
+    # is parameter-dependent. Gamma is validated against py_vollib in
+    # tests/validation/test_val_bs.py; here we only assert positivity.
     g1 = float(bs.gamma(100.0, 100.0, 0.5, 0.25, 0.045, 0.0))
     g2 = float(bs.gamma(100.0, 100.0, 0.5, 0.25, 0.045, 0.02))
     assert g1 > 0 and g2 > 0
-    # Dividends reduce gamma slightly (e^-qT < 1)
-    assert g2 < g1
 
 
 def test_delta_bounds():
@@ -72,14 +75,16 @@ def test_charm_nonzero():
 
 
 def test_time_to_expiry_zero_dte_intraday():
-    # 0DTE — should return a small positive T (hours remaining fraction)
-    t = float(bs.time_to_expiry_years(np.array([0])))
+    # 0DTE — should return a small positive T (hours remaining fraction).
+    # `time_to_expiry_years` is vectorised → returns an array; index [0]
+    # before float() (numpy 2.x rejects float() on a 1-element array).
+    t = float(bs.time_to_expiry_years(np.array([0]))[0])
     assert t > 0
     assert t < 1.0 / 365  # less than one full day
 
 
 def test_time_to_expiry_nonzero():
-    t = float(bs.time_to_expiry_years(np.array([30])))
+    t = float(bs.time_to_expiry_years(np.array([30]))[0])
     assert t == pytest.approx(30.0 / 365.0, abs=1e-9)
 
 

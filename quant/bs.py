@@ -149,15 +149,19 @@ def charm(S, K, T, sigma, r, q=0.0, per: str = "day",
             − e^(-qT)·φ(d1)·[ 2(r-q)T − d2·σ√T ] / (2·T·σ·√T)
 
     Put-call parity for delta with continuous dividends is
-    Δ_put = e^(-qT)·(N(d1) − 1).  Differentiating both sides w.r.t.
-    calendar time t (T = T₀ − t) gives:
+    Δ_put = Δ_call − e^(-qT).  Differentiating w.r.t. calendar time t
+    (T = T₀ − t, so ∂/∂t = −∂/∂T):
 
-        Charm_put = Charm_call + q·e^(-qT)
+        charm_put = ∂Δ_put/∂t = charm_call − ∂(e^{-qT})/∂t
+        ∂(e^{-qT})/∂t = (−q·e^{-qT})·(dT/dt) = (−q·e^{-qT})·(−1) = +q·e^{-qT}
+        ⟹  charm_put = charm_call − q·e^{-qT}
 
-    The legacy implementation hardcoded `side="call"`; for q>0 (e.g. SPY,
-    QQQ, DIA in `config.DIVIDEND_YIELDS`) put-side CEX was therefore
-    biased by ≈ q·OI·100·S per put strike.  Pass `side="put"` to get the
-    correct put-side per-day charm.
+    NOTE (model-validation finding): an earlier "fix" used `+ q·e^{-qT}`
+    here, which was wrong by 2·q·e^{-qT} — verified against a central
+    finite-difference of py_vollib delta. The correct sign is MINUS. The
+    self-referential parity test that previously "passed" only confirmed
+    the code matched its own (wrong) docstring; the independent FD check
+    caught it. See tests/validation/test_val_bs.py.
     """
     S = np.asarray(S, dtype=float)
     T = np.asarray(T, dtype=float)
@@ -174,8 +178,8 @@ def charm(S, K, T, sigma, r, q=0.0, per: str = "day",
         charm_year = term_q - num / den
 
     if str(side).lower().startswith("p"):
-        # Put-side adjustment: +q·e^(-qT) added to the call charm.
-        charm_year = charm_year + q * np.exp(-q * T)
+        # Put-side adjustment: charm_put = charm_call − q·e^{-qT}.
+        charm_year = charm_year - q * np.exp(-q * T)
 
     if per == "day":
         charm_year = charm_year / float(CALENDAR_DAYS)
