@@ -27,6 +27,124 @@ def _html(s: str) -> str:
     return "\n".join(line.lstrip() for line in s.splitlines() if line.strip())
 
 
+def _humanize(n) -> str:
+    """28,516,412 → '28.5M'. Purely presentational number compaction."""
+    try:
+        n = float(n)
+    except (TypeError, ValueError):
+        return "—"
+    a = abs(n)
+    for div, suf in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if a >= div:
+            return f"{n / div:.1f}{suf}"
+    return f"{n:,.0f}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  MARKET HEADER  —  terminal-style top strip (Bloomberg / SpotGamma feel)
+#  Pure presentation: receives already-computed values, renders nothing new.
+# ─────────────────────────────────────────────────────────────────────────────
+def market_header(
+    symbol: str, spot: float, chg: float = 0.0, chg_p: float = 0.0,
+    bid: Optional[float] = None, ask: Optional[float] = None,
+    vol: Optional[float] = None, dte: Optional[int] = None,
+    iv_atm: Optional[float] = None, p_c: Optional[float] = None,
+    mp: Optional[float] = None, net_gex_bn: Optional[float] = None,
+    em_lo: Optional[float] = None, em_hi: Optional[float] = None,
+    updated: str = "", market_status: Optional[str] = None,
+) -> str:
+    """A single cohesive header panel: live dot + symbol + big price + change
+    pill on the left, a hairline-separated stat rail on the right, and a slim
+    1σ Expected-Move sub-bar underneath."""
+    up = (chg or 0) >= 0
+    chg_color = "#22c55e" if up else "#f43f5e"
+    arrow = "▲" if up else "▼"
+
+    ms = (market_status or "").upper()
+    if ms == "OPEN":
+        dot_cls, dot_lbl, dot_col = "live", "LIVE", "#22c55e"
+    elif ms in ("PRE", "POST"):
+        dot_cls, dot_lbl, dot_col = "idle", ms, "#f59e0b"
+    elif ms == "CLOSED":
+        dot_cls, dot_lbl, dot_col = "off", "CLOSED", "#6b6b8a"
+    else:
+        dot_cls, dot_lbl, dot_col = "idle", "MKT", "#f59e0b"
+
+    def cell(label: str, value: str, vcolor: str = "#dcdcf0",
+             sub: Optional[str] = None) -> str:
+        sub_html = (f'<span style="font-size:0.58rem;color:{vcolor};'
+                    f'opacity:0.6;margin-left:5px;">{sub}</span>') if sub else ""
+        return (
+            f'<div class="mh-cell" style="padding:0.1rem 1.15rem;'
+            f'border-left:1px solid #1b1b2c;transition:background .15s;">'
+            f'<div style="font-size:0.55rem;color:#5b5b80;letter-spacing:0.13em;'
+            f'text-transform:uppercase;margin-bottom:4px;white-space:nowrap;">'
+            f'{label}</div>'
+            f'<div style="font-size:0.98rem;font-weight:700;color:{vcolor};'
+            f'font-family:JetBrains Mono,monospace;font-variant-numeric:'
+            f'tabular-nums;line-height:1;white-space:nowrap;">'
+            f'{value}{sub_html}</div></div>'
+        )
+
+    ba = f"{bid:.2f} / {ask:.2f}" if (bid and ask) else "—"
+    cells = ""
+    cells += cell("BID / ASK", ba)
+    cells += cell("VOLUMEN", _humanize(vol) if vol else "—")
+    cells += cell("DTE", f"{dte}d" if dte is not None else "—")
+    cells += cell("ATM IV", f"{iv_atm:.1f}%" if iv_atm else "—", "#22d3ee")
+    cells += cell("P/C RATIO", f"{p_c:.2f}" if p_c else "—")
+    cells += cell("MAX PAIN", f"${mp:,.0f}" if mp else "—", "#c4b5fd")
+    if net_gex_bn is not None:
+        ng_col = "#22c55e" if net_gex_bn >= 0 else "#f43f5e"
+        ng_sub = "LONG Γ" if net_gex_bn >= 0 else "SHORT Γ"
+        cells += cell("NET GEX", f"${net_gex_bn:+.2f}B", ng_col, ng_sub)
+    else:
+        cells += cell("NET GEX", "—")
+
+    em_html = ""
+    if em_lo and em_hi and spot:
+        pct = (em_hi - spot) / spot * 100
+        em_html = (
+            f'<div style="display:flex;align-items:center;gap:0.85rem;'
+            f'margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid #14141f;'
+            f'font-family:JetBrains Mono,monospace;">'
+            f'<span style="font-size:0.56rem;color:#5b5b80;letter-spacing:0.12em;'
+            f'text-transform:uppercase;white-space:nowrap;">1σ Expected Move</span>'
+            f'<div style="flex:1;height:3px;border-radius:2px;min-width:40px;'
+            f'background:linear-gradient(to right,rgba(168,85,247,0) 0%,'
+            f'rgba(168,85,247,0.55) 50%,rgba(168,85,247,0) 100%);"></div>'
+            f'<span style="font-size:0.82rem;color:#c4b5fd;font-weight:700;'
+            f'white-space:nowrap;">${em_lo:.2f} — ${em_hi:.2f}</span>'
+            f'<span style="font-size:0.62rem;color:#6b6b8a;">±{pct:.1f}%</span>'
+            f'<span style="font-size:0.58rem;color:#3c3c58;white-space:nowrap;">'
+            f'· upd {updated}</span></div>'
+        )
+
+    return _html(f"""
+    <div style="position:relative;background:linear-gradient(135deg,#0b0b16 0%,#0e0e1c 55%,#0c0c18 100%);
+         border:1px solid #1e1e32;border-radius:8px;padding:0.95rem 1.2rem 0.85rem;
+         margin:0.2rem 0 0.9rem;box-shadow:0 1px 0 rgba(255,255,255,0.02) inset,0 6px 22px rgba(0,0,0,0.35);overflow:hidden;">
+      <div style="position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(to right,#f97316,rgba(249,115,22,0) 60%);"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:1.2rem;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:1.15rem;min-width:260px;">
+          <div>
+            <div style="font-size:0.6rem;color:{dot_col};letter-spacing:0.14em;font-family:JetBrains Mono,monospace;margin-bottom:3px;">
+              <span class="mh-dot {dot_cls}"></span>{dot_lbl}
+            </div>
+            <div style="font-size:1.2rem;font-weight:800;color:#f97316;font-family:JetBrains Mono,monospace;letter-spacing:0.08em;line-height:1;">{symbol}</div>
+          </div>
+          <div style="display:flex;align-items:baseline;gap:0.7rem;flex-wrap:wrap;">
+            <span style="font-size:2.1rem;font-weight:800;color:#f5f5ff;font-family:JetBrains Mono,monospace;font-variant-numeric:tabular-nums;line-height:1;text-shadow:0 0 18px rgba(245,245,255,0.12);">${spot:,.2f}</span>
+            <span style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:5px;background:{chg_color}1f;border:1px solid {chg_color}44;color:{chg_color};font-size:0.74rem;font-weight:700;font-family:JetBrains Mono,monospace;white-space:nowrap;">{arrow} {chg:+.2f} · {chg_p:+.2f}%</span>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;flex-wrap:wrap;">{cells}</div>
+      </div>
+      {em_html}
+    </div>
+    """)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  GEX FLIP ZONE  —  thermometer widget
 # ─────────────────────────────────────────────────────────────────────────────

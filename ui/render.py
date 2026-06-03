@@ -73,8 +73,8 @@ from ui.interpretations import (
 )
 from ui.styles import CSS
 from ui.widgets import (
-    flip_zone_widget, levels_strip, position_sizer, trade_setup_card,
-    trading_hero,
+    flip_zone_widget, levels_strip, market_header, position_sizer,
+    trade_setup_card, trading_hero,
 )
 
 log = get_logger("ui.render")
@@ -404,33 +404,18 @@ def show_dashboard() -> None:
         if price_err:
             st.error(f"Price history: {price_err}")
 
-    # ── METRICS ROW ─────────────────────────────────────────────────────────
-    m1, m2, m3, m4, m5, m6, m7, m8 = st.columns(8)
-    m1.metric("PRECIO", f"${spot:.2f}", f"{chg:+.2f}  {chg_p:+.1f}%")
-    m2.metric("BID / ASK", f"{bid_u:.2f} / {ask_u:.2f}")
-    m3.metric("VOLUMEN", f"{vol_u:,}")
-    m4.metric("DTE", f"{dte_v}d")
-    m5.metric("ATM IV", f"{iv_atm:.1f}%" if iv_atm else "—")
-    m6.metric("P/C RATIO", f"{p_c:.2f}" if p_c else "—")
-    m7.metric("MAX PAIN", f"${mp:.0f}" if mp else "—")
-    m8.metric(
-        "NET GEX",
-        f"${total_gex_bn:+.2f}B" if total_gex_bn is not None else "—",
-        "LONG Γ" if (total_gex_bn or 0) >= 0 else "SHORT Γ",
-    )
-
-    if em_lo and em_hi and spot and spot > 0:
-        move_pct = round((em_hi - spot) / spot * 100, 1)
-        st.markdown(
-            f'<p style="font-size:0.72rem;color:#404060;'
-            f'font-family:JetBrains Mono,monospace;margin:0.3rem 0 0;">'
-            f'1σ Expected Move ({dte_v}d): '
-            f'<span style="color:#a855f7">${em_lo:.2f} — ${em_hi:.2f}</span>'
-            f'  <span style="color:#505070">(±{move_pct}%)</span>'
-            f'  &nbsp;·&nbsp; Actualizado: {last_refresh.strftime("%H:%M:%S")}'
-            f'</p>',
-            unsafe_allow_html=True,
-        )
+    # ── MARKET HEADER (terminal-style strip) ────────────────────────────────
+    # Replaces the legacy 8× st.metric row + EM caption with one cohesive
+    # panel. Pure presentation — same values, no model change.
+    _mh_status, _ = market_status_et()
+    _render_md(market_header(
+        symbol=symbol, spot=spot, chg=chg, chg_p=chg_p,
+        bid=bid_u, ask=ask_u, vol=vol_u, dte=dte_v,
+        iv_atm=iv_atm, p_c=p_c, mp=mp, net_gex_bn=total_gex_bn,
+        em_lo=em_lo, em_hi=em_hi,
+        updated=last_refresh.strftime("%H:%M:%S"),
+        market_status=_mh_status,
+    ))
 
     st.markdown('<hr class="bb-divider">', unsafe_allow_html=True)
 

@@ -176,6 +176,25 @@ h1, h2, h3 { color: #e0e0f0 !important; }
 .footer { text-align:center; font-size:0.65rem; color:#2a2a3a; margin-top:2rem;
           font-family:'JetBrains Mono',monospace; }
 
+/* ─── Market header (terminal top strip) ───────────────────────────────── */
+@keyframes mh-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.4; transform: scale(0.78); }
+}
+.mh-dot { display:inline-block; width:8px; height:8px; border-radius:50%;
+          margin-right:7px; vertical-align:middle; }
+.mh-dot.live { background:#22c55e; box-shadow:0 0 9px #22c55e;
+               animation:mh-pulse 1.8s ease-in-out infinite; }
+.mh-dot.idle { background:#f59e0b; box-shadow:0 0 7px rgba(245,158,11,0.6); }
+.mh-dot.off  { background:#6b6b8a; }
+.mh-cell:hover { background:rgba(255,255,255,0.018); }
+
+/* Toggle accent → brand orange (best-effort across Streamlit versions) */
+[data-testid="stToggle"] [role="switch"][aria-checked="true"],
+[data-baseweb="checkbox"] [aria-checked="true"] > div:first-child {
+    background-color: #f97316 !important;
+}
+
 /* ─── Anti-flicker on auto-refresh ───────────────────────────────────────
  * When st_autorefresh fires every 30s, Streamlit shows a "RUNNING…" pill
  * and re-paints status overlays. That visible flash is what you perceive
