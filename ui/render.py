@@ -613,6 +613,7 @@ def show_dashboard() -> None:
     # ─────────────────────────────────────────────────────────────────────────
     TAB_LABELS = [
         "🎯 Overview",
+        "🗺️ Niveles",
         "📈 Intraday",
         "📊 GEX Total",
         "🌀 Orderflow",
@@ -630,9 +631,48 @@ def show_dashboard() -> None:
         "⚙ Ajustes",
     ]
     tabs = st.tabs(TAB_LABELS)
-    (tab_overview, tab_intra, tab_gex, tab_orderflow, tab_0dte, tab_erange,
-     tab_vex, tab_cex, tab_dex, tab_hiro, tab_ts, tab_smile, tab_oi, tab_vol,
-     tab_chain, tab_settings) = tabs
+    (tab_overview, tab_levels, tab_intra, tab_gex, tab_orderflow, tab_0dte,
+     tab_erange, tab_vex, tab_cex, tab_dex, tab_hiro, tab_ts, tab_smile,
+     tab_oi, tab_vol, tab_chain, tab_settings) = tabs
+
+    # ── 🗺️ NIVELES — price & GEX levels map + key-levels panel ──────────────
+    with tab_levels:
+        _render_md('<p class="bb-header">PRICE &amp; GEX LEVELS  ·  '
+                   'mapa de niveles estructurales</p>')
+        st.caption(
+            "Líneas horizontales = niveles de gamma dealer (call/put wall · "
+            "gamma flip · HVL · clusters P1/P2/P3). Línea cyan = precio "
+            "intradía. Banda azul = rango actual (soporte ↔ resistencia más "
+            "cercanos). Verde = resistencia · rojo = soporte · naranja = flip "
+            "· morado = pin."
+        )
+        from charts.levels_map import chart_price_levels
+        from ui.widgets import key_levels_panel
+        try:
+            lvl_df, _lvl_err = fetch_intraday(
+                symbol, freq_min=5, days=1,
+                cache_bust=int(time.time() // 30),
+            )
+        except Exception as _exc:
+            log.warning("levels map intraday fetch failed: %s", _exc)
+            lvl_df = pd.DataFrame()
+        lc_chart, lc_panel = st.columns([2.7, 1.0])
+        with lc_chart:
+            try:
+                fig_lvl = chart_price_levels(
+                    spot, gex_sum, zones=gamma_zones, intra_df=lvl_df,
+                    symbol=symbol,
+                )
+            except Exception as _exc:
+                log.exception("chart_price_levels crashed")
+                fig_lvl = None
+            if fig_lvl is not None:
+                st.plotly_chart(fig_lvl, use_container_width=True,
+                                key=f"levels_map_{symbol}")
+            else:
+                st.info("Sin niveles GEX suficientes para construir el mapa.")
+        with lc_panel:
+            _render_md(key_levels_panel(spot, gex_sum, gamma_zones))
 
     # ── ⚙ AJUSTES — parámetros + diagnóstico (movidos fuera del header) ─────
     with tab_settings:

@@ -519,6 +519,46 @@ def trade_setup_card(
     """)
 
 
+def key_levels_panel(spot: float, gex_sum: Optional[dict],
+                     zones: Optional[list] = None, max_rows: int = 6) -> str:
+    """Side panel for the Price & GEX Levels map — lists the key levels
+    classified as resistance / support with a one-line explanation. Uses the
+    same level classification as the chart (charts.levels_map)."""
+    from charts.levels_map import collect_price_levels
+    levels = collect_price_levels(spot, gex_sum, zones)
+    if not levels:
+        return _box_err("Sin niveles GEX para mapear.")
+    majors = [lv for lv in levels if lv["major"]]
+    clusters = sorted([lv for lv in levels if not lv["major"]],
+                      key=lambda lv: abs(lv["price"] - spot))
+    chosen = (majors + clusters)[:max_rows]
+    chosen.sort(key=lambda lv: -lv["price"])
+
+    rows = ""
+    for lv in chosen:
+        dist = (lv["price"] - spot) / spot * 100 if spot else 0.0
+        rows += (
+            f'<div style="padding:0.5rem 0;border-bottom:1px solid #16162a;">'
+            f'<div style="display:flex;align-items:baseline;gap:9px;">'
+            f'<span style="font-size:1.25rem;font-weight:800;color:{lv["color"]};">'
+            f'{lv["price"]:.0f}</span>'
+            f'<span style="font-size:0.58rem;letter-spacing:0.12em;color:{lv["color"]};">'
+            f'{lv["tag"]}</span>'
+            f'<span style="font-size:0.56rem;color:#4d4d70;margin-left:auto;">'
+            f'{dist:+.2f}%</span></div>'
+            f'<div style="font-size:0.65rem;color:#8585a8;margin-top:2px;">'
+            f'{lv["desc"]}</div></div>'
+        )
+    return _html(
+        f'<div style="background:linear-gradient(135deg,#0b0b16,#0e0e1c);'
+        f'border:1px solid #1e1e32;border-radius:9px;padding:0.6rem 0.95rem;'
+        f'font-family:JetBrains Mono,monospace;">'
+        f'<div style="font-size:0.56rem;color:#5b5b80;letter-spacing:0.16em;'
+        f'text-transform:uppercase;margin-bottom:0.35rem;">Niveles clave</div>'
+        f'{rows}</div>'
+    )
+
+
 def _metric(label: str, value: str, color: str = "#e0e0f0",
             sub: Optional[str] = None) -> str:
     """Compact metric cell used by the trade-setup-card footer grid."""
