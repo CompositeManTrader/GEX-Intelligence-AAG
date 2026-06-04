@@ -638,16 +638,45 @@ def show_dashboard() -> None:
     # ── 🗺️ NIVELES — price & GEX levels map + key-levels panel ──────────────
     with tab_levels:
         _render_md('<p class="bb-header">PRICE &amp; GEX LEVELS  ·  '
-                   'mapa de niveles estructurales</p>')
+                   'mapa de niveles por alcance DTE</p>')
+
+        # DTE-scope selector — which slice of the chain defines the levels.
+        SCOPE_OPTS = ["Agregado", "0DTE", "Semana", "Mes"]
+        scope = st.radio(
+            "Alcance DTE",
+            options=SCOPE_OPTS,
+            format_func=lambda s: {
+                "Agregado": f"Agregado (0–{max_dte}d)",
+                "0DTE": "0DTE (hoy)",
+                "Semana": "Semana (1–7d)",
+                "Mes": "Mes (8–60d)",
+            }[s],
+            horizontal=True, index=0, key="levels_scope",
+            help="Agregado = libro completo (muros estructurales). 0DTE = "
+                 "gamma que vence hoy (pinning intradía). Semana / Mes = "
+                 "buckets intermedio y estructural.",
+        )
         st.caption(
             "Líneas horizontales = niveles de gamma dealer (call/put wall · "
-            "gamma flip · HVL · clusters P1/P2/P3). Línea cyan = precio "
-            "intradía. Banda azul = rango actual (soporte ↔ resistencia más "
-            "cercanos). Verde = resistencia · rojo = soporte · naranja = flip "
-            "· morado = pin."
+            "gamma flip · HVL · clusters P1/P2/P3) del alcance elegido. Línea "
+            "cyan = precio intradía. Banda azul = rango actual. Verde = "
+            "resistencia · rojo = soporte · naranja = flip · morado = pin."
         )
+
         from charts.levels_map import chart_price_levels
         from ui.widgets import key_levels_panel
+        from quant.zones import find_gamma_zones as _find_zones
+
+        # Resolve (summary, zones) for the chosen DTE scope.
+        if scope == "Agregado":
+            lvl_sum, lvl_zones = gex_sum, gamma_zones
+        else:
+            _bkey = {"0DTE": "0dte", "Semana": "week", "Mes": "month"}[scope]
+            _bdf, _bsum = gex_buckets.get(_bkey, (None, {}))
+            lvl_sum = _bsum or {}
+            lvl_zones = (_find_zones(_bdf, spot=spot, top_n=3)
+                         if _bdf is not None and not _bdf.empty else [])
+
         try:
             lvl_df, _lvl_err = fetch_intraday(
                 symbol, freq_min=5, days=1,
@@ -656,11 +685,12 @@ def show_dashboard() -> None:
         except Exception as _exc:
             log.warning("levels map intraday fetch failed: %s", _exc)
             lvl_df = pd.DataFrame()
+
         lc_chart, lc_panel = st.columns([2.7, 1.0])
         with lc_chart:
             try:
                 fig_lvl = chart_price_levels(
-                    spot, gex_sum, zones=gamma_zones, intra_df=lvl_df,
+                    spot, lvl_sum, zones=lvl_zones, intra_df=lvl_df,
                     symbol=symbol,
                 )
             except Exception as _exc:
@@ -668,11 +698,14 @@ def show_dashboard() -> None:
                 fig_lvl = None
             if fig_lvl is not None:
                 st.plotly_chart(fig_lvl, use_container_width=True,
-                                key=f"levels_map_{symbol}")
+                                key=f"levels_map_{symbol}_{scope}")
             else:
-                st.info("Sin niveles GEX suficientes para construir el mapa.")
+                st.info(
+                    f"Sin niveles GEX en el alcance **{scope}** "
+                    f"(¿no hay contratos en ese rango de DTE hoy?)."
+                )
         with lc_panel:
-            _render_md(key_levels_panel(spot, gex_sum, gamma_zones))
+            _render_md(key_levels_panel(spot, lvl_sum, lvl_zones))
 
     # ── ⚙ AJUSTES — parámetros + diagnóstico (movidos fuera del header) ─────
     with tab_settings:
