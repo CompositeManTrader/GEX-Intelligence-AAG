@@ -360,97 +360,175 @@ def trade_setup_card(
     # ── Aggregate ───────────────────────────────────────────────────────────
     score = sum(v for _, v, _ in votes)
     if score >= 2:
-        bias, bias_clr = "LONG (bullish)", "#22c55e"; bias_emoji = "📈"
+        bias_word, bias_sub, bias_clr, arrow = "LONG", "bullish", "#22c55e", "▲"
     elif score <= -2:
-        bias, bias_clr = "SHORT (bearish)", "#f43f5e"; bias_emoji = "📉"
+        bias_word, bias_sub, bias_clr, arrow = "SHORT", "bearish", "#f43f5e", "▼"
     else:
-        bias, bias_clr = "NEUTRAL / RANGE", "#f59e0b"; bias_emoji = "↔️"
+        bias_word, bias_sub, bias_clr, arrow = "NEUTRAL", "range", "#f59e0b", "◆"
 
     # ── Level-based targets (structural, not made up) ───────────────────────
-    entry_zone, stop, target = _derive_levels(
-        score, spot, cw, pw, gf, hvl, em_lo, em_hi, regime,
-    )
-
-    # ── Expiration recommendation ───────────────────────────────────────────
+    lv = _derive_levels(score, spot, cw, pw, gf, hvl, em_lo, em_hi, regime)
     expiry = _recommend_expiry(dte, regime, iv_hv_ratio)
 
-    # ── Confidence ──────────────────────────────────────────────────────────
+    # ── Confluence (agreement of signals — NOT a win-probability) ───────────
     n = len([v for _, v, _ in votes if v != 0])
     conf = int(min(100, abs(score) / max(1, n) * 100)) if n else 0
     conf_clr = ("#22c55e" if conf >= 67 else
                 "#f59e0b" if conf >= 34 else "#f43f5e")
 
-    # ── Render votes table ──────────────────────────────────────────────────
-    rows_html = ""
+    # ── Votes (2-column compact grid) ───────────────────────────────────────
+    vote_cells = ""
     for name, v, note in votes:
         sym = "▲" if v > 0 else ("▼" if v < 0 else "·")
         sym_clr = "#22c55e" if v > 0 else ("#f43f5e" if v < 0 else "#707090")
-        rows_html += (
-            f'<tr><td style="padding:3px 10px 3px 0;color:{sym_clr};'
-            f'font-weight:700;width:18px;">{sym}</td>'
-            f'<td style="padding:3px 10px 3px 0;color:#c0c0d8;width:120px;">{name}</td>'
-            f'<td style="padding:3px 0;color:#9090b0;">{note}</td></tr>'
+        vote_cells += (
+            f'<div style="padding:2px 0;font-size:0.7rem;white-space:nowrap;'
+            f'overflow:hidden;text-overflow:ellipsis;">'
+            f'<span style="color:{sym_clr};font-weight:700;">{sym}</span> '
+            f'<span style="color:#c0c0d8;">{name}</span> '
+            f'<span style="color:#808098;">{note}</span></div>'
+        )
+    votes_html = (
+        f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 22px;'
+        f'margin:0.9rem 0 0.2rem;">{vote_cells}</div>'
+    )
+
+    # ── Price rail + metrics ────────────────────────────────────────────────
+    def _money(v):
+        return f"${v:,.2f}"
+
+    rail_html = ""
+    if lv["kind"] in ("long", "short") and lv.get("stop") and lv.get("target"):
+        elo, ehi = lv["entry_lo"], lv["entry_hi"]
+        stop, target = lv["stop"], lv["target"]
+        emid = (elo + ehi) / 2.0
+        if lv["kind"] == "long":
+            risk, reward = emid - stop, target - emid
+            left_lbl, left_clr, left_val = "STOP", "#f43f5e", stop
+            right_lbl, right_clr, right_val = "TARGET", "#22c55e", target
+            grad = ("linear-gradient(to right,rgba(244,63,94,.30) 0%,"
+                    "rgba(245,158,11,.16) 45%,rgba(34,197,94,.30) 100%)")
+        else:
+            risk, reward = stop - emid, emid - target
+            left_lbl, left_clr, left_val = "TARGET", "#22c55e", target
+            right_lbl, right_clr, right_val = "STOP", "#f43f5e", stop
+            grad = ("linear-gradient(to right,rgba(34,197,94,.30) 0%,"
+                    "rgba(245,158,11,.16) 55%,rgba(244,63,94,.30) 100%)")
+        rr = (reward / risk) if risk and risk > 0 else None
+        risk_pct = risk / spot * 100 if spot else 0
+        reward_pct = reward / spot * 100 if spot else 0
+        rr_clr = ("#22c55e" if (rr or 0) >= 2 else
+                  "#f59e0b" if (rr or 0) >= 1 else "#f43f5e")
+
+        pts = [stop, target, elo, ehi, spot]
+        lo, hi = min(pts), max(pts)
+        span = (hi - lo) or 1.0
+
+        def pos(x):
+            return max(0.0, min(100.0, (x - lo) / span * 100.0))
+        eb_lo, eb_hi = sorted([pos(elo), pos(ehi)])
+        rr_txt = f"{rr:.2f}<span style='font-size:0.6rem;color:{rr_clr};opacity:.7'>:1</span>" if rr else "—"
+
+        rail_html = (
+            f'<div style="margin:1rem 0 0.3rem;">'
+            f'<div style="position:relative;height:8px;border-radius:4px;'
+            f'background:{grad};border:1px solid #20202f;">'
+            f'<div style="position:absolute;left:{eb_lo:.1f}%;width:{eb_hi - eb_lo:.1f}%;'
+            f'top:0;bottom:0;background:rgba(168,85,247,.22);'
+            f'border-left:1px solid #a855f7;border-right:1px solid #a855f7;"></div>'
+            f'<div title="Stop" style="position:absolute;left:{pos(stop):.1f}%;top:-4px;'
+            f'width:2px;height:16px;background:#f43f5e;"></div>'
+            f'<div title="Spot" style="position:absolute;left:{pos(spot):.1f}%;top:-5px;'
+            f'width:11px;height:18px;border-radius:2px;background:#f5f5ff;'
+            f'box-shadow:0 0 7px #f5f5ff;transform:translateX(-50%);"></div>'
+            f'<div title="Target" style="position:absolute;left:{pos(target):.1f}%;top:-4px;'
+            f'width:2px;height:16px;background:#22c55e;transform:translateX(-2px);"></div>'
+            f'</div>'
+            f'<div style="display:flex;justify-content:space-between;font-size:0.56rem;'
+            f'margin-top:7px;">'
+            f'<span style="color:{left_clr};">{left_lbl} {left_val:,.2f}</span>'
+            f'<span style="color:#a855f7;">ENTRY {elo:,.2f}–{ehi:,.2f}</span>'
+            f'<span style="color:{right_clr};">{right_lbl} {right_val:,.2f}</span>'
+            f'</div></div>'
+        )
+        metrics_html = (
+            f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.5rem;'
+            f'border-top:1px solid rgba(255,255,255,.05);padding-top:0.75rem;'
+            f'margin-top:0.7rem;">'
+            f'{_metric("RIESGO", f"−{_money(risk)}", "#f43f5e", f"−{abs(risk_pct):.2f}%")}'
+            f'{_metric("PREMIO", f"+{_money(reward)}", "#22c55e", f"+{abs(reward_pct):.2f}%")}'
+            f'{_metric("R : R", rr_txt, rr_clr)}'
+            f'{_metric("EXPIRY", expiry, "#a855f7")}'
+            f'</div>'
+        )
+    else:
+        # Non-directional (iron condor / flat) — no R:R, show text levels.
+        metrics_html = (
+            f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.5rem;'
+            f'border-top:1px solid rgba(255,255,255,.05);padding-top:0.75rem;'
+            f'margin-top:0.9rem;">'
+            f'{_metric("SETUP", lv.get("text_entry", "—"), "#e0e0f0")}'
+            f'{_metric("STOP", lv.get("text_stop", "—"), "#f43f5e")}'
+            f'{_metric("TARGET", lv.get("text_target", "—"), "#22c55e")}'
+            f'{_metric("EXPIRY", expiry, "#a855f7")}'
+            f'</div>'
         )
 
     return _html(f"""
-    <div style="background:linear-gradient(135deg,rgba(30,30,50,0.6),rgba(14,14,26,0.8));
-         border:1px solid #2a2a3a;border-left:4px solid {bias_clr};
-         padding:1rem 1.2rem;border-radius:6px;margin:0.6rem 0 1rem;
-         font-family:JetBrains Mono,monospace;">
+    <div style="position:relative;background:linear-gradient(135deg,#0b0b16,#0e0e1c 60%,#0c0c18);
+         border:1px solid #1e1e32;border-radius:9px;padding:1.05rem 1.25rem;
+         margin:0.4rem 0 1rem;font-family:JetBrains Mono,monospace;
+         box-shadow:0 6px 22px rgba(0,0,0,0.35);overflow:hidden;">
+      <div style="position:absolute;top:0;left:0;right:0;height:2px;
+           background:linear-gradient(to right,{bias_clr},rgba(0,0,0,0) 55%);"></div>
       <div style="display:flex;justify-content:space-between;align-items:flex-start;
-           gap:1rem;flex-wrap:wrap;margin-bottom:0.8rem;">
+           gap:1rem;flex-wrap:wrap;">
         <div>
-          <div style="font-size:0.68rem;color:#7070a0;letter-spacing:0.14em;">
-            🤖 TRADE SETUP CARD  ·  {symbol}
+          <div style="font-size:0.58rem;color:#5b5b80;letter-spacing:0.16em;">
+            TRADE SETUP&nbsp;·&nbsp;{symbol}
           </div>
-          <div style="font-size:1.35rem;font-weight:800;color:{bias_clr};
-               margin-top:3px;letter-spacing:0.02em;">
-            {bias_emoji}&nbsp;{bias}
+          <div style="font-size:1.5rem;font-weight:800;color:{bias_clr};margin-top:4px;
+               letter-spacing:0.02em;text-shadow:0 0 16px {bias_clr}33;">
+            {arrow}&nbsp;{bias_word}&nbsp;<span style="color:#7a7a92;font-size:0.9rem;
+            font-weight:600;">{bias_sub}</span>
           </div>
         </div>
-        <div style="text-align:right;">
-          <div style="font-size:0.68rem;color:#7070a0;">Confianza</div>
-          <div style="font-size:1.35rem;font-weight:800;color:{conf_clr};">
-            {conf}%
+        <div style="min-width:175px;">
+          <div style="display:flex;justify-content:space-between;font-size:0.55rem;
+               color:#5b5b80;letter-spacing:0.1em;margin-bottom:5px;">
+            <span>CONFLUENCIA</span><span style="color:{conf_clr};font-weight:700;">{conf}%</span>
           </div>
-          <div style="font-size:0.65rem;color:#606080;">
-            {n} señales
+          <div style="height:6px;border-radius:3px;background:#16162a;overflow:hidden;">
+            <div style="width:{conf}%;height:100%;background:{conf_clr};
+                 box-shadow:0 0 8px {conf_clr}88;"></div>
+          </div>
+          <div style="font-size:0.55rem;color:#4d4d70;margin-top:4px;text-align:right;">
+            {n} señales · score {score:+d}
           </div>
         </div>
       </div>
-
-      <table style="width:100%;border-collapse:collapse;font-size:0.72rem;
-             line-height:1.5;margin-bottom:0.8rem;">
-        {rows_html}
-      </table>
-
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.6rem;
-           border-top:1px solid rgba(255,255,255,0.05);padding-top:0.7rem;">
-        <div>
-          <div style="font-size:0.62rem;color:#7070a0;letter-spacing:0.1em;">ENTRY</div>
-          <div style="font-size:0.9rem;color:#e0e0f0;font-weight:700;">{entry_zone}</div>
-        </div>
-        <div>
-          <div style="font-size:0.62rem;color:#7070a0;letter-spacing:0.1em;">STOP</div>
-          <div style="font-size:0.9rem;color:#f43f5e;font-weight:700;">{stop}</div>
-        </div>
-        <div>
-          <div style="font-size:0.62rem;color:#7070a0;letter-spacing:0.1em;">TARGET</div>
-          <div style="font-size:0.9rem;color:#22c55e;font-weight:700;">{target}</div>
-        </div>
-        <div>
-          <div style="font-size:0.62rem;color:#7070a0;letter-spacing:0.1em;">EXPIRY</div>
-          <div style="font-size:0.9rem;color:#a855f7;font-weight:700;">{expiry}</div>
-        </div>
-      </div>
-
-      <div style="font-size:0.62rem;color:#505070;margin-top:0.7rem;
+      {votes_html}
+      {rail_html}
+      {metrics_html}
+      <div style="font-size:0.58rem;color:#4d4d70;margin-top:0.7rem;
            line-height:1.4;font-style:italic;">
-        ⚠ Sugerencia algorítmica basada en confluencia de señales. No constituye asesoría.
-        Ajusta size según tu tolerancia al riesgo.
+        Confluencia = acuerdo entre señales, NO probabilidad de ganar.
+        Sugerencia algorítmica · no es asesoría · ajusta size a tu riesgo.
       </div>
     </div>
     """)
+
+
+def _metric(label: str, value: str, color: str = "#e0e0f0",
+            sub: Optional[str] = None) -> str:
+    """Compact metric cell used by the trade-setup-card footer grid."""
+    sub_html = (f'<span style="font-size:0.62rem;color:{color};opacity:.65;'
+                f'margin-left:5px;">{sub}</span>') if sub else ""
+    return (
+        f'<div><div style="font-size:0.55rem;color:#5b5b80;letter-spacing:0.1em;">'
+        f'{label}</div><div style="font-size:0.92rem;color:{color};font-weight:700;'
+        f'margin-top:2px;">{value}{sub_html}</div></div>'
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -462,42 +540,45 @@ def _derive_levels(
     gf: Optional[float], hvl: Optional[float],
     em_lo: Optional[float], em_hi: Optional[float],
     regime: str,
-) -> tuple[str, str, str]:
+) -> dict:
     """Derive entry / stop / target from structural GEX levels.
 
-    Philosophy:
-      - LONG:  enter on pullback to HVL or gamma flip (support), stop below
-               put wall (structural break), target call wall / EM+.
-      - SHORT: enter on rally to HVL or call wall, stop above call wall,
-               target put wall / EM-.
-      - NEUTRAL: iron condor style — sell premium between walls.
-    """
-    def f(v: Optional[float]) -> str:
-        return f"${v:.2f}" if v else "—"
+    Returns a dict (NUMERIC for directional setups, so the card can compute
+    R:R, distances and draw the price rail):
+      kind        : "long" | "short" | "condor" | "flat"
+      entry_lo/hi : float | None    (entry zone bounds)
+      stop, target: float | None
+      text_*      : str  | None     (non-directional fallback labels)
 
+    Philosophy (unchanged):
+      - LONG:  enter on pullback to HVL/flip (support), stop below put wall,
+               target call wall / EM+.
+      - SHORT: enter on rally to HVL/call wall, stop above call wall,
+               target put wall / EM-.
+      - NEUTRAL: iron condor between walls (POSITIVE Γ) or stay flat.
+    """
     if score >= 2:
-        # LONG: buy pullbacks to support
         entry_lo = max([x for x in [hvl, gf, pw] if x and x < spot] or [spot * 0.995])
         entry_hi = spot
-        entry = f"${entry_lo:.2f} – ${entry_hi:.2f}"
-        stop = f(pw * 0.997 if pw else spot * 0.985)
-        target = f(cw or em_hi or (spot * 1.02))
-        return entry, stop, target
+        stop = (pw * 0.997) if pw else spot * 0.985
+        target = cw or em_hi or (spot * 1.02)
+        return {"kind": "long", "entry_lo": entry_lo, "entry_hi": entry_hi,
+                "stop": stop, "target": target}
     if score <= -2:
-        # SHORT: sell rallies to resistance
         entry_lo = spot
         entry_hi = min([x for x in [hvl, gf, cw] if x and x > spot] or [spot * 1.005])
-        entry = f"${entry_lo:.2f} – ${entry_hi:.2f}"
-        stop = f(cw * 1.003 if cw else spot * 1.015)
-        target = f(pw or em_lo or (spot * 0.98))
-        return entry, stop, target
-    # NEUTRAL: iron condor between walls, or stay flat in short gamma
+        stop = (cw * 1.003) if cw else spot * 1.015
+        target = pw or em_lo or (spot * 0.98)
+        return {"kind": "short", "entry_lo": entry_lo, "entry_hi": entry_hi,
+                "stop": stop, "target": target}
     if regime == "POSITIVE" and cw and pw:
-        entry = f"Sell {pw:.0f}P / {cw:.0f}C"
-        stop = "break of wall"
-        target = f"decay hasta expiry"
-        return entry, stop, target
-    return "Stay flat / wait", "—", "—"
+        return {"kind": "condor", "entry_lo": pw, "entry_hi": cw,
+                "stop": None, "target": None,
+                "text_entry": f"Sell {pw:.0f}P / {cw:.0f}C",
+                "text_stop": "ruptura de muro", "text_target": "decay → expiry"}
+    return {"kind": "flat", "entry_lo": None, "entry_hi": None,
+            "stop": None, "target": None,
+            "text_entry": "Stay flat / esperar", "text_stop": "—", "text_target": "—"}
 
 
 def _recommend_expiry(dte: int, regime: str,
