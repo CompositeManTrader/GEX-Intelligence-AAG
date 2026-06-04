@@ -25,7 +25,9 @@ from config import (
     HTTP_TIMEOUT,
     SCHWAB_BASE_URL,
     SS,
+    api_symbol_candidates,
     get_logger,
+    to_api_symbol,
 )
 
 log = get_logger("data.fetch")
@@ -81,19 +83,41 @@ def _api_get(path: str, params: Optional[dict] = None) -> requests.Response:
 @st.cache_data(ttl=30, show_spinner=False)
 def fetch_chain(symbol: str, strike_count: int,
                 from_date: str, to_date: str) -> Tuple[Optional[dict], str]:
-    try:
-        r = _api_get("/marketdata/v1/chains", params={
-            "symbol": symbol, "contractType": "ALL",
-            "strikeCount": strike_count, "includeUnderlyingQuote": "true",
-            "fromDate": from_date, "toDate": to_date,
-        })
-    except Exception as exc:
-        log.exception("fetch_chain network error")
-        return None, str(exc)
-    if r.status_code != 200:
-        log.error("fetch_chain %s status=%s body=%s", symbol, r.status_code, r.text[:200])
-        return None, f"HTTP {r.status_code}: {r.text[:300]}"
-    return r.json(), ""
+    # Cash indices (SPX/NDX/RUT/VIX) need a "$…​.X" symbol; equities pass
+    # through. Try each candidate format so a Schwab format change can't block
+    # the user — first one that returns a real chain wins.
+    candidates = api_symbol_candidates(symbol)
+    last_err = ""
+    for api_sym in candidates:
+        try:
+            r = _api_get("/marketdata/v1/chains", params={
+                "symbol": api_sym, "contractType": "ALL",
+                "strikeCount": strike_count, "includeUnderlyingQuote": "true",
+                "fromDate": from_date, "toDate": to_date,
+            })
+        except Exception as exc:
+            log.exception("fetch_chain network error")
+            return None, str(exc)
+        if r.status_code == 200:
+            data = r.json()
+            # A valid chain has at least one populated exp map. Treat an
+            # empty/FAILED body as a miss so we can try the next format.
+            if data and data.get("status") != "FAILED" and (
+                data.get("callExpDateMap") or data.get("putExpDateMap")
+            ):
+                return data, ""
+            last_err = f"sin opciones para '{api_sym}'"
+            continue
+        last_err = f"HTTP {r.status_code}: {r.text[:300]}"
+        # 400 = bad symbol format → try the next candidate; other codes
+        # (401/403/429/5xx) won't be fixed by a different symbol → stop.
+        if r.status_code != 400:
+            log.error("fetch_chain %s status=%s body=%s",
+                      api_sym, r.status_code, r.text[:200])
+            return None, last_err
+        log.warning("fetch_chain %s HTTP 400 — trying next symbol format",
+                    api_sym)
+    return None, last_err
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -105,7 +129,7 @@ def fetch_price_history(symbol: str, period: int = 1,
                         ) -> Tuple[pd.DataFrame, str]:
     try:
         r = _api_get("/marketdata/v1/pricehistory", params={
-            "symbol": symbol, "periodType": period_type, "period": period,
+            "symbol": to_api_symbol(symbol), "periodType": period_type, "period": period,
             "frequencyType": "daily", "frequency": 1,
             "needExtendedHoursData": "false",
         })
@@ -151,7 +175,8 @@ def _empty_quote() -> dict:
 @st.cache_data(ttl=8, show_spinner=False)
 def fetch_quote(symbol: str) -> Tuple[dict, str]:
     try:
-        r = _api_get("/marketdata/v1/quotes", params={"symbols": symbol})
+        r = _api_get("/marketdata/v1/quotes",
+                     params={"symbols": to_api_symbol(symbol)})
     except Exception as exc:
         log.exception("fetch_quote network error")
         return _empty_quote(), str(exc)
@@ -246,7 +271,7 @@ def fetch_intraday(symbol: str, freq_min: int = 1,
         start_ms = int(start_dt.timestamp() * 1000)
 
         r = _api_get("/marketdata/v1/pricehistory", params={
-            "symbol": symbol,
+            "symbol": to_api_symbol(symbol),
             "periodType": "day",
             "frequencyType": "minute",
             "frequency": str(int(freq_min)),

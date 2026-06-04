@@ -195,6 +195,49 @@ def resolve_chain_symbol(symbol: str,
     return chain, spec
 
 
+# ── Cash-index symbols → Schwab marketdata format ──────────────────────────
+# Schwab (post-TDA) needs cash indices with a "$" prefix and ".X" suffix on
+# the options-chain / quote endpoints (e.g. SPX → "$SPX.X"). Plain "SPX"
+# returns HTTP 400 "Invalid Parameter/Value". Equities & ETFs pass through
+# unchanged. We keep the clean root ("SPX") everywhere internally (dividends,
+# persistence keys, display) and ONLY translate the outbound API symbol.
+INDEX_API_SYMBOLS: dict[str, str] = {
+    "SPX": "$SPX.X",
+    "NDX": "$NDX.X",
+    "RUT": "$RUT.X",
+    "VIX": "$VIX.X",
+    "DJX": "$DJI",
+}
+
+
+def to_api_symbol(symbol: str) -> str:
+    """Map a cash-index root (SPX/NDX/RUT/VIX) to its Schwab marketdata
+    symbol ($SPX.X …). Everything else is returned unchanged."""
+    if not symbol:
+        return symbol
+    return INDEX_API_SYMBOLS.get(symbol.upper(), symbol)
+
+
+def api_symbol_candidates(symbol: str) -> list[str]:
+    """Ordered list of Schwab API symbols to try for a given root.
+
+    For cash indices we return BOTH the ".X" and the bare "$"-prefixed
+    forms (Schwab's accepted format has varied by endpoint and across the
+    TDA→Schwab migration), so a caller can try the primary and fall back to
+    the alternative instead of hard-failing on a format guess. For everything
+    else it's just the symbol itself.
+    """
+    if not symbol:
+        return [symbol]
+    s = symbol.upper()
+    primary = INDEX_API_SYMBOLS.get(s)
+    if primary is None:
+        return [s]
+    if primary.endswith(".X"):
+        return [primary, primary[:-2]]        # ["$SPX.X", "$SPX"]
+    return [primary, primary + ".X"]           # ["$DJI", "$DJI.X"]
+
+
 def points_distance(future_root: str, etf_strike: float, etf_spot: float
                     ) -> Optional[float]:
     """Convert an ETF strike distance to *future points* using the ratio.
