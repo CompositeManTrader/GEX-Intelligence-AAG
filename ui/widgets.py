@@ -1409,11 +1409,23 @@ def panel_rnd_levels_html(levels_data: dict, spot: float,
                    else "⚠ no verificado" if arb is None else "✗ con arbitraje")
         arb_clr = "#22c55e" if arb is True else "#f59e0b"
         rmse_txt = f"RMSE {rmse:.1e}" if rmse is not None else ""
+        # Diagnostics: surface WHY a non-SVI method was used (the SVI fit was
+        # rejected or unavailable), plus n_strikes / min_g, so the fallback
+        # can be diagnosed from the live data without a debugger.
+        n_strk = meta.get("n_strikes")
+        min_g = meta.get("min_g")
+        reject = meta.get("svi_reject")
+        diag = f" · strikes={n_strk}" if n_strk else ""
+        if min_g is not None:
+            diag += f" · min_g={min_g:+.4f}"
+        if reject and (meta.get("method") != "svi"):
+            diag += (f' · <span style="color:#f59e0b">SVI rechazado: '
+                     f'{reject}</span>')
         foot = (
             f'<div style="color:#606080;font-size:0.64rem;margin-top:0.5rem;'
             f'line-height:1.4">Modelo: <b>{method}</b> · forward '
             f'${fwd:,.2f} · {rmse_txt} · '
-            f'<span style="color:{arb_clr}">{arb_txt}</span>. '
+            f'<span style="color:{arb_clr}">{arb_txt}</span>{diag}. '
             f'Niveles por inversión exacta de la CDF (no interpolación).</div>'
         )
 

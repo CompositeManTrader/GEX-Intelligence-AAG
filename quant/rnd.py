@@ -236,7 +236,8 @@ def build_rnd(
     """
     meta: dict = {"method": None, "forward": None, "rmse": None,
                   "arb_free": None, "min_g": None, "n_strikes": 0,
-                  "T": None, "truncated": False, "svi": None}
+                  "T": None, "truncated": False, "svi": None,
+                  "svi_reject": None}
     if not spot or spot <= 0:
         return None, meta
 
@@ -274,10 +275,15 @@ def build_rnd(
     params, rmse = fit_svi(k_obs, w_obs, T, weights=weights)
     method = None
     w_grid = None
-    if params is not None:
+    if params is None:
+        # Instrumentation: record WHY SVI was unavailable so the UI can
+        # surface it (the fit didn't converge or had too few points).
+        meta["svi_reject"] = f"fit None (n={len(k_obs)})"
+    else:
         w_svi = svi_total_variance(params, k_grid)
         g = svi_g_function(params, k_grid)
         min_g = float(np.min(g))
+        n_wneg = int(np.sum(w_svi <= 0))
         meta["min_g"] = round(min_g, 6)
         meta["svi"] = params.to_dict()
         meta["rmse"] = round(rmse, 6)
@@ -286,6 +292,14 @@ def build_rnd(
             w_grid = w_svi
             method = "svi"
             meta["arb_free"] = bool(min_g >= 0)
+        else:
+            # Rejected → spline. Capture the reason for diagnostics: an
+            # arbitrage violation (min_g<0) or a non-positive variance on
+            # the grid (typically the extrapolated wings for tiny-T 0DTE).
+            if n_wneg > 0:
+                meta["svi_reject"] = f"w<=0 en {n_wneg} ptos del grid"
+            else:
+                meta["svi_reject"] = f"arb min_g={min_g:.4f} (umbral -0.001)"
 
     # ── Fallback 1: monotone-ish smoothing spline on (k, w) ──────────────
     if w_grid is None:
