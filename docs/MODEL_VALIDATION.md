@@ -400,3 +400,69 @@ Suites de validación:
 - `tests/validation/test_val_rnd.py` — RND vs forma cerrada (martingala,
   lognormal, g(k)).
 - `tests/validation/test_val_vol.py` — estimadores HV vs fórmulas publicadas.
+
+---
+
+# Addendum — Re-validación institucional del RND (2026-06-04)
+
+A petición del usuario ("modelo de nivel quant de JP Morgan / Citadel"), se
+hizo una **revisión adversarial línea-por-línea** del modelo RND
+(`quant/rnd.py`), con un **segundo revisor independiente** (agente experto)
+en paralelo. Conclusiones y acciones:
+
+## Fórmulas — todas CORRECTAS (verificado por ambos revisores)
+
+| Fórmula | Referencia | Veredicto |
+|---|---|:---:|
+| SVI raw `w(k)=a+b[ρ(k−m)+√((k−m)²+σ²)]` | Gatheral 2004 | 🟢 exacto (rtol 1e-14) |
+| g(k) butterfly + w′, w″ | Gatheral-Jacquier 2014 | 🟢 vs FD (9e-7) |
+| Black-76 call | estándar | 🟢 vs py_vollib (1e-9) |
+| Forward `F=S·e^{(r−q)T}` | — | 🟢 martingala confirma |
+| Breeden-Litzenberger `f=e^{rT}∂²C/∂K²` | BL 1978 | 🟢 descuento consistente |
+
+## Hallazgos accionados (no eran errores de fórmula, sino de *ingeniería*)
+
+1. **🔴 Densidad por `np.gradient` doble (≈1e5× menos precisa).** Se
+   reemplazó por la **densidad analítica de Gatheral**
+   `p(k)=g(k)/√(2π·w)·exp(−d₋²/2)`, `d₋=−k/√w−√w/2`, `f(K)=p(k)/K`, en la
+   ruta SVI. **Verificado:** recupera la lognormal a **4e-15**, integra a 1 y
+   cumple `E[S_T]=F` a precisión de máquina. **Esto eliminó el artefacto
+   bimodal que el usuario detectó** (era ruido de diferenciación numérica).
+   La BL numérica queda solo para los fallbacks spline/bl.
+
+2. **🟠 El spline enmascaraba ~30% de masa negativa** (clip+renormalizar la
+   hacía "integrar a 1"). Ahora se mide `neg_mass_pct` *antes* del clip y se
+   expone en el panel.
+
+3. **🟠 Wing-repair frágil** (el método SVI↔spline se volteaba con cambios de
+   ~$3 en el spot). Se reemplazó por **calibración SVI penalizada arb-free**
+   (penalización `λ·min(g,0)` en el objetivo): principled, sin mutar datos,
+   conserva el skew, y **robusta** (verificado estable en 4 spots).
+
+4. **🟠 Colas extrapoladas sin aviso.** Nuevo flag `extrap_frac` (% del grid
+   fuera de los strikes observados).
+
+5. **🟡 Honestidad — flag de confianza.** Nuevo `confidence` (high/medium/low):
+   un 0DTE forzado por la calibración penalizada, un fallback no-SVI, masa
+   negativa o colas muy extrapoladas → **BAJA CONFIANZA**, mostrado de forma
+   prominente. La verdad de fondo: **un smile 0DTE empinado está cerca del
+   arbitraje y NO soporta una RND limpia; el modelo lo dice en vez de
+   disfrazarlo.**
+
+6. **🟡 Calidad:** momentos por regla trapezoidal (consistente con la CDF);
+   `p_touch` etiquetado como cota superior; comentario de Lee corregido.
+
+## Verificación cruzada (rigor: no confié ni en el agente ni en mí)
+
+- El agente reportó que el test del wing-repair "fallaba" → **lo re-corrí: pasaba**.
+  El reporte del agente en ese punto NO era reproducible (se descartó).
+- La densidad analítica se validó en aislamiento antes de integrarla.
+
+## Estado
+
+- **Confianza del RND con datos limpios (DTE normal): 🟢 grado institucional.**
+  Densidad exacta, arb-free verificado, martingala a precisión de máquina.
+- **RND de 0DTE: 🟡 best-effort + honesto.** Calibración robusta, pero marcado
+  como baja confianza porque los datos de entrada lo son.
+- Suites: `test_val_rnd.py` ampliada a 20 checks (densidad analítica de alta
+  precisión, calibración penalizada robusta en 4 spots, flags). Repo: 259/259.

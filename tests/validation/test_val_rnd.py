@@ -275,31 +275,58 @@ def test_otm_blend_selects_otm_wing():
     assert got[620] == pytest.approx(0.185)  # call
 
 
-def test_steep_0dte_smile_uses_svi_via_wing_repair():
+def test_analytic_density_high_precision_and_clean_flags():
+    """The analytic Gatheral density (SVI path) recovers the flat-vol
+    lognormal to <1e-3 of peak (the old numerical ∂²C/∂K² was ~2%), carries
+    ZERO negative mass on an arb-free fit, and reports the extrapolation
+    fraction + HIGH/medium confidence."""
+    spot, r, q, dte, sigma = 580.0, 0.045, 0.0, 30, 0.20
+    calls, puts = _flat_chain(spot=spot, iv_pct=sigma * 100)
+    rnd_df, meta = rnd.build_rnd(calls, puts, spot=spot, dte=dte, r=r, q=q)
+    assert meta["method"] == "svi" and meta["arb_free"] is True
+    assert meta["neg_mass_pct"] == 0.0
+    assert meta["extrap_frac"] is not None
+    assert meta["confidence"] in ("high", "medium")
+    T = dte / 365.0
+    F = meta["forward"]
+    K = rnd_df["strike"].to_numpy()
+    pdf = rnd_df["pdf"].to_numpy()
+    d2 = (np.log(F / K) - 0.5 * sigma ** 2 * T) / (sigma * np.sqrt(T))
+    f_ln = norm.pdf(d2) / (K * sigma * np.sqrt(T))
+    kk = np.log(K / F)
+    interior = np.abs(kk) < 2.5 * sigma * np.sqrt(T)
+    err = np.max(np.abs(pdf[interior] - f_ln[interior])) / f_ln[interior].max()
+    assert err < 1e-3, err
+
+
+def test_steep_0dte_smile_uses_penalized_arbfree_svi():
     """Steep 0DTE smiles (inflated OTM IVs) make the raw smile
-    non-arbitrage-free, so SVI is rejected → spline (tail artifacts). The
-    wing-repair must cap the wings and recover an arb-free SVI fit."""
-    spot = 7580.0
-    strikes = np.arange(7505.0, 7660.0, 5.0)
-    kk = np.log(strikes / spot)
-    # ATM ~14%, very steep wings (~78% at ±1%) — the characteristic 0DTE tent.
-    iv = np.clip(0.14 + 46.0 * np.abs(kk) - 18.0 * kk, 0.08, 1.5)
-    c = pd.DataFrame({"Strike": strikes, "IV%": iv * 100})
-    rnd_df, meta = rnd.build_rnd(c, c.copy(), spot=spot, dte=0, r=0.045, q=0.0)
-    assert rnd_df is not None
-    assert meta["method"] == "svi", meta.get("svi_reject")
-    assert meta["arb_free"] is True
-    assert meta["wing_capped"] is not None        # the repair fired
-    # density still integrates to 1 and is non-negative
-    K = rnd_df["strike"].to_numpy(); pdf = rnd_df["pdf"].to_numpy()
-    area = np.trapezoid(pdf, K) if hasattr(np, "trapezoid") else np.trapz(pdf, K)
-    assert area == pytest.approx(1.0, abs=1e-3)
-    assert (pdf >= 0).all()
+    non-arbitrage-free, so the plain SVI is rejected. The penalized arb-free
+    re-calibration must recover an SVI fit ROBUSTLY (across nearby spots — the
+    old cap-ladder flipped SVI↔spline on ~$3 moves), with a non-negative
+    density, and the model must mark it LOW confidence (forced 0DTE)."""
+    for spot in (7575.0, 7580.0, 7583.0, 7590.0):     # robustness across spots
+        strikes = np.arange(7505.0, 7660.0, 5.0)
+        kk = np.log(strikes / spot)
+        iv = np.clip(0.14 + 46.0 * np.abs(kk) - 18.0 * kk, 0.08, 1.5)
+        c = pd.DataFrame({"Strike": strikes, "IV%": iv * 100})
+        rnd_df, meta = rnd.build_rnd(c, c.copy(), spot=spot, dte=0,
+                                     r=0.045, q=0.0)
+        assert rnd_df is not None
+        assert meta["method"] == "svi", (spot, meta.get("svi_reject"))
+        assert meta["calibration"] == "penalized-arbfree", spot
+        assert meta["arb_free"] is True               # neg mass negligible
+        assert meta["confidence"] == "low"            # honest: 0DTE forced
+        pdf = rnd_df["pdf"].to_numpy()
+        K = rnd_df["strike"].to_numpy()
+        area = np.trapezoid(pdf, K) if hasattr(np, "trapezoid") else np.trapz(pdf, K)
+        assert area == pytest.approx(1.0, abs=1e-3)
+        assert (pdf >= 0).all()
 
 
-def test_wing_repair_does_not_fire_on_clean_smile():
-    """A well-behaved (longer-dated) smile must fit SVI directly — the
-    wing-repair must NOT trigger and must not alter the clean path."""
+def test_penalized_recal_does_not_fire_on_clean_smile():
+    """A well-behaved (longer-dated) smile fits SVI on the plain path — the
+    penalized re-calibration must NOT trigger, and confidence must be high."""
     spot = 580.0
     strikes = np.arange(520.0, 641.0, 2.5)
     kk = np.log(strikes / spot)
@@ -307,7 +334,8 @@ def test_wing_repair_does_not_fire_on_clean_smile():
     c = pd.DataFrame({"Strike": strikes, "IV%": iv * 100})
     _, meta = rnd.build_rnd(c, c.copy(), spot=spot, dte=30, r=0.045, q=0.0)
     assert meta["method"] == "svi"
-    assert meta["wing_capped"] is None
+    assert meta["calibration"] == "raw"
+    assert meta["confidence"] in ("high", "medium")
 
 
 def test_build_rnd_rejects_bad_inputs():

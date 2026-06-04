@@ -1398,8 +1398,9 @@ def panel_rnd_levels_html(levels_data: dict, spot: float,
         '</tr></thead><tbody>' + rows + '</tbody></table>'
     ) if rows else ""
 
-    # Fit-quality footer
+    # Fit-quality footer + prominent confidence badge
     foot = ""
+    conf_badge = ""
     if meta:
         method = (meta.get("method") or "—").upper()
         rmse = meta.get("rmse")
@@ -1415,19 +1416,44 @@ def panel_rnd_levels_html(levels_data: dict, spot: float,
         n_strk = meta.get("n_strikes")
         min_g = meta.get("min_g")
         reject = meta.get("svi_reject")
-        wing = meta.get("wing_capped")
-        best_g = meta.get("wing_repair_best_g")
+        calib = meta.get("calibration")
         diag = f" · strikes={n_strk}" if n_strk else ""
         if min_g is not None:
             diag += f" · min_g={min_g:+.4f}"
-        if wing is not None:
-            diag += (f' · <span style="color:#22c55e">wing-repair {wing:g}× '
-                     f'OK</span>')
+        if calib == "penalized-arbfree":
+            diag += (' · <span style="color:#22c55e">calib penalizada '
+                     'arb-free</span>')
         elif reject and (meta.get("method") != "svi"):
-            extra = (f" · repair probado, mejor g={best_g:+.4f}"
-                     if best_g is not None else " · repair NO corrió")
             diag += (f' · <span style="color:#f59e0b">SVI rechazado: '
-                     f'{reject}{extra}</span>')
+                     f'{reject}</span>')
+        # Honesty flags: negative density mass (corrupt fallback) and how much
+        # of the tails is pure extrapolation beyond the observed strikes.
+        neg = meta.get("neg_mass_pct")
+        extrap = meta.get("extrap_frac")
+        if neg is not None and neg > 1.0:
+            diag += (f' · <span style="color:#f43f5e">masa neg {neg:.1f}% '
+                     f'(densidad poco fiable)</span>')
+        if extrap is not None and extrap > 25.0:
+            diag += (f' · <span style="color:#f59e0b">colas extrapoladas '
+                     f'{extrap:.0f}%</span>')
+        # Prominent confidence badge — the honest bottom line for the trader.
+        conf = meta.get("confidence")
+        reasons = " · ".join(meta.get("confidence_reasons") or [])
+        if conf == "low":
+            conf_badge = (
+                '<div style="background:rgba(244,63,94,0.12);border:1px solid '
+                'rgba(244,63,94,0.4);border-radius:5px;padding:0.4rem 0.65rem;'
+                'margin-bottom:0.55rem;font-size:0.66rem;color:#f87171;'
+                'font-family:JetBrains Mono,monospace;">⚠ BAJA CONFIANZA — '
+                f'{reasons}. Trata estos niveles como orientativos, no exactos.'
+                '</div>')
+        elif conf == "medium":
+            conf_badge = (
+                '<div style="background:rgba(245,158,11,0.10);border:1px solid '
+                'rgba(245,158,11,0.35);border-radius:5px;padding:0.35rem 0.65rem;'
+                'margin-bottom:0.55rem;font-size:0.64rem;color:#fbbf24;'
+                f'font-family:JetBrains Mono,monospace;">◐ Confianza media — '
+                f'{reasons}.</div>')
         foot = (
             f'<div style="color:#606080;font-size:0.64rem;margin-top:0.5rem;'
             f'line-height:1.4">Modelo: <b>{method}</b> · forward '
@@ -1439,6 +1465,7 @@ def panel_rnd_levels_html(levels_data: dict, spot: float,
     return _html(f"""
 <div style="background:rgba(15,17,24,0.85);border:1px solid #1e2230;border-radius:6px;padding:0.7rem 0.9rem;margin:0.5rem 0;font-family:JetBrains Mono,monospace">
 <div style="color:#9090b0;font-size:0.66rem;letter-spacing:0.14em;text-transform:uppercase;margin-bottom:0.5rem">🎯 NIVELES EXACTOS · risk-neutral density (SVI)</div>
+{conf_badge}
 <div style="display:flex;gap:1.2rem;flex-wrap:wrap;font-size:0.82rem;margin-bottom:0.4rem">
 <div><div style="color:#6b7280;font-size:0.6rem">MODE (+probable)</div><div style="color:#06b6d4;font-weight:700">${mode:,.2f}</div></div>
 <div><div style="color:#6b7280;font-size:0.6rem">MEDIANA P50</div><div style="color:#e0e0f0;font-weight:700">${pct.get('p50',0):,.2f}</div></div>

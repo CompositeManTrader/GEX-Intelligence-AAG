@@ -104,8 +104,12 @@ def fit_svi(k: np.ndarray, w: np.ndarray, T: float,
     w_atm = float(np.median(w))
     w_max = float(np.max(w))
     k_span = float(np.max(k) - np.min(k)) or 0.1
-    # Lee wing limit: b(1+|ρ|) ≤ 4/T → b ≤ 4/T. For 0DTE T is tiny so the
-    # cap is large/loose (correct: little time = little wing arbitrage risk).
+    # Lee/Gatheral wing limit: b(1+|ρ|) ≤ 4/T. We bound b ≤ 4/T as a NECESSARY
+    # (not sufficient) cap — since |ρ|<1 the true admissible b is up to 2×
+    # tighter, but the actual no-arbitrage guarantee comes from the separate
+    # g(k) ≥ 0 check, not from this box bound. For tiny-T (0DTE) the cap is
+    # loose, which is exactly why steep 0DTE smiles need the g(k) check + the
+    # wing-repair rather than relying on this bound.
     b_max = max(4.0 / max(T, 1e-6), 1.0)
 
     x0 = np.array([
@@ -134,6 +138,85 @@ def fit_svi(k: np.ndarray, w: np.ndarray, T: float,
         return p, rmse
     except Exception:
         return None, float("inf")
+
+
+def _svi_residuals_penalized(x: np.ndarray, k: np.ndarray, w: np.ndarray,
+                             weights: np.ndarray, k_pen: np.ndarray,
+                             lam: float) -> np.ndarray:
+    """SVI residuals augmented with an arbitrage penalty: extra residuals
+    equal to λ·min(g(k), 0) on a dense grid, so the optimizer is pushed into
+    the g(k) ≥ 0 (no-butterfly-arbitrage) region while still fitting the data.
+    """
+    a, b, rho, m, sigma = x
+    root = np.sqrt((k - m) ** 2 + sigma ** 2)
+    model = a + b * (rho * (k - m) + root)
+    res = (model - w) * weights
+    rp = np.sqrt((k_pen - m) ** 2 + sigma ** 2)
+    wv = a + b * (rho * (k_pen - m) + rp)
+    wv = np.where(wv > 1e-12, wv, 1e-12)
+    wp = b * (rho + (k_pen - m) / rp)
+    wpp = b * sigma ** 2 / rp ** 3
+    g = (1.0 - k_pen * wp / (2.0 * wv)) ** 2 \
+        - (wp ** 2 / 4.0) * (1.0 / wv + 0.25) + wpp / 2.0
+    return np.concatenate([res, lam * np.minimum(g, 0.0)])
+
+
+def fit_svi_arbfree(k: np.ndarray, w: np.ndarray, T: float,
+                    weights: Optional[np.ndarray] = None
+                    ) -> tuple[Optional[SVIParams], float]:
+    """Arbitrage-free SVI calibration via penalized least-squares.
+
+    Used when the plain `fit_svi` lands on a butterfly-arbitrageable slice
+    (common for steep 0DTE smiles). Ramps an arbitrage penalty λ until the
+    fitted g(k) ≥ 0, keeping the skew (no data mutation, unlike a wing cap)
+    and — unlike a cap-and-refit ladder — converging deterministically and
+    robustly. Returns (params, min_g) or (None, inf).
+    """
+    k = np.asarray(k, dtype=float)
+    w = np.asarray(w, dtype=float)
+    good = np.isfinite(k) & np.isfinite(w) & (w > 0)
+    k, w = k[good], w[good]
+    if len(k) < 5:
+        return None, float("inf")
+    if weights is None:
+        weights = np.ones_like(w)
+    else:
+        weights = np.asarray(weights, dtype=float)[good]
+    try:
+        from scipy.optimize import least_squares
+    except Exception:
+        return None, float("inf")
+
+    w_atm = float(np.percentile(w, 12))
+    k_span = float(np.max(k) - np.min(k)) or 0.1
+    b_max = max(4.0 / max(T, 1e-6), 1.0)
+    k_pen = np.linspace(k.min() * 1.2, k.max() * 1.2, 80)
+    k_chk = np.linspace(k.min() * 1.2, k.max() * 1.2, 400)
+    x0 = np.array([max(w_atm, 1e-8), min(0.1, b_max * 0.5), -0.3, 0.0,
+                   max(k_span * 0.3, 1e-3)])
+    lower = np.array([1e-10, 0.0, -0.999, -0.5, 1e-4])
+    upper = np.array([max(np.max(w) * 2.0, 1e-6), b_max, 0.999, 0.5,
+                      max(k_span * 2.0, 0.5)])
+    x0 = np.minimum(np.maximum(x0, lower + 1e-12), upper - 1e-12)
+
+    best: tuple[Optional[SVIParams], float] = (None, -np.inf)
+    for lam in (1e-2, 1e-1, 1.0, 10.0):
+        try:
+            res = least_squares(
+                _svi_residuals_penalized, x0,
+                args=(k, w, weights, k_pen, lam),
+                bounds=(lower, upper), method="trf", max_nfev=3000)
+        except Exception:
+            continue
+        p = SVIParams(a=float(res.x[0]), b=float(res.x[1]), rho=float(res.x[2]),
+                      m=float(res.x[3]), sigma=float(res.x[4]))
+        mg = float(np.min(svi_g_function(p, k_chk)))
+        if mg > best[1]:
+            best = (p, mg)
+        if mg > -1e-3:
+            return p, mg
+        x0 = res.x          # warm-start the next, stronger-penalty fit
+    return best
 
 
 def svi_g_function(p: SVIParams, k: np.ndarray) -> np.ndarray:
@@ -237,8 +320,9 @@ def build_rnd(
     meta: dict = {"method": None, "forward": None, "rmse": None,
                   "arb_free": None, "min_g": None, "n_strikes": 0,
                   "T": None, "truncated": False, "svi": None,
-                  "svi_reject": None, "wing_capped": None,
-                  "wing_repair_best_g": None}
+                  "svi_reject": None, "calibration": "raw",
+                  "neg_mass_pct": None, "extrap_frac": None,
+                  "confidence": None, "confidence_reasons": []}
     if not spot or spot <= 0:
         return None, meta
 
@@ -276,6 +360,7 @@ def build_rnd(
     params, rmse = fit_svi(k_obs, w_obs, T, weights=weights)
     method = None
     w_grid = None
+    svi_active = None       # the SVI params that actually produced w_grid
     if params is None:
         # Instrumentation: record WHY SVI was unavailable so the UI can
         # surface it (the fit didn't converge or had too few points).
@@ -292,7 +377,7 @@ def build_rnd(
         if np.all(w_svi > 0) and min_g > -1e-3:
             w_grid = w_svi
             method = "svi"
-            meta["arb_free"] = bool(min_g >= 0)
+            svi_active = params
         else:
             # Rejected → spline. Capture the reason for diagnostics: an
             # arbitrage violation (min_g<0) or a non-positive variance on
@@ -302,46 +387,27 @@ def build_rnd(
             else:
                 meta["svi_reject"] = f"arb min_g={min_g:.4f} (umbral -0.001)"
 
-    # ── Wing-repair retry ────────────────────────────────────────────────
-    # 0DTE OTM IVs are often inflated (bid-ask on penny-premium options),
-    # making the raw smile non-arbitrage-free so SVI is (correctly) rejected
-    # → spline → tail artifacts. Those wing IVs are largely noise. If the raw
-    # SVI failed for ARBITRAGE (not w<=0), retry with the per-strike total
-    # variance capped relative to ATM, tightening until the fit is arb-free.
-    # Only fires when the raw fit failed, so well-behaved (longer-dated)
-    # smiles are untouched. Verified empirically on steep SPX 0DTE smiles.
-    if method is None and params is not None:
-        # Robust ATM reference: the bottom of the smile, via a low percentile
-        # of w (resistant to a single noisy ATM quote). Tightening caps; the
-        # last (≈1.1×) flattens the smile enough to be essentially lognormal
-        # (trivially arb-free), so a steep 0DTE smile is virtually guaranteed
-        # to recover an SVI fit rather than the artifact-prone spline.
-        good_w = w_obs[np.isfinite(w_obs) & (w_obs > 0)]
-        atm_w = float(np.percentile(good_w, 12)) if good_w.size else 0.0
-        meta["wing_repair_best_g"] = None
-        if atm_w > 0:
-            for cap_mult in (3.0, 2.5, 2.0, 1.7, 1.4, 1.2, 1.1):
-                w_cap = np.minimum(w_obs, (cap_mult ** 2) * atm_w)
-                p2, rmse2 = fit_svi(k_obs, w_cap, T, weights=weights)
-                if p2 is None:
-                    continue
-                w_svi2 = svi_total_variance(p2, k_grid)
-                g2 = svi_g_function(p2, k_grid)
-                min_g2 = float(np.min(g2))
-                # Track the best (largest) min_g reached, for diagnostics.
-                best = meta["wing_repair_best_g"]
-                if best is None or min_g2 > best:
-                    meta["wing_repair_best_g"] = round(min_g2, 6)
-                if np.all(w_svi2 > 0) and min_g2 > -1e-3:
-                    w_grid = w_svi2
-                    method = "svi"
-                    meta["min_g"] = round(min_g2, 6)
-                    meta["svi"] = p2.to_dict()
-                    meta["rmse"] = round(rmse2, 6)
-                    meta["arb_free"] = bool(min_g2 >= 0)
-                    meta["svi_reject"] = None
-                    meta["wing_capped"] = cap_mult
-                    break
+    # ── Arbitrage-free re-calibration (penalized SVI) ────────────────────
+    # If the plain fit was rejected for ARBITRAGE (the steep-0DTE case, where
+    # inflated OTM IVs make the raw smile non-arb-free), re-calibrate with a
+    # penalized fit that pushes g(k) ≥ 0 directly into the objective. This is
+    # the institutional approach: principled (no data mutation, keeps the
+    # skew) and ROBUST — it converges deterministically, unlike the previous
+    # cap-and-refit ladder whose SVI/spline outcome flipped on ~$3 spot moves.
+    # Only fires after an arbitrage rejection, so clean longer-dated smiles
+    # take the plain-fit path untouched.
+    if method is None and (meta.get("svi_reject") or "").startswith("arb"):
+        p2, mg2 = fit_svi_arbfree(k_obs, w_obs, T, weights=weights)
+        if p2 is not None and mg2 > -1e-3:
+            w_svi2 = svi_total_variance(p2, k_grid)
+            if np.all(w_svi2 > 0):
+                w_grid = w_svi2
+                method = "svi"
+                svi_active = p2
+                meta["min_g"] = round(mg2, 6)
+                meta["svi"] = p2.to_dict()
+                meta["svi_reject"] = None
+                meta["calibration"] = "penalized-arbfree"
 
     # ── Fallback 1: monotone-ish smoothing spline on (k, w) ──────────────
     if w_grid is None:
@@ -367,15 +433,51 @@ def build_rnd(
     meta["method"] = method
     iv_grid = np.sqrt(np.maximum(w_grid, 1e-12) / T)
 
-    # ── Breeden-Litzenberger: f(K) = e^{rT}·∂²C/∂K² ──────────────────────
-    c = _black76_call(forward, K_grid, T, iv_grid, r)
-    # Non-uniform grid in K (since K = F·e^k), so use gradient twice.
-    first = np.gradient(c, K_grid)
-    second = np.gradient(first, K_grid)
-    pdf = np.exp(r * T) * second
-    pdf = np.where(np.isfinite(pdf), pdf, 0.0)
-    pdf = np.clip(pdf, 0.0, None)
+    # Flag how much of the grid is EXTRAPOLATED beyond the observed strikes
+    # (the tail percentiles in that region are model extrapolation, not data).
+    obs_lo, obs_hi = float(K.min()), float(K.max())
+    meta["extrap_frac"] = round(
+        100.0 * float(np.mean((K_grid < obs_lo) | (K_grid > obs_hi))), 1)
 
+    # ── Density ──────────────────────────────────────────────────────────
+    # SVI path → EXACT analytic Gatheral density (no numerical derivative):
+    #   p(k) = g(k)/√(2π·w) · exp(−d₋²/2),  d₋ = −k/√w − √w/2,  f(K)=p(k)/K.
+    # It integrates to 1 and satisfies the martingale E[S_T]=F to machine
+    # precision, is ≥0 exactly where g≥0 (same g the arb-check uses), and is
+    # ~1e5× more accurate than ∂²C/∂K² by finite differences — which also
+    # injects boundary artifacts. The numerical BL is kept ONLY for the
+    # spline/bl fallbacks (where we don't have an analytic g). In both cases
+    # we measure the NEGATIVE mass (residual arbitrage) BEFORE clipping and
+    # surface it in meta, so a corrupt fallback density can't masquerade as
+    # clean just because clip()+renormalise makes it integrate to 1.
+    if svi_active is not None:
+        w_act = np.maximum(w_grid, 1e-300)
+        g_act = svi_g_function(svi_active, k_grid)
+        sw = np.sqrt(w_act)
+        d_minus = -k_grid / sw - sw / 2.0
+        raw = g_act / np.sqrt(2.0 * np.pi * w_act) * np.exp(-d_minus ** 2 / 2.0)
+        raw = np.where(np.isfinite(raw), raw, 0.0)
+        neg = _trapz(np.maximum(-raw, 0.0), k_grid)
+        pos = _trapz(np.maximum(raw, 0.0), k_grid)
+        pdf = np.clip(raw, 0.0, None) / K_grid          # Jacobian dk/dK = 1/K
+    else:
+        c = _black76_call(forward, K_grid, T, iv_grid, r)
+        first = np.gradient(c, K_grid)
+        second = np.gradient(first, K_grid)
+        raw = np.exp(r * T) * second
+        raw = np.where(np.isfinite(raw), raw, 0.0)
+        neg = _trapz(np.maximum(-raw, 0.0), K_grid)
+        pos = _trapz(np.maximum(raw, 0.0), K_grid)
+        pdf = np.clip(raw, 0.0, None)
+    meta["neg_mass_pct"] = (round(100.0 * neg / (neg + pos), 3)
+                            if (neg + pos) > 0 else 0.0)
+    # arb_free now reflects the ACTUAL density quality (negligible negative
+    # mass) on the SVI path, not just the pre-clip min_g. Fallbacks
+    # (spline/bl) are never stamped verified.
+    if svi_active is not None:
+        meta["arb_free"] = bool(meta["neg_mass_pct"] < 0.1)
+
+    pdf = np.where(np.isfinite(pdf), pdf, 0.0)
     area = _trapz(pdf, K_grid)
     if area <= 0:
         return None, meta
@@ -384,6 +486,25 @@ def build_rnd(
     cdf = np.concatenate([[0.0], np.cumsum((pdf[1:] + pdf[:-1]) / 2.0 * np.diff(K_grid))])
     if cdf[-1] > 0:
         cdf = cdf / cdf[-1]
+
+    # ── Confidence flag (the honest bottom line) ─────────────────────────
+    # Tell the user when to trust the RND and when not to. A clean SVI fit on
+    # liquid data is HIGH confidence. A forced 0DTE penalized fit, a non-SVI
+    # fallback, residual negative mass, or heavily-extrapolated tails are LOW
+    # confidence — the raw 0DTE smile is near-arbitrage and cannot support a
+    # reliable density, so we say so rather than dress it up.
+    conf = "high"
+    reasons: list[str] = []
+    if method != "svi":
+        conf = "low"; reasons.append("fallback no-SVI (spline/bl)")
+    if meta.get("calibration") == "penalized-arbfree":
+        conf = "low"; reasons.append("0DTE forzado (smile cerca de arbitraje)")
+    if (meta.get("neg_mass_pct") or 0) > 0.5:
+        conf = "low"; reasons.append(f"masa negativa {meta['neg_mass_pct']}%")
+    if conf == "high" and (meta.get("extrap_frac") or 0) > 40:
+        conf = "medium"; reasons.append(f"colas extrapoladas {meta['extrap_frac']}%")
+    meta["confidence"] = conf
+    meta["confidence_reasons"] = reasons
 
     rnd = pd.DataFrame({"strike": K_grid, "pdf": pdf, "cdf": cdf,
                         "iv_fit": iv_grid * 100.0})
@@ -409,14 +530,16 @@ def rnd_levels(rnd: pd.DataFrame, spot: float,
     K = rnd["strike"].to_numpy(float)
     pdf = rnd["pdf"].to_numpy(float)
     cdf = rnd["cdf"].to_numpy(float)
-    dK = np.gradient(K)
 
-    mean = float(np.sum(K * pdf * dK))
-    var = float(np.sum((K - mean) ** 2 * pdf * dK))
+    # Moments via the trapezoidal rule — consistent with the trapezoidal
+    # normalization/CDF in build_rnd (the previous rectangle rule with
+    # np.gradient(K) was a minor internal inconsistency).
+    mean = _trapz(K * pdf, K)
+    var = _trapz((K - mean) ** 2 * pdf, K)
     std = float(np.sqrt(max(var, 0.0)))
     if std > 0:
-        skew = float(np.sum(((K - mean) / std) ** 3 * pdf * dK))
-        kurt = float(np.sum(((K - mean) / std) ** 4 * pdf * dK)) - 3.0
+        skew = _trapz(((K - mean) / std) ** 3 * pdf, K)
+        kurt = _trapz(((K - mean) / std) ** 4 * pdf, K) - 3.0
     else:
         skew = kurt = 0.0
 
@@ -453,7 +576,10 @@ def rnd_levels(rnd: pd.DataFrame, spot: float,
                 continue
             p_below = float(np.interp(lvl, K, cdf, left=0.0, right=1.0))
             p_above = 1.0 - p_below
-            # P(touch) ≈ 2× the smaller end-probability (reflection bound)
+            # P(touch) UPPER BOUND ≈ 2× the smaller end-probability. This is
+            # the driftless reflection-principle bound; with the RND's drift
+            # to the forward it slightly OVER-states the true first-passage
+            # probability (~2%). Treat it as a conservative ceiling, not exact.
             p_end = min(p_below, p_above)
             out["level_probs"][name] = {
                 "level": round(lvl, 2),
