@@ -640,21 +640,19 @@ def show_dashboard() -> None:
         _render_md('<p class="bb-header">PRICE &amp; GEX LEVELS  ·  '
                    'mapa de niveles por alcance DTE</p>')
 
-        # DTE-scope selector — which slice of the chain defines the levels.
-        SCOPE_OPTS = ["Agregado", "0DTE", "Semana", "Mes"]
+        # DTE-scope selector — two scopes: 0DTE vs everything else.
+        SCOPE_OPTS = ["0DTE", "Resto"]
         scope = st.radio(
             "Alcance DTE",
             options=SCOPE_OPTS,
             format_func=lambda s: {
-                "Agregado": f"Agregado (0–{max_dte}d)",
-                "0DTE": "0DTE (hoy)",
-                "Semana": "Semana (1–7d)",
-                "Mes": "Mes (8–60d)",
+                "0DTE": "0DTE (vence hoy)",
+                "Resto": f"Resto de expiraciones (1–{max_dte}d)",
             }[s],
             horizontal=True, index=0, key="levels_scope",
-            help="Agregado = libro completo (muros estructurales). 0DTE = "
-                 "gamma que vence hoy (pinning intradía). Semana / Mes = "
-                 "buckets intermedio y estructural.",
+            help="0DTE = solo la gamma que vence hoy (la que mueve el pinning "
+                 "intradía). Resto = todas las demás expiraciones agregadas "
+                 "(muros estructurales del libro, excluyendo 0DTE).",
         )
         st.caption(
             "Líneas horizontales = niveles de gamma dealer (call/put wall · "
@@ -668,14 +666,17 @@ def show_dashboard() -> None:
         from quant.zones import find_gamma_zones as _find_zones
 
         # Resolve (summary, zones) for the chosen DTE scope.
-        if scope == "Agregado":
-            lvl_sum, lvl_zones = gex_sum, gamma_zones
+        if scope == "0DTE":
+            _bdf, _bsum = gex_buckets.get("0dte", (None, {}))
         else:
-            _bkey = {"0DTE": "0dte", "Semana": "week", "Mes": "month"}[scope]
-            _bdf, _bsum = gex_buckets.get(_bkey, (None, {}))
-            lvl_sum = _bsum or {}
-            lvl_zones = (_find_zones(_bdf, spot=spot, top_n=3)
-                         if _bdf is not None and not _bdf.empty else [])
+            # "Resto" = DTE 1..max_dte (everything except today's expiry).
+            _bdf, _bsum = compute_gex_profile(
+                calls_all, puts_all, spot, symbol=symbol,
+                max_dte=max_dte, min_dte=1, min_oi=min_oi,
+            )
+        lvl_sum = _bsum or {}
+        lvl_zones = (_find_zones(_bdf, spot=spot, top_n=3)
+                     if _bdf is not None and not _bdf.empty else [])
 
         try:
             lvl_df, _lvl_err = fetch_intraday(
