@@ -1415,12 +1415,19 @@ def panel_rnd_levels_html(levels_data: dict, spot: float,
         n_strk = meta.get("n_strikes")
         min_g = meta.get("min_g")
         reject = meta.get("svi_reject")
+        wing = meta.get("wing_capped")
+        best_g = meta.get("wing_repair_best_g")
         diag = f" · strikes={n_strk}" if n_strk else ""
         if min_g is not None:
             diag += f" · min_g={min_g:+.4f}"
-        if reject and (meta.get("method") != "svi"):
+        if wing is not None:
+            diag += (f' · <span style="color:#22c55e">wing-repair {wing:g}× '
+                     f'OK</span>')
+        elif reject and (meta.get("method") != "svi"):
+            extra = (f" · repair probado, mejor g={best_g:+.4f}"
+                     if best_g is not None else " · repair NO corrió")
             diag += (f' · <span style="color:#f59e0b">SVI rechazado: '
-                     f'{reject}</span>')
+                     f'{reject}{extra}</span>')
         foot = (
             f'<div style="color:#606080;font-size:0.64rem;margin-top:0.5rem;'
             f'line-height:1.4">Modelo: <b>{method}</b> · forward '

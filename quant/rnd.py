@@ -237,7 +237,8 @@ def build_rnd(
     meta: dict = {"method": None, "forward": None, "rmse": None,
                   "arb_free": None, "min_g": None, "n_strikes": 0,
                   "T": None, "truncated": False, "svi": None,
-                  "svi_reject": None, "wing_capped": None}
+                  "svi_reject": None, "wing_capped": None,
+                  "wing_repair_best_g": None}
     if not spot or spot <= 0:
         return None, meta
 
@@ -310,9 +311,16 @@ def build_rnd(
     # Only fires when the raw fit failed, so well-behaved (longer-dated)
     # smiles are untouched. Verified empirically on steep SPX 0DTE smiles.
     if method is None and params is not None:
-        atm_w = float(w_obs[int(np.argmin(np.abs(k_obs)))])
+        # Robust ATM reference: the bottom of the smile, via a low percentile
+        # of w (resistant to a single noisy ATM quote). Tightening caps; the
+        # last (≈1.1×) flattens the smile enough to be essentially lognormal
+        # (trivially arb-free), so a steep 0DTE smile is virtually guaranteed
+        # to recover an SVI fit rather than the artifact-prone spline.
+        good_w = w_obs[np.isfinite(w_obs) & (w_obs > 0)]
+        atm_w = float(np.percentile(good_w, 12)) if good_w.size else 0.0
+        meta["wing_repair_best_g"] = None
         if atm_w > 0:
-            for cap_mult in (3.0, 2.5, 2.0, 1.6):
+            for cap_mult in (3.0, 2.5, 2.0, 1.7, 1.4, 1.2, 1.1):
                 w_cap = np.minimum(w_obs, (cap_mult ** 2) * atm_w)
                 p2, rmse2 = fit_svi(k_obs, w_cap, T, weights=weights)
                 if p2 is None:
@@ -320,6 +328,10 @@ def build_rnd(
                 w_svi2 = svi_total_variance(p2, k_grid)
                 g2 = svi_g_function(p2, k_grid)
                 min_g2 = float(np.min(g2))
+                # Track the best (largest) min_g reached, for diagnostics.
+                best = meta["wing_repair_best_g"]
+                if best is None or min_g2 > best:
+                    meta["wing_repair_best_g"] = round(min_g2, 6)
                 if np.all(w_svi2 > 0) and min_g2 > -1e-3:
                     w_grid = w_svi2
                     method = "svi"
