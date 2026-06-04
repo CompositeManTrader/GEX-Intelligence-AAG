@@ -666,14 +666,20 @@ def show_dashboard() -> None:
         from quant.zones import find_gamma_zones as _find_zones
 
         # Resolve (summary, zones) for the chosen DTE scope.
+        # Both scopes compute fresh with the SPOT-GRID gamma flip (the true
+        # zero-gamma level). The cached 0DTE bucket uses the crude
+        # cumulative-crossing method, which — verified empirically — diverges
+        # from the spot-grid and can even fail (None) or fly far from spot for
+        # near-zero-net 0DTE books. The map must show the real zero-gamma.
         if scope == "0DTE":
-            _bdf, _bsum = gex_buckets.get("0dte", (None, {}))
+            _lo, _hi = 0, 0
         else:
-            # "Resto" = DTE 1..max_dte (everything except today's expiry).
-            _bdf, _bsum = compute_gex_profile(
-                calls_all, puts_all, spot, symbol=symbol,
-                max_dte=max_dte, min_dte=1, min_oi=min_oi,
-            )
+            _lo, _hi = 1, max_dte          # "Resto" = all but today's expiry
+        _bdf, _bsum = compute_gex_profile(
+            calls_all, puts_all, spot, symbol=symbol,
+            max_dte=_hi, min_dte=_lo, min_oi=min_oi,
+            use_spot_grid_flip=True,
+        )
         lvl_sum = _bsum or {}
         lvl_zones = (_find_zones(_bdf, spot=spot, top_n=3)
                      if _bdf is not None and not _bdf.empty else [])
