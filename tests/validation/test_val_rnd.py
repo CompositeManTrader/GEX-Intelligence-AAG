@@ -275,6 +275,41 @@ def test_otm_blend_selects_otm_wing():
     assert got[620] == pytest.approx(0.185)  # call
 
 
+def test_steep_0dte_smile_uses_svi_via_wing_repair():
+    """Steep 0DTE smiles (inflated OTM IVs) make the raw smile
+    non-arbitrage-free, so SVI is rejected → spline (tail artifacts). The
+    wing-repair must cap the wings and recover an arb-free SVI fit."""
+    spot = 7580.0
+    strikes = np.arange(7505.0, 7660.0, 5.0)
+    kk = np.log(strikes / spot)
+    # ATM ~14%, very steep wings (~78% at ±1%) — the characteristic 0DTE tent.
+    iv = np.clip(0.14 + 46.0 * np.abs(kk) - 18.0 * kk, 0.08, 1.5)
+    c = pd.DataFrame({"Strike": strikes, "IV%": iv * 100})
+    rnd_df, meta = rnd.build_rnd(c, c.copy(), spot=spot, dte=0, r=0.045, q=0.0)
+    assert rnd_df is not None
+    assert meta["method"] == "svi", meta.get("svi_reject")
+    assert meta["arb_free"] is True
+    assert meta["wing_capped"] is not None        # the repair fired
+    # density still integrates to 1 and is non-negative
+    K = rnd_df["strike"].to_numpy(); pdf = rnd_df["pdf"].to_numpy()
+    area = np.trapezoid(pdf, K) if hasattr(np, "trapezoid") else np.trapz(pdf, K)
+    assert area == pytest.approx(1.0, abs=1e-3)
+    assert (pdf >= 0).all()
+
+
+def test_wing_repair_does_not_fire_on_clean_smile():
+    """A well-behaved (longer-dated) smile must fit SVI directly — the
+    wing-repair must NOT trigger and must not alter the clean path."""
+    spot = 580.0
+    strikes = np.arange(520.0, 641.0, 2.5)
+    kk = np.log(strikes / spot)
+    iv = np.clip(0.18 * (1 - 0.5 * kk / 0.1) + 0.4 * kk * kk, 0.05, 0.7)
+    c = pd.DataFrame({"Strike": strikes, "IV%": iv * 100})
+    _, meta = rnd.build_rnd(c, c.copy(), spot=spot, dte=30, r=0.045, q=0.0)
+    assert meta["method"] == "svi"
+    assert meta["wing_capped"] is None
+
+
 def test_build_rnd_rejects_bad_inputs():
     calls, puts = _flat_chain()
     # non-positive spot

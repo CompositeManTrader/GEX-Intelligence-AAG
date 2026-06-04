@@ -237,7 +237,7 @@ def build_rnd(
     meta: dict = {"method": None, "forward": None, "rmse": None,
                   "arb_free": None, "min_g": None, "n_strikes": 0,
                   "T": None, "truncated": False, "svi": None,
-                  "svi_reject": None}
+                  "svi_reject": None, "wing_capped": None}
     if not spot or spot <= 0:
         return None, meta
 
@@ -300,6 +300,36 @@ def build_rnd(
                 meta["svi_reject"] = f"w<=0 en {n_wneg} ptos del grid"
             else:
                 meta["svi_reject"] = f"arb min_g={min_g:.4f} (umbral -0.001)"
+
+    # ── Wing-repair retry ────────────────────────────────────────────────
+    # 0DTE OTM IVs are often inflated (bid-ask on penny-premium options),
+    # making the raw smile non-arbitrage-free so SVI is (correctly) rejected
+    # → spline → tail artifacts. Those wing IVs are largely noise. If the raw
+    # SVI failed for ARBITRAGE (not w<=0), retry with the per-strike total
+    # variance capped relative to ATM, tightening until the fit is arb-free.
+    # Only fires when the raw fit failed, so well-behaved (longer-dated)
+    # smiles are untouched. Verified empirically on steep SPX 0DTE smiles.
+    if method is None and params is not None:
+        atm_w = float(w_obs[int(np.argmin(np.abs(k_obs)))])
+        if atm_w > 0:
+            for cap_mult in (3.0, 2.5, 2.0, 1.6):
+                w_cap = np.minimum(w_obs, (cap_mult ** 2) * atm_w)
+                p2, rmse2 = fit_svi(k_obs, w_cap, T, weights=weights)
+                if p2 is None:
+                    continue
+                w_svi2 = svi_total_variance(p2, k_grid)
+                g2 = svi_g_function(p2, k_grid)
+                min_g2 = float(np.min(g2))
+                if np.all(w_svi2 > 0) and min_g2 > -1e-3:
+                    w_grid = w_svi2
+                    method = "svi"
+                    meta["min_g"] = round(min_g2, 6)
+                    meta["svi"] = p2.to_dict()
+                    meta["rmse"] = round(rmse2, 6)
+                    meta["arb_free"] = bool(min_g2 >= 0)
+                    meta["svi_reject"] = None
+                    meta["wing_capped"] = cap_mult
+                    break
 
     # ── Fallback 1: monotone-ish smoothing spline on (k, w) ──────────────
     if w_grid is None:
