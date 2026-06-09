@@ -299,6 +299,26 @@ def test_analytic_density_high_precision_and_clean_flags():
     assert err < 1e-3, err
 
 
+def test_svi_density_machine_precision_vs_lognormal():
+    """svi_density (analytic Gatheral density) with b=0 must equal the
+    Black-Scholes lognormal CLOSED FORM at machine precision — the formula
+    reduces exactly: d₋ = d₂ and f(K) = φ(d₂)/(K·σ√T). Direct function test
+    (no SVI fit in between, unlike the pipeline test above), plus exact unit
+    mass and the martingale E[S_T] = F."""
+    F, T, sigma = 7583.0, 0.02, 0.18
+    p = rnd.SVIParams(a=sigma ** 2 * T, b=0.0, rho=0.0, m=0.0, sigma=0.10)
+    kk = np.linspace(-0.6, 0.6, 4001)
+    K, f = rnd.svi_density(p, kk, F)
+    d2 = (np.log(F / K) - 0.5 * sigma ** 2 * T) / (sigma * np.sqrt(T))
+    f_ln = norm.pdf(d2) / (K * sigma * np.sqrt(T))
+    assert np.max(np.abs(f - f_ln)) / f_ln.max() < 1e-12
+    # Integral checks are limited by the trapezoid QUADRATURE on the grid
+    # (~1.5e-8 at 4001 pts), not by the formula — hence 1e-6, not 1e-12.
+    tz = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
+    assert tz(f, K) == pytest.approx(1.0, abs=1e-6)          # ∫f dK = 1
+    assert tz(K * f, K) / F == pytest.approx(1.0, abs=1e-6)  # E[S_T] = F
+
+
 def test_steep_0dte_smile_uses_penalized_arbfree_svi():
     """Steep 0DTE smiles (inflated OTM IVs) make the raw smile
     non-arbitrage-free, so the plain SVI is rejected. The penalized arb-free
