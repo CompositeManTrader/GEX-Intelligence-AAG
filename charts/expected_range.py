@@ -265,8 +265,11 @@ def chart_risk_neutral_density(rnd: pd.DataFrame, spot: float,
                  f"distribución implícita{method_tag}",
             font=dict(size=12, color="#c0c0d8", family=FONT_MONO), x=0,
         ),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                    xanchor="right", x=1, font=dict(size=9, color="#9090b0"),
+        # Legend BELOW the plot — at the old top-right position it sat under
+        # Plotly's modebar icons and was unreadable (live-audit finding).
+        legend=dict(orientation="h", yanchor="top", y=-0.18,
+                    xanchor="center", x=0.5,
+                    font=dict(size=9, color="#9090b0"),
                     bgcolor="rgba(0,0,0,0)"),
         **{k2: v for k2, v in BASE.items() if k2 != "legend"},
     )

@@ -2,6 +2,11 @@
 
 CSS = """
 <style>
+/* Load the REAL brand fonts — without this import the whole app silently
+ * falls back to the OS generic monospace (Courier-ish), which is why the
+ * terminal aesthetic looked inconsistent across machines. */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap');
+
 html, body, [data-testid="stApp"], .main, .block-container {
     background-color: #080810 !important;
     color: #c8c8d8 !important;
@@ -132,17 +137,23 @@ h1, h2, h3 { color: #e0e0f0 !important; }
 }
 .bb-divider { border: none; border-top: 1px solid #1a1a2a; margin: 1.2rem 0; }
 
-.conn-logo  { font-size: 2.5rem; display: block; text-align: center; margin-bottom: 0.5rem; }
-.conn-title { font-size: 1.5rem; font-weight: 800; color: #f97316; text-align: center;
-              font-family: 'JetBrains Mono', monospace; margin: 0 0 0.2rem; letter-spacing: 0.05em; }
-.conn-sub   { font-size: 0.82rem; color: #606080; text-align: center; margin: 0 0 2rem; }
-.step-card  { background: #0e0e1a; border: 1px solid #1e1e30; border-radius: 6px;
-              padding: 1.1rem 1.3rem; margin-bottom: 0.9rem; }
+.conn-sub   { font-size: 0.82rem; color: #606080; text-align: center; margin: 0 0 1.6rem;
+              font-family: 'Inter', sans-serif; }
 .step-num   { display: inline-flex; align-items: center; justify-content: center;
               background: #f97316; color: #000; border-radius: 50%;
               width: 22px; height: 22px; font-size: 0.7rem; font-weight: 800;
               margin-right: 8px; flex-shrink: 0; }
-.step-label { font-size: 0.82rem; color: #9090b0; }
+.step-label { font-size: 0.8rem; color: #9595b8; font-family: 'JetBrains Mono', monospace;
+              letter-spacing: 0.04em; }
+
+/* Bordered st.container(border=True) → terminal card (the old trick of
+ * wrapping widgets in a raw <div class="step-card"> via markdown does NOT
+ * work — Streamlit auto-closes the div, leaving an empty ghost box). */
+[data-testid="stVerticalBlockBorderWrapper"] {
+    background: linear-gradient(135deg,#0b0b15,#0d0d18) !important;
+    border: 1px solid #1e1e32 !important; border-radius: 9px !important;
+    padding: 0.35rem 0.4rem !important;
+}
 
 .chain-wrap { overflow-x: auto; border: 1px solid #1a1a2a; border-radius: 4px; }
 .chain {

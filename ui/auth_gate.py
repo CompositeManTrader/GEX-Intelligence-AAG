@@ -109,19 +109,26 @@ def require_login() -> bool:
 
 def _render_gate(single: Optional[str], users: dict[str, str]) -> None:
     multi = bool(users)
+    # Inject the app CSS so the gate matches the brand (without it the
+    # primary button renders in the default RED theme colour — alarming on a
+    # login screen — and the brand fonts never load).
+    from ui.styles import CSS
+    st.markdown(CSS, unsafe_allow_html=True)
     st.markdown("<br><br>", unsafe_allow_html=True)
     _, col, _ = st.columns([1, 1.2, 1])
     with col:
         st.markdown(
             """
             <div style="text-align:center;margin-bottom:1.2rem;">
-              <span style="font-size:3.2rem;color:#f97316;">🔒</span>
-              <h1 style="font-family:'JetBrains Mono',monospace;font-size:1.4rem;
-                   font-weight:800;letter-spacing:0.08em;color:#e0e0f0;margin:0.4rem 0 0.2rem;">
-                 OPTIONS TERMINAL
-              </h1>
+              <div style="display:flex;justify-content:center;align-items:center;gap:10px;margin-bottom:0.45rem;">
+              <span style="color:#f97316;font-family:'JetBrains Mono',monospace;font-size:1.9rem;font-weight:800;line-height:1;">&#10095;</span>
+              <span style="color:#f5f5ff;font-family:'JetBrains Mono',monospace;font-size:1.8rem;font-weight:800;letter-spacing:0.12em;line-height:1;">GEX</span>
+              <span class="brand-cursor" style="width:13px;height:1.6rem;"></span>
+              </div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:0.56rem;
+                   color:#5b5b80;letter-spacing:0.3em;margin-bottom:0.5rem;">INTELLIGENCE&nbsp;TERMINAL</div>
               <p style="font-family:'JetBrains Mono',monospace;font-size:0.75rem;
-                   color:#7070a0;margin:0;">Acceso restringido</p>
+                   color:#7070a0;margin:0;">🔒 Acceso restringido</p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -172,13 +179,5 @@ def _render_gate(single: Optional[str], users: dict[str, str]) -> None:
                     icon="🚫",
                 )
 
-        st.markdown(
-            """
-            <p style="font-size:0.66rem;color:#505070;text-align:center;
-                 font-family:'JetBrains Mono',monospace;margin-top:1rem;">
-              La contraseña se configura en <b>Streamlit Secrets</b>
-              (<code>APP_PASSWORD</code> o <code>[APP_USERS]</code>).
-            </p>
-            """,
-            unsafe_allow_html=True,
-        )
+        # (Developer hint about APP_PASSWORD/Secrets removed from the login
+        # screen — it confused end users; the setup doc covers it.)

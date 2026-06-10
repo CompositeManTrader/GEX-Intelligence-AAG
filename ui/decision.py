@@ -102,15 +102,19 @@ def build_decision_panel(spot: float,
                          f"amplifica sell-offs con vol expansion. Si la IV baja, "
                          f"<b>compran spot</b> — rally on vol crush.")
 
+    def _mday(v):
+        # Compact $M figure: 11211.8 → '+11.2B' (the raw 'M' read terribly)
+        return (f"{v/1000:+,.1f}B" if abs(v) >= 1000 else f"{v:+,.1f}M")
+
     charm_msg = ""
     if abs(cex_total) > 0.5:
         if cex_total > 0:
-            charm_msg = (f"<b>Charm positivo (${cex_total:+.1f}M/día):</b> "
+            charm_msg = (f"<b>Charm positivo (${_mday(cex_total)}/día):</b> "
                          f"con el paso del tiempo, los dealers acumulan delta positiva "
                          f"y <b>compran</b> en los últimos minutos (bullish EOD flow). "
                          f"Especialmente notable en 0DTE y vencimiento.")
         else:
-            charm_msg = (f"<b>Charm negativo (${cex_total:+.1f}M/día):</b> "
+            charm_msg = (f"<b>Charm negativo (${_mday(cex_total)}/día):</b> "
                          f"dealers pierden delta con el tiempo, <b>venden spot</b> al cierre. "
                          f"Sell-flow conforme se acerca el vencimiento.")
 

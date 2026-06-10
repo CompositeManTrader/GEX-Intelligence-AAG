@@ -149,25 +149,30 @@ def interpret_vex(vex_sum: dict) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 #  CEX
 # ─────────────────────────────────────────────────────────────────────────────
+def _mday(v_mm: float) -> str:
+    """Compact $M figure (sign kept): 11211.8 → '+11.2B' · −340 → '-340M'."""
+    return (f"{v_mm/1000:+,.1f}B" if abs(v_mm) >= 1000 else f"{v_mm:+,.0f}M")
+
+
 def interpret_cex(cex_sum: dict, dte: int = 0) -> str:
     if not cex_sum:
         return _box("Sin datos CEX.", "neutral")
     total = cex_sum.get("total_cex", 0) / 1e6
     if total > 50:
         msg = (
-            f"<b>POSITIVE CHARM</b> (+${total:.0f}M/día). El decay de delta "
+            f"<b>POSITIVE CHARM</b> (${_mday(total)}/día). El decay de delta "
             "produce <b>EOD buy-flow</b> del dealer. Típico cerca de OPEX, "
             "refuerza pin risk al alza."
         )
         tone = "bull"
     elif total < -50:
         msg = (
-            f"<b>NEGATIVE CHARM</b> (${total:.0f}M/día). Dealer vende al "
+            f"<b>NEGATIVE CHARM</b> (${_mday(total)}/día). Dealer vende al "
             "cierre — <b>EOD sell-flow</b>. Bajista en días previos a OPEX."
         )
         tone = "bear"
     else:
-        msg = f"Charm neutral (${total:.0f}M/día)."
+        msg = f"Charm neutral (${_mday(total)}/día)."
         tone = "neutral"
     if dte <= 2:
         msg += " &nbsp;⚠️ <b>DTE ≤ 2</b>: charm acelera geométricamente."

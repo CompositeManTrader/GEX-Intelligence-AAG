@@ -1598,13 +1598,15 @@ def show_dashboard() -> None:
                 )
                 z3.metric(
                     "0DTE Net VEX",
-                    f"${total_v_m:+.1f}M/vol pt",
+                    (f"${total_v_m/1000:+,.1f}B/vol pt" if abs(total_v_m) >= 1000
+                     else f"${total_v_m:+.1f}M/vol pt"),
                     help="Cambio en delta dealer por +1 pt IV. En 0DTE "
                          "decae rápido (vanna → 0 con T → 0).",
                 )
                 z4.metric(
                     "0DTE Net CEX",
-                    f"${total_c_m:+.1f}M/día",
+                    (f"${total_c_m/1000:+,.1f}B/día" if abs(total_c_m) >= 1000
+                     else f"${total_c_m:+.1f}M/día"),
                     help="Delta decay del dealer por día. Geométricamente "
                          "grande en 0DTE — drives end-of-day flow.",
                 )
@@ -2442,7 +2444,7 @@ def show_dashboard() -> None:
     # ── FOOTER ──────────────────────────────────────────────────────────────
     st.markdown('<hr class="bb-divider">', unsafe_allow_html=True)
     st.markdown(
-        f'<p class="footer">OPTIONS TERMINAL  ·  {symbol}  ·  '
+        f'<p class="footer">❯ GEX · INTELLIGENCE TERMINAL  ·  {symbol}  ·  '
         f'{last_refresh.strftime("%Y-%m-%d %H:%M:%S")} UTC'
         f'  ·  Charles Schwab API  ·  Datos en tiempo real'
         f'  ·  No constituye asesoramiento financiero</p>',
@@ -2467,17 +2469,24 @@ def show_connect_screen() -> None:
     has_secrets = bool(get_secret("APP_KEY") and get_secret("APP_SECRET"))
     is_expired = has_secrets and not st.session_state.get(SS.CONNECTED)
     with col:
+        # NOTE: no <h1> here on purpose — the global `h1{color:...!important}`
+        # rule overrides any class colour, which is why the old .conn-title
+        # rendered white/sans instead of the brand style.
         if is_expired:
             st.markdown("""
-            <span class="conn-logo">⚠</span>
-            <h1 class="conn-title" style="color:#f43f5e">TOKEN EXPIRADO</h1>
+            <div style="text-align:center;font-size:2.2rem;margin:0.4rem 0 0.2rem;">⚠</div>
+            <div style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:1.55rem;font-weight:800;color:#f43f5e;letter-spacing:0.08em;margin-bottom:0.3rem;">TOKEN EXPIRADO</div>
             <p class="conn-sub">Tu refresh token expiró (válido 7 días). Re-autoriza una vez y copia el nuevo token a Secrets.</p>
             """, unsafe_allow_html=True)
         else:
             st.markdown("""
-            <span class="conn-logo">▤</span>
-            <h1 class="conn-title">OPTIONS TERMINAL</h1>
-            <p class="conn-sub">Primera configuración — Solo necesitas hacer esto una vez.</p>
+            <div style="display:flex;justify-content:center;align-items:center;gap:11px;margin:0.6rem 0 0.45rem;">
+            <span style="color:#f97316;font-family:'JetBrains Mono',monospace;font-size:2.1rem;font-weight:800;line-height:1;">&#10095;</span>
+            <span style="color:#f5f5ff;font-family:'JetBrains Mono',monospace;font-size:2rem;font-weight:800;letter-spacing:0.12em;line-height:1;">GEX</span>
+            <span class="brand-cursor" style="width:14px;height:1.75rem;"></span>
+            </div>
+            <div style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:0.6rem;color:#5b5b80;letter-spacing:0.32em;margin-bottom:0.7rem;">INTELLIGENCE&nbsp;TERMINAL</div>
+            <p class="conn-sub">Primera configuración — solo necesitas hacerlo una vez.</p>
             """, unsafe_allow_html=True)
 
         if not has_secrets:

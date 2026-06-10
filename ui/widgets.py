@@ -56,9 +56,17 @@ def market_header(
     """A single cohesive header panel: live dot + symbol + big price + change
     pill on the left, a hairline-separated stat rail on the right, and a slim
     1σ Expected-Move sub-bar underneath."""
-    up = (chg or 0) >= 0
+    # Direction from chg when it's meaningful, else from chg_p — Schwab
+    # sometimes ships netChange=0 with a nonzero percentChange (after hours),
+    # which used to render the contradictory "▲ +0.00 · -1.11%" pill.
+    _basis = chg if abs(chg or 0) >= 0.005 else (chg_p or 0)
+    up = _basis >= 0
     chg_color = "#22c55e" if up else "#f43f5e"
     arrow = "▲" if up else "▼"
+    if abs(chg or 0) < 0.005 and abs(chg_p or 0) >= 0.005:
+        pill_txt = f"{arrow} {chg_p:+.2f}%"
+    else:
+        pill_txt = f"{arrow} {chg:+.2f} · {chg_p:+.2f}%"
 
     ms = (market_status or "").upper()
     if ms == "OPEN":
@@ -134,7 +142,7 @@ def market_header(
           </div>
           <div style="display:flex;align-items:baseline;gap:0.7rem;flex-wrap:wrap;">
             <span style="font-size:2.1rem;font-weight:800;color:#f5f5ff;font-family:JetBrains Mono,monospace;font-variant-numeric:tabular-nums;line-height:1;text-shadow:0 0 18px rgba(245,245,255,0.12);">${spot:,.2f}</span>
-            <span style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:5px;background:{chg_color}1f;border:1px solid {chg_color}44;color:{chg_color};font-size:0.74rem;font-weight:700;font-family:JetBrains Mono,monospace;white-space:nowrap;">{arrow} {chg:+.2f} · {chg_p:+.2f}%</span>
+            <span style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:5px;background:{chg_color}1f;border:1px solid {chg_color}44;color:{chg_color};font-size:0.74rem;font-weight:700;font-family:JetBrains Mono,monospace;white-space:nowrap;">{pill_txt}</span>
           </div>
         </div>
         <div style="display:flex;align-items:center;flex-wrap:wrap;">{cells}</div>
@@ -171,23 +179,44 @@ def flip_zone_widget(spot: float, gex_sum: Optional[dict]) -> str:
     dist_abs = gf - spot
     dist_pct = (dist_abs / spot) * 100 if spot else 0.0
     a = abs(dist_pct)
-    if a < 0.3:
-        color = "#f43f5e"; status = "CROSS IMMINENT"; emoji = "🔴"
-    elif a < 1.0:
-        color = "#f59e0b"; status = "DANGER ZONE"; emoji = "🟡"
+
+    # UX fix (live-audit finding): the REGIME is the primary message — the
+    # old labels (SAFE / DANGER) only encoded distance-to-flip and read as
+    # "all good" in green even inside a −$11B short-gamma book. Now the
+    # headline and border colour reflect the regime; proximity to the flip
+    # is the secondary line.
+    if regime == "POSITIVE":
+        color, status = "#22c55e", "ESTABLE · dealer amortigua"
+    elif regime == "NEGATIVE":
+        color, status = "#f43f5e", "INESTABLE · dealer amplifica"
     else:
-        color = "#22c55e"; status = "SAFE"; emoji = "🟢"
+        color, status = "#f59e0b", "NEUTRAL · régimen indefinido"
+    if a < 0.3:
+        prox_col, prox_lbl = "#f43f5e", "cruce de régimen INMINENTE"
+    elif a < 1.0:
+        prox_col, prox_lbl = "#f59e0b", "flip cercano — atención"
+    else:
+        prox_col, prox_lbl = "#8a8aa8", "flip lejano"
 
     above = dist_abs > 0    # gf above spot → spot would need to rally to flip
     direction = "por ENCIMA del spot" if above else "por DEBAJO del spot"
-    # Crossing direction matters: if Zero Γ is ABOVE spot, a rally up across
-    # it pushes Net GEX into POSITIVE territory; a fall below an above-spot
-    # gf is impossible (can't fall through a level above you). Net GEX is
-    # negative below gf and positive above gf (SqueezeMetrics convention),
-    # so the destination regime is determined by which side of gf you land.
-    # The legacy 2-state toggle assumed binary regime and mis-labelled the
-    # transition target whenever the current regime was NEUTRAL.
+    # Landing side determines the destination regime (SqueezeMetrics
+    # convention: below gf = negative, above = positive).
     next_regime = "POSITIVE" if above else "NEGATIVE"
+    cross_dir = "↑ subir" if above else "↓ caer"
+    if next_regime == regime:
+        # UX fix (live-audit finding): the old text could produce the absurd
+        # "Régimen actual: NEGATIVE. Cruzar → cambia a NEGATIVE". When the
+        # net-GEX sign and the flip side DISAGREE the book is in transition
+        # (multiple crossings / mixed expiries) — say that honestly.
+        cross_msg = (f'⚠ <b style="color:#f59e0b">Señales mixtas</b>: net GEX '
+                     f'{regime} con Zero Γ '
+                     f'{"encima" if above else "debajo"} del spot — libro en '
+                     f'transición; trata el régimen con cautela.')
+    else:
+        cross_msg = (f'Cruzar Zero Γ <b style="color:#a855f7">${gf:.0f}</b> '
+                     f'({cross_dir} {a:.2f}%) cambiaría el régimen a '
+                     f'<b>{next_regime}</b>.')
 
     # Thermometer: spot position inside [pw, cw] range as %
     bar_html = ""
@@ -233,15 +262,18 @@ def flip_zone_widget(spot: float, gex_sum: Optional[dict]) -> str:
       <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;">
         <div>
           <div style="font-size:0.68rem;color:#7070a0;letter-spacing:0.1em;">
-            {emoji} GEX FLIP ZONE
+            GEX FLIP ZONE · régimen {regime}
           </div>
           <div style="font-size:1.15rem;font-weight:800;color:{color};margin-top:2px;">
             {status}
           </div>
+          <div style="font-size:0.66rem;color:{prox_col};margin-top:3px;">
+            {prox_lbl}
+          </div>
         </div>
         <div style="text-align:right;">
           <div style="font-size:0.68rem;color:#7070a0;">Distancia a Zero Γ</div>
-          <div style="font-size:1.4rem;font-weight:800;color:{color};line-height:1.1;">
+          <div style="font-size:1.4rem;font-weight:800;color:{prox_col};line-height:1.1;">
             {dist_pct:+.2f}%
           </div>
           <div style="font-size:0.7rem;color:#9090b0;">
@@ -253,8 +285,7 @@ def flip_zone_widget(spot: float, gex_sum: Optional[dict]) -> str:
       <div style="font-size:0.7rem;color:#9090b0;margin-top:6px;line-height:1.5;">
         Spot <b style="color:#fbbf24">${spot:.2f}</b> &nbsp;·&nbsp;
         Zero Γ <b style="color:#a855f7">${gf:.0f}</b> &nbsp;·&nbsp;
-        Régimen actual: <b style="color:{color}">{regime}</b>.
-        Cruzar Zero Γ → régimen cambia a <b>{next_regime}</b>.
+        {cross_msg}
       </div>
     </div>
     """)
@@ -913,7 +944,7 @@ def panel_zones_html(zones: list, spot: Optional[float] = None) -> str:
             f'font-family:JetBrains Mono,monospace">{width_str} pts</td>'
             f'<td style="padding:5px 10px;color:#e0e0f0;text-align:right;'
             f'font-family:JetBrains Mono,monospace;font-weight:700">'
-            f'${score:+,.0f}M</td>'
+            f'${_humanize(score * 1e6)}</td>'
             f'<td style="padding:5px 10px;color:{side_color};text-align:center;'
             f'font-family:JetBrains Mono,monospace;font-size:0.74rem;'
             f'font-weight:700">{side_label}</td>'
