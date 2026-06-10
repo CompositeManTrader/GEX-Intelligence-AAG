@@ -866,7 +866,11 @@ def show_dashboard() -> None:
                 pts_panel += '</div>'
                 _render_md(pts_panel)
 
-        _render_md(interpret_gex_profile(gex_sum, spot))
+        # NOTE (live-audit): the GEX narrative bar was removed from Overview —
+        # it repeated, word for word, what the decision panel right above it
+        # already says (regime + walls + flip + HVL). It still renders in its
+        # own tab (GEX Total), where it isn't redundant. The HIRO bar stays:
+        # its z-score and call/put volume counts appear nowhere else here.
         _render_md(interpret_hiro(hiro_snap, hiro_z, len(hist)))
 
     # ── INTRADAY ────────────────────────────────────────────────────────────
@@ -2055,10 +2059,12 @@ def show_dashboard() -> None:
             "strangles y para detectar si la IV está cara/barata."
         )
 
-        # Horizon selector — defaults to the selected expiry's DTE
-        er_dte = st.selectbox(
+        # Horizon selector — radio pills instead of the old full-width
+        # selectbox (a giant dropdown for 5 small values wasted a whole row).
+        er_dte = st.radio(
             "Horizonte (DTE)", [0, 1, 2, 5, 7],
-            index=0, key="er_dte",
+            index=0, key="er_dte", horizontal=True,
+            format_func=lambda d: "0 · hoy" if d == 0 else f"{d}d",
             help="0 = hoy (intradía, fracción de día a las 16:00 ET).",
         )
 

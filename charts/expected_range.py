@@ -214,7 +214,10 @@ def chart_risk_neutral_density(rnd: pd.DataFrame, spot: float,
         ("p50", "#e0e0f0", "P50 (mediana)"),
         ("p75", "#22c55e", "P75"), ("p90", "#f59e0b", "P90"),
     ]
-    for key, color, label in pct_specs:
+    # Stagger the labels on two rows (and SPOT on a third) — on narrow 0DTE
+    # densities P25/P50/P75 + SPOT sit within a few dollars and the
+    # single-row labels overlapped into an unreadable pile (live-audit).
+    for i, (key, color, label) in enumerate(pct_specs):
         v = pct.get(key)
         if v is None:
             continue
@@ -223,13 +226,14 @@ def chart_risk_neutral_density(rnd: pd.DataFrame, spot: float,
             annotation_text=f"{label} ${v:,.1f}",
             annotation_font=dict(size=8, color=color, family=FONT_MONO),
             annotation_position="top",
+            annotation_yshift=(0 if i % 2 == 0 else -13),
         )
 
-    # ── Spot
+    # ── Spot — third label row so it never collides with P50/median
     fig.add_vline(x=spot, line_dash="solid", line_color=ORANGE, line_width=2,
                   annotation_text=f"SPOT ${spot:,.1f}",
                   annotation_font=dict(size=10, color=ORANGE, family=FONT_MONO),
-                  annotation_position="top")
+                  annotation_position="top", annotation_yshift=-27)
 
     # ── Key levels (walls) with implied P(below)
     level_colors = {"call_wall": GREEN, "put_wall": RED,
