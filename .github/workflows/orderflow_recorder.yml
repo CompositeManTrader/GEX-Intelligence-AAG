@@ -1,0 +1,51 @@
+name: Orderflow Recorder
+
+# Snapshots dealer exposures (GEX/DEX/VEX/CEX + walls + per-strike 0DTE
+# OI/volume) every ~10 minutes during US market hours and writes them to
+# Neon Postgres. This gives the Orderflow tab a FULL session of history
+# regardless of whether the dashboard was ever opened — the dashboard's
+# local SQLite on Streamlit Cloud is ephemeral and was the root cause of
+# the "empty orderflow" problem.
+#
+# The cron fires blindly across 13:00–21:00 UTC (covers both EDT and EST
+# regular trading hours); the script itself has an exact ET market-hours
+# guard and exits cleanly when the market is closed. GitHub cron has
+# minutes-level jitter — fine for structural flow at this cadence.
+
+on:
+  schedule:
+    - cron: "*/10 13-21 * * 1-5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: orderflow-recorder
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      SCHWAB_APP_KEY: ${{ secrets.SCHWAB_APP_KEY }}
+      SCHWAB_APP_SECRET: ${{ secrets.SCHWAB_APP_SECRET }}
+      SCHWAB_REFRESH_TOKEN: ${{ secrets.SCHWAB_REFRESH_TOKEN }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      EM_SYMBOLS: ${{ vars.EM_SYMBOLS || 'SPY' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pandas scipy requests psycopg2-binary pytz
+
+      - name: Snapshot orderflow
+        run: python -m scripts.record_session --mode orderflow

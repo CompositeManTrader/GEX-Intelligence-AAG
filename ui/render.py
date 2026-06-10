@@ -27,10 +27,6 @@ from charts.gex import (
     chart_gex_curve, chart_gex_profile, chart_vex_profile,
 )
 from charts.intraday import chart_session_profile, render_intraday_chart
-from charts.orderflow import (
-    chart_convexity_timeseries, chart_dex_timeseries, chart_gex_timeseries,
-    chart_orderflow_stack,
-)
 from charts.theme import CYAN, FONT_MONO, GREEN, ORANGE, PURPLE, RED
 from charts.vol import (
     chart_greeks, chart_iv_hv_history, chart_iv_skew, chart_iv_smile,
@@ -1284,218 +1280,139 @@ def show_dashboard() -> None:
 
     # ── ORDERFLOW (PRO multi-panel) ──────────────────────────────────────────
     with tab_orderflow:
-        # PRO charts + derived metrics — fully imported here so the cost
-        # of plotly subplot construction is paid only when the tab is open.
-        from charts.orderflow_pro import (
-            chart_cum_hedge_flow, chart_orderflow_pro_stack,
-            chart_strike_heatmap, panel_cross_session_html,
-            panel_wall_stability_html, panel_what_changed_html,
+        # Session-first redesign: the tab is built on the CONTINUOUS
+        # snapshot history (GitHub-Actions recorder → Neon, every ~10 min
+        # of market hours), so it shows a full session even if the app was
+        # never open — the old session-only view was empty most of the time
+        # (Streamlit Cloud's disk is ephemeral and ticks only accrued while
+        # watching). Live ticks are appended on top for minute-level detail.
+        from charts.of_session import (
+            chart_session_trajectory, chart_strike_flow, chart_walls_timeline,
         )
         from quant.orderflow_derived import (
-            adaptive_refresh_seconds, session_vol_score, zscore_intraday,
+            adaptive_refresh_seconds, session_changes, session_vol_score,
+            strike_activity,
         )
-        from data.persistence import (
-            latest_two_strike_snapshots, load_intraday_at_time_of_day,
-            load_strike_history,
-        )
+        from ui.widgets import of_session_digest_panel
+        from data import of_store
 
         _render_md('<p class="bb-header">'
-                   'ORDERFLOW PRO  ·  DEX / Net GEX / Convexity</p>')
+                   'ORDERFLOW  ·  SESIÓN CONTINUA</p>')
         st.caption(
-            "Vista profesional del flujo de hedging dealer. Composición "
-            "stack (call/put) sobre Net GEX con trayectoria continua de "
-            "<b>walls</b>; panel de <b>velocidad</b> (∂GEX/∂t) que detecta "
-            "squeezes antes que el valor absoluto; <b>DEX y VEX descompuestos "
-            "por DTE</b> (0DTE / semana / mes). Z-score intradía en cada "
-            "título avisa cuando el valor actual es estadísticamente extremo."
+            "Historia grabada por el <b>recorder headless</b> cada ~10 min "
+            "de mercado (GitHub Actions → Neon) — ya no depende de tener la "
+            "app abierta. Responde 4 preguntas: ¿qué cambió desde que no "
+            "miro? · ¿el régimen está girando? · ¿los muros se mueven? · "
+            "¿dónde pega el flujo ahora?",
+            unsafe_allow_html=True,
         )
 
-        last_of = of_hist[-1] if of_hist else {}
-        z_gex = zscore_intraday(of_hist, "net_gex_mm")
-        vol_score = session_vol_score(of_hist, intraday_df=intra_df
-                                      if "intra_df" in dir() else None)
-        adaptive_secs = adaptive_refresh_seconds(vol_score)
-        # Surface the adaptive interval for the auto-refresh widget below.
-        st.session_state["_of_adaptive_secs"] = adaptive_secs
-
-        c_of1, c_of2, c_of3, c_of4, c_of5 = st.columns(5)
-        c_of1.metric("Ticks (sesión)", f"{len(of_hist)}")
-        c_of2.metric(
-            "Net DEX",
-            (f"${last_of.get('net_dex_mm'):+.1f}M"
-             if last_of.get("net_dex_mm") is not None else "—"),
-        )
-        c_of3.metric(
-            "Net GEX",
-            (f"${last_of.get('net_gex_mm'):+.1f}M"
-             if last_of.get("net_gex_mm") is not None else "—"),
-            (f"{z_gex:+.1f}σ" if z_gex is not None else None),
-        )
-        c_of4.metric(
-            "Net VEX",
-            (f"${last_of.get('net_vex_mm'):+.1f}M"
-             if last_of.get("net_vex_mm") is not None else "—"),
-        )
-        c_of5.metric(
-            "Refresh adapt.",
-            f"{adaptive_secs}s",
-            help=("Cadencia recomendada por session-vol-score "
-                  f"({vol_score:.2f}). 15s en open/FOMC, 30s normal, 60s calma."),
-        )
-
-        # Diagnostic strip — explains *why* panels may look empty when the
-        # historical persistence pre-dates the bucket-fields rollout.
-        bucket_cols = ("dex_net_0dte_mm", "dex_net_week_mm", "dex_net_month_mm",
-                       "vex_net_0dte_mm", "vex_net_week_mm", "vex_net_month_mm")
-        n_with_buckets = sum(
-            1 for t in of_hist
-            if any(t.get(c) is not None for c in bucket_cols)
-        )
-        first_ts = of_hist[0].get("timestamp") if of_hist else None
-        last_ts = of_hist[-1].get("timestamp") if of_hist else None
+        # ── Continuous history + live session ticks (newer than last snap) ──
         try:
-            t0 = datetime.datetime.fromisoformat(str(first_ts)).astimezone(ET_TZ)
-            t1 = datetime.datetime.fromisoformat(str(last_ts)).astimezone(ET_TZ)
-            span_label = (f"{t0.strftime('%H:%M')} → {t1.strftime('%H:%M')} ET "
-                          f"({(t1 - t0).total_seconds() / 60:.0f} min)")
-        except Exception:
-            span_label = "—"
-        st.caption(
-            f"📡 **Estado del orderflow**: {len(of_hist)} ticks · "
-            f"span {span_label} · "
-            f"con bucket-data: **{n_with_buckets}/{len(of_hist)}** "
-            f"({100 * n_with_buckets / max(len(of_hist), 1):.0f}%). "
-            + ("✅ Buckets activos." if n_with_buckets > 5 else
-               "⚠ Los ticks históricos pre-upgrade no tienen 0DTE/Week/Month — "
-               "los paneles DEX/VEX por bucket se llenarán a medida que entren "
-               "ticks nuevos (cada `Auto-refresh` añade uno).")
-        )
+            cont_ticks = of_store.load_ticks(symbol, hours=9)
+        except Exception as _exc:
+            log.warning("of_store.load_ticks failed: %s", _exc)
+            cont_ticks = []
+        last_cont_ts = cont_ticks[-1]["ts"] if cont_ticks else ""
+        live_new = [t for t in (of_hist or [])
+                    if str(t.get("timestamp", "")) > str(last_cont_ts)]
+        combined = (cont_ticks or []) + live_new
 
-        # Wall stability widget — addresses "are these walls real?"
-        _render_md(panel_wall_stability_html(of_hist))
-
-        # Top-line interpretation (kept from the legacy view — still useful)
-        _render_md(interpret_orderflow_summary(of_hist, spot))
-
-        if of_hist:
-            if len(of_hist) == 1:
-                st.caption(
-                    "⏳ Primer tick. El panel dibuja valores actuales como "
-                    "puntos; con auto-refresh activo se construye la serie.",
-                    unsafe_allow_html=True,
-                )
-
-            of_view = st.radio(
-                "Vista",
-                options=["pro", "legacy_stacked", "legacy_separate"],
-                format_func=lambda v: {
-                    "pro": "PRO (composición · velocity · DTE buckets)",
-                    "legacy_stacked": "Legacy (3 filas)",
-                    "legacy_separate": "Legacy (separado)",
-                }[v],
-                horizontal=True, index=0, key="of_view_mode_v2",
+        _backend = of_store.backend_info()
+        if cont_ticks:
+            st.caption(
+                f"📡 {len(cont_ticks)} snapshots del recorder "
+                f"({_backend['backend']}) + {len(live_new)} ticks en vivo."
             )
-            if of_view == "pro":
+        else:
+            st.caption(
+                f"📡 Sin snapshots del recorder todavía "
+                f"({_backend['backend']}). El workflow «Orderflow Recorder» "
+                f"graba cada ~10 min de mercado; mientras tanto se usa la "
+                f"sesión en vivo ({len(of_hist)} ticks)."
+            )
+
+        # Adaptive-refresh plumbing (consumed by the global Auto toggle).
+        vol_score = session_vol_score(of_hist, intraday_df=None)
+        st.session_state["_of_adaptive_secs"] = adaptive_refresh_seconds(vol_score)
+
+        # 1 ── ¿Qué cambió en la sesión?
+        _render_md(of_session_digest_panel(session_changes(combined)))
+
+        # 2 ── ¿El régimen está girando?
+        fig_traj = chart_session_trajectory(combined, symbol)
+        if fig_traj is not None:
+            st.plotly_chart(fig_traj, use_container_width=True,
+                            key=f"of_traj_{symbol}")
+
+        # 3 ── ¿Los muros se están moviendo?
+        fig_walls = chart_walls_timeline(combined, symbol)
+        if fig_walls is not None:
+            st.plotly_chart(fig_walls, use_container_width=True,
+                            key=f"of_walls_{symbol}")
+
+        # 4 ── ¿Dónde pega el flujo AHORA? (0DTE · Δvolumen por strike)
+        try:
+            srows = of_store.load_strikes(symbol, hours=9)
+        except Exception as _exc:
+            log.warning("of_store.load_strikes failed: %s", _exc)
+            srows = []
+        act = strike_activity(srows, window_minutes=30)
+        fig_flow = chart_strike_flow(act, symbol, spot=spot)
+        if fig_flow is not None:
+            st.plotly_chart(fig_flow, use_container_width=True,
+                            key=f"of_flow_{symbol}")
+            st.caption(
+                "Δvolumen = contratos operados por strike en la ventana (el "
+                "volumen del chain es acumulado del día). Nota honesta: la "
+                "OI solo se actualiza overnight (regla OCC), así que el "
+                "volumen ES el proxy de flujo intradía — no existe ΔOI en vivo."
+            )
+        if not combined and not srows:
+            st.info(
+                "Aún no hay datos. El recorder se activa en la próxima "
+                "ventana de mercado; o activa **Auto 30s** arriba para "
+                "acumular ticks en vivo ahora."
+            )
+
+        # ── Vista avanzada — los charts anteriores, sin duplicar lo de
+        # arriba. (El radio pro/legacy se eliminó: las variantes legacy
+        # eran redundantes con la composición PRO.)
+        with st.expander("📊 Vista avanzada — composición call/put · "
+                         "hedge flow · heatmap"):
+            from charts.orderflow_pro import (
+                chart_cum_hedge_flow, chart_orderflow_pro_stack,
+                chart_strike_heatmap, panel_wall_stability_html,
+            )
+            from data.persistence import load_strike_history
+            if of_hist:
+                _render_md(panel_wall_stability_html(of_hist))
+                _render_md(interpret_orderflow_summary(of_hist, spot))
                 fig_pro = chart_orderflow_pro_stack(of_hist, symbol)
                 if fig_pro is not None:
-                    st.plotly_chart(
-                        fig_pro, use_container_width=True,
-                        key=f"of_pro_{symbol}",
-                    )
-                # Cumulative dealer hedge flow estimate
+                    st.plotly_chart(fig_pro, use_container_width=True,
+                                    key=f"of_pro_{symbol}")
                 fig_cum = chart_cum_hedge_flow(of_hist, symbol)
                 if fig_cum is not None:
-                    st.plotly_chart(
-                        fig_cum, use_container_width=True,
-                        key=f"of_cum_{symbol}",
-                    )
-                # What-changed (top strike movers between latest two snapshots)
-                rows_now, rows_prev = latest_two_strike_snapshots(symbol, "month")
-                _render_md(panel_what_changed_html(rows_now, rows_prev))
-
-                # Strike heatmap (today)
+                    st.plotly_chart(fig_cum, use_container_width=True,
+                                    key=f"of_cum_{symbol}")
                 strikes_long = load_strike_history(symbol, bucket="month")
                 fig_hm = chart_strike_heatmap(
                     strikes_long, symbol=symbol,
                     metric="gex_mm", spot_history=of_hist, bucket="month",
                 )
                 if fig_hm is not None:
-                    st.plotly_chart(
-                        fig_hm, use_container_width=True,
-                        key=f"of_heatmap_{symbol}",
-                    )
-
-                # Cross-session compare — same minute, last N sessions
-                try:
-                    et_now = datetime.datetime.now(ET_TZ)
-                    cross_rows = load_intraday_at_time_of_day(
-                        symbol, et_now.hour, et_now.minute, days=10,
-                    )
-                except Exception:
-                    log.exception("cross-session load failed")
-                    cross_rows = []
-                _render_md(panel_cross_session_html(
-                    cross_rows, "net_gex_mm", "Net GEX"))
-
-                # Per-metric narrative kept for context
-                _render_md(interpret_orderflow_dex(of_hist))
-                _render_md(interpret_orderflow_gex(of_hist, spot))
-                _render_md(interpret_orderflow_convexity(of_hist))
-            elif of_view == "legacy_stacked":
-                fig_of = chart_orderflow_stack(of_hist, symbol)
-                if fig_of:
-                    st.plotly_chart(
-                        fig_of, use_container_width=True,
-                        key=f"of_stack_{symbol}",
-                    )
+                    st.plotly_chart(fig_hm, use_container_width=True,
+                                    key=f"of_heatmap_{symbol}")
                 _render_md(interpret_orderflow_dex(of_hist))
                 _render_md(interpret_orderflow_gex(of_hist, spot))
                 _render_md(interpret_orderflow_convexity(of_hist))
             else:
-                # DEX panel + commentary
-                _render_md('<p class="bb-header" style="margin-top:0.4rem">'
-                           'DEX  ·  Aggregate Delta Exposure</p>')
-                # Stable keys (NO len(of_hist) suffix). Including a value
-                # that increments every tick forced Plotly to remount the
-                # iframe on every refresh → visible flicker. Plotly diffs
-                # the trace list internally; the key only needs to be
-                # stable across reruns for the same logical chart.
-                fig_dex_ts = chart_dex_timeseries(of_hist, symbol)
-                if fig_dex_ts:
-                    st.plotly_chart(
-                        fig_dex_ts, use_container_width=True,
-                        key=f"of_dex_{symbol}",
-                    )
-                _render_md(interpret_orderflow_dex(of_hist))
-
-                # GEX panel + commentary
-                _render_md('<p class="bb-header" style="margin-top:0.8rem">'
-                           'NET GEX  ·  Dealer Gamma Exposure</p>')
-                fig_gex_ts = chart_gex_timeseries(of_hist, symbol)
-                if fig_gex_ts:
-                    st.plotly_chart(
-                        fig_gex_ts, use_container_width=True,
-                        key=f"of_gex_{symbol}",
-                    )
-                _render_md(interpret_orderflow_gex(of_hist, spot))
-
-                # Convexity / Vanna panel + commentary
-                _render_md('<p class="bb-header" style="margin-top:0.8rem">'
-                           'CONVEXITY  ·  Net Vanna Exposure</p>')
-                fig_vex_ts = chart_convexity_timeseries(of_hist, symbol)
-                if fig_vex_ts:
-                    st.plotly_chart(
-                        fig_vex_ts, use_container_width=True,
-                        key=f"of_vex_{symbol}",
-                    )
-                _render_md(interpret_orderflow_convexity(of_hist))
-        else:
-            st.caption(
-                "🔄 Orderflow vacío. Se empieza a acumular en cuanto se "
-                "carga la primera cadena. Activa <b>Auto 30s</b> "
-                "en la barra superior para construir el historial rápidamente.",
-                unsafe_allow_html=True,
-            )
+                st.caption(
+                    "🔄 Sesión en vivo vacía — estos charts usan los ticks "
+                    "en vivo. Activa <b>Auto 30s</b> arriba.",
+                    unsafe_allow_html=True,
+                )
 
     # ── 2. GEX 0DTE ─────────────────────────────────────────────────────────
     with tab_0dte:

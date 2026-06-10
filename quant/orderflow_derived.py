@@ -276,3 +276,146 @@ def adaptive_refresh_seconds(score: float,
     if score >= 0.7:
         return base_s
     return slow_s
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Session digest — "¿qué cambió desde que no miro?"
+#  Pure functions over the continuous-snapshot history (data/of_store).
+# ─────────────────────────────────────────────────────────────────────────────
+def _tick_ts(t: dict):
+    """Timestamp of a tick from either source (of_store 'ts' or live
+    session 'timestamp')."""
+    return t.get("ts") or t.get("timestamp")
+
+
+def session_changes(ticks: list[dict], wall_min_jump: float = 0.5) -> dict:
+    """Digest the session tick history into the trader's 'what changed':
+
+      · GEX trajectory endpoints (open → now, delta)
+      · regime transitions with their timestamps
+      · wall moves (call_wall / put_wall / hvl) — jumps ≥ `wall_min_jump`
+        points, each with its timestamp
+
+    Works on rows from `data.of_store.load_ticks` and on live session
+    ticks alike. Returns {} when there are no usable ticks.
+    """
+    rows = [t for t in (ticks or []) if _tick_ts(t)]
+    if not rows:
+        return {}
+    rows = sorted(rows, key=_tick_ts)
+    first, last = rows[0], rows[-1]
+
+    def f(t, key):
+        v = t.get(key)
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    out: dict = {
+        "n_ticks": len(rows),
+        "first_ts": _tick_ts(first),
+        "last_ts": _tick_ts(last),
+        "spot_open": f(first, "spot"), "spot_now": f(last, "spot"),
+        "gex_open_mm": f(first, "net_gex_mm"),
+        "gex_now_mm": f(last, "net_gex_mm"),
+        "regime_open": first.get("regime"), "regime_now": last.get("regime"),
+    }
+    if out["gex_open_mm"] is not None and out["gex_now_mm"] is not None:
+        out["gex_delta_mm"] = round(out["gex_now_mm"] - out["gex_open_mm"], 1)
+    else:
+        out["gex_delta_mm"] = None
+
+    # Regime transitions (with timestamps)
+    changes = []
+    prev = first.get("regime")
+    for t in rows[1:]:
+        cur = t.get("regime")
+        if cur and prev and cur != prev:
+            changes.append({"ts": _tick_ts(t), "from": prev, "to": cur})
+        if cur:
+            prev = cur
+    out["regime_changes"] = changes
+
+    # Wall moves ≥ wall_min_jump
+    walls: dict = {}
+    for key in ("call_wall", "put_wall", "hvl"):
+        moves = []
+        prev_v = f(first, key)
+        open_v = prev_v
+        for t in rows[1:]:
+            cur_v = f(t, key)
+            if cur_v is None:
+                continue
+            if prev_v is not None and abs(cur_v - prev_v) >= wall_min_jump:
+                moves.append({"ts": _tick_ts(t), "from": prev_v, "to": cur_v})
+            prev_v = cur_v
+        walls[key] = {"open": open_v, "now": prev_v, "moves": moves}
+    out["walls"] = walls
+    return out
+
+
+def strike_activity(strike_rows: list[dict], window_minutes: float = 30.0,
+                    top_n: int = 10) -> dict:
+    """Where is the flow hitting NOW — per-strike volume acceleration.
+
+    Chain volume is cumulative for the day, so the Δvolume between the
+    latest snapshot and the one ~`window_minutes` earlier is the contracts
+    traded in that window per strike. This is the honest intraday flow
+    proxy: OI only updates OVERNIGHT (OCC), so intraday ΔOI is ~0 by
+    construction and volume is what moves.
+
+    Returns {"rows": [...], "window_min": float|None, "latest_ts": str}
+    with rows sorted by Δtotal desc (top_n), or {} if no data.
+    """
+    rows = [r for r in (strike_rows or []) if r.get("ts")]
+    if not rows:
+        return {}
+    df = pd.DataFrame(rows)
+    for col in ("strike", "call_oi", "put_oi", "call_vol", "put_vol",
+                "net_gex_mm"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["ts_dt"] = pd.to_datetime(df["ts"], errors="coerce", utc=True)
+    df = df.dropna(subset=["ts_dt", "strike"])
+    if df.empty:
+        return {}
+
+    latest_ts = df["ts_dt"].max()
+    snap_now = df[df["ts_dt"] == latest_ts].set_index("strike")
+
+    # Baseline: the latest snapshot at least `window_minutes` old; falls
+    # back to the earliest snapshot (window = whole recorded session).
+    cutoff = latest_ts - pd.Timedelta(minutes=window_minutes)
+    older = df[df["ts_dt"] <= cutoff]
+    base_ts = older["ts_dt"].max() if not older.empty else df["ts_dt"].min()
+    window_min = (float((latest_ts - base_ts).total_seconds()) / 60.0
+                  if base_ts != latest_ts else None)
+    snap_base = df[df["ts_dt"] == base_ts].set_index("strike")
+
+    out_rows = []
+    for k in snap_now.index:
+        now = snap_now.loc[k]
+        cv_now = float(now.get("call_vol") or 0)
+        pv_now = float(now.get("put_vol") or 0)
+        if k in snap_base.index and base_ts != latest_ts:
+            base = snap_base.loc[k]
+            d_call = cv_now - float(base.get("call_vol") or 0)
+            d_put = pv_now - float(base.get("put_vol") or 0)
+        else:
+            d_call, d_put = cv_now, pv_now      # whole-day volume
+        oi_tot = float(now.get("call_oi") or 0) + float(now.get("put_oi") or 0)
+        vol_tot = cv_now + pv_now
+        out_rows.append({
+            "strike": float(k),
+            "d_call_vol": max(d_call, 0.0), "d_put_vol": max(d_put, 0.0),
+            "d_total": max(d_call, 0.0) + max(d_put, 0.0),
+            "call_vol": cv_now, "put_vol": pv_now,
+            "vol_oi": round(vol_tot / oi_tot, 2) if oi_tot > 0 else None,
+            "net_gex_mm": (float(now.get("net_gex_mm"))
+                           if pd.notna(now.get("net_gex_mm")) else None),
+        })
+    out_rows.sort(key=lambda r: -r["d_total"])
+    return {"rows": out_rows[:top_n],
+            "window_min": round(window_min, 1) if window_min else None,
+            "latest_ts": latest_ts.isoformat()}

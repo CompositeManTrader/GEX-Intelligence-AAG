@@ -590,6 +590,81 @@ def key_levels_panel(spot: float, gex_sum: Optional[dict],
     )
 
 
+def of_session_digest_panel(changes: dict) -> str:
+    """'¿Qué cambió en la sesión?' — renders quant.orderflow_derived.
+    session_changes(): GEX open→now, transiciones de régimen y saltos de
+    muros, cada uno con su hora ET."""
+    if not changes or not changes.get("n_ticks"):
+        return _box_err("Sin historia de sesión todavía — el recorder "
+                        "acumula un snapshot cada ~10 min de mercado.")
+
+    def _et(ts_iso) -> str:
+        try:
+            import datetime as _dt
+            from config import ET_TZ
+            t = _dt.datetime.fromisoformat(str(ts_iso).replace("Z", "+00:00"))
+            return t.astimezone(ET_TZ).strftime("%H:%M")
+        except Exception:
+            return "—"
+
+    g0, g1 = changes.get("gex_open_mm"), changes.get("gex_now_mm")
+    gd = changes.get("gex_delta_mm")
+    gex_html = "—"
+    if g0 is not None and g1 is not None:
+        dcol = "#22c55e" if (gd or 0) >= 0 else "#f43f5e"
+        gex_html = (f'${_humanize(g0 * 1e6)} → <b>${_humanize(g1 * 1e6)}</b> '
+                    f'<span style="color:{dcol}">({gd:+,.0f}M)</span>')
+
+    rch = changes.get("regime_changes") or []
+    if rch:
+        reg_html = " · ".join(
+            f'<b style="color:{"#22c55e" if c["to"] == "POSITIVE" else "#f43f5e"}">'
+            f'{_et(c["ts"])}</b> {c["from"][:3]}→{c["to"][:3]}' for c in rch)
+    else:
+        rnow = changes.get("regime_now") or "—"
+        reg_html = f"sin cambios · {rnow} toda la sesión"
+
+    wall_lines = ""
+    wall_names = {"call_wall": ("Call Wall", "#22c55e"),
+                  "put_wall": ("Put Wall", "#f43f5e"),
+                  "hvl": ("HVL", "#a855f7")}
+    for key, (name, clr) in wall_names.items():
+        w = (changes.get("walls") or {}).get(key) or {}
+        moves = w.get("moves") or []
+        if moves:
+            mtxt = " · ".join(f'{_et(m["ts"])} {m["from"]:.0f}→{m["to"]:.0f}'
+                              for m in moves[-3:])
+            extra = f" (+{len(moves) - 3} más)" if len(moves) > 3 else ""
+            wall_lines += (f'<div style="font-size:0.7rem;color:#9595b8;'
+                           f'margin-top:2px;"><b style="color:{clr}">{name}'
+                           f'</b> se movió: {mtxt}{extra}</div>')
+    if not wall_lines:
+        wall_lines = ('<div style="font-size:0.7rem;color:#7a7a98;'
+                      'margin-top:2px;">Muros estables toda la sesión ✓</div>')
+
+    span = f'{_et(changes.get("first_ts"))} → {_et(changes.get("last_ts"))} ET'
+    return _html(f"""
+    <div style="background:linear-gradient(135deg,#0b0b16,#0e0e1c);
+         border:1px solid #1e1e32;border-left:4px solid #f97316;
+         padding:0.85rem 1.05rem;border-radius:8px;margin:0.4rem 0 0.9rem;
+         font-family:JetBrains Mono,monospace;">
+      <div style="display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;">
+        <div style="font-size:0.62rem;color:#f97316;letter-spacing:0.14em;">
+          ¿QUÉ CAMBIÓ EN LA SESIÓN?
+        </div>
+        <div style="font-size:0.6rem;color:#5b5b80;">{span} · {changes["n_ticks"]} snapshots</div>
+      </div>
+      <div style="font-size:0.78rem;color:#c8c8e0;margin-top:6px;">
+        Net GEX: {gex_html}
+      </div>
+      <div style="font-size:0.7rem;color:#9595b8;margin-top:3px;">
+        Régimen: {reg_html}
+      </div>
+      {wall_lines}
+    </div>
+    """)
+
+
 def _metric(label: str, value: str, color: str = "#e0e0f0",
             sub: Optional[str] = None) -> str:
     """Compact metric cell used by the trade-setup-card footer grid."""
