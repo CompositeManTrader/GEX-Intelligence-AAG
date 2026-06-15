@@ -41,6 +41,8 @@ def collect_price_levels(
     gs = gex_sum or {}
     cw, pw = gs.get("call_wall"), gs.get("put_wall")
     gf, hvl = gs.get("gamma_flip"), gs.get("hvl")
+    vt_c, vt_p = gs.get("vt_c"), gs.get("vt_p")
+    cb = gs.get("call_bridge")
 
     out: list[dict] = []
 
@@ -66,6 +68,22 @@ def collect_price_levels(
     if hvl:
         add(hvl, "pin", PURPLE, "dot", 1.8, "HVL · imán de pinning",
             "HVL / PIN", "Precio atraído a este nivel (mayor |GEX|)", True)
+
+    # ── Niveles de FLUJO / LIQUIDEZ (volumen de sesión + OI total) ──────────
+    # Distintos de los muros (OI gamma): el VT es dinero entrando HOY.
+    if vt_c:
+        add(vt_c, "flow", "#fbbf24", "dashdot", 1.4, "VT-C · vol call activo",
+            "VT-C", "Strike de mayor volumen CALL hoy (flujo activo al alza)",
+            False)
+    if vt_p:
+        add(vt_p, "flow", "#fb7185", "dashdot", 1.4, "VT-P · vol put activo",
+            "VT-P", "Strike de mayor volumen PUT hoy (flujo activo a la baja)",
+            False)
+    if cb:
+        add(cb, "liquidity", "#60a5fa", "dot", 1.4, "Call Bridge · OI total",
+            "CALL BRIDGE",
+            "Strike de mayor OI total — liquidez / referencia institucional",
+            False)
 
     for z in (zones or []):
         above = bool(getattr(z, "is_above_spot", z.peak_strike > spot))

@@ -688,7 +688,12 @@ def show_dashboard() -> None:
             "Líneas horizontales = niveles de gamma dealer (call/put wall · "
             "gamma flip · HVL · clusters P1/P2/P3) del alcance elegido. Línea "
             "cyan = precio intradía. Banda azul = rango actual. Verde = "
-            "resistencia · rojo = soporte · naranja = flip · morado = pin."
+            "resistencia · rojo = soporte · naranja = flip · morado = pin. "
+            "<b>Niveles de flujo</b> (punteado): <b>VT-C/VT-P</b> = strike de "
+            "mayor <b>volumen</b> call/put de HOY (no OI) · <b>Call Bridge</b> = "
+            "strike de mayor OI total (liquidez). El panel muestra la "
+            "dominancia de volumen calls vs puts.",
+            unsafe_allow_html=True,
         )
 
         from charts.levels_map import chart_price_levels

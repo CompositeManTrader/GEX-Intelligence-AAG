@@ -551,11 +551,12 @@ def trade_setup_card(
 
 
 def key_levels_panel(spot: float, gex_sum: Optional[dict],
-                     zones: Optional[list] = None, max_rows: int = 6) -> str:
+                     zones: Optional[list] = None, max_rows: int = 9) -> str:
     """Side panel for the Price & GEX Levels map — lists the key levels
     classified as resistance / support with a one-line explanation. Uses the
     same level classification as the chart (charts.levels_map)."""
     from charts.levels_map import collect_price_levels
+    from quant.vt_levels import vt_dominance_label
     levels = collect_price_levels(spot, gex_sum, zones)
     if not levels:
         return _box_err("Sin niveles GEX para mapear.")
@@ -580,13 +581,23 @@ def key_levels_panel(spot: float, gex_sum: Optional[dict],
             f'<div style="font-size:0.65rem;color:#8585a8;margin-top:2px;">'
             f'{lv["desc"]}</div></div>'
         )
+    # Volume-dominance chip: which side (calls/puts) moves more volume today.
+    dom = vt_dominance_label(gex_sum)
+    dom_html = ""
+    if dom:
+        dom_html = (
+            f'<div style="margin-top:0.5rem;padding-top:0.45rem;'
+            f'border-top:1px solid #16162a;font-size:0.62rem;'
+            f'color:{dom["color"]};">▮ FLUJO DE SESIÓN · '
+            f'<b>{dom["text"]}</b></div>')
+
     return _html(
         f'<div style="background:linear-gradient(135deg,#0b0b16,#0e0e1c);'
         f'border:1px solid #1e1e32;border-radius:9px;padding:0.6rem 0.95rem;'
         f'font-family:JetBrains Mono,monospace;">'
         f'<div style="font-size:0.56rem;color:#5b5b80;letter-spacing:0.16em;'
         f'text-transform:uppercase;margin-bottom:0.35rem;">Niveles clave</div>'
-        f'{rows}</div>'
+        f'{rows}{dom_html}</div>'
     )
 
 

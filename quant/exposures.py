@@ -261,6 +261,12 @@ def compute_gex_profile(
         regime = "NEUTRAL"
     flip_pct = ((flip - spot) / spot * 100) if flip else None
 
+    # Volume Trigger (VT-C/VT-P + dominancia) y Call Bridge — niveles basados
+    # en la actividad de la sesión (volumen) y la liquidez (OI total), no en el
+    # gamma. Se calculan sobre la MISMA cadena filtrada que los muros, así que
+    # respetan el alcance DTE elegido (0DTE vs agregado).
+    from quant.vt_levels import call_bridge, volume_trigger
+
     summary = dict(
         regime=regime,
         total_gex=total,
@@ -271,9 +277,11 @@ def compute_gex_profile(
         call_wall=call_wall,
         put_wall=put_wall,
         hvl=hvl,
+        call_bridge=call_bridge(c, p),
         n_strikes=int(len(df)),
         max_dte=max_dte,
     )
+    summary.update(volume_trigger(c, p))
     return df, summary
 
 
