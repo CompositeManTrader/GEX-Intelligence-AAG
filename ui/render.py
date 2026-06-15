@@ -605,6 +605,40 @@ def show_dashboard() -> None:
         return
 
     # ─────────────────────────────────────────────────────────────────────────
+    #  Shared RND (the crown-jewel model) — memoised per render so the Overview
+    #  mini-panel and the Expected Range tab never recompute the same horizon.
+    #  Streamlit executes every tab body each run, so this is the single source.
+    # ─────────────────────────────────────────────────────────────────────────
+    from quant.rnd import build_rnd as _build_rnd, rnd_levels as _rnd_levels
+    from quant.bs import rate_for_dte as _rate_for_dte
+    from config import dividend_yield_for as _div_yield_for
+    _rnd_memo: dict = {}
+
+    def _get_rnd(dte: int):
+        dte = int(dte)
+        if dte not in _rnd_memo:
+            try:
+                _r = float(np.atleast_1d(_rate_for_dte(dte))[0])
+            except Exception:
+                _r = 0.045
+            try:
+                _df, _meta = _build_rnd(calls, puts, spot=spot, dte=dte,
+                                        r=_r, q=_div_yield_for(symbol))
+            except Exception as _exc:
+                log.warning("build_rnd(dte=%s) failed: %s", dte, _exc)
+                _df, _meta = None, {}
+            _lv = {}
+            if _df is not None and not _df.empty:
+                _lv = _rnd_levels(_df, spot=spot, levels={
+                    "call_wall": (gex_sum or {}).get("call_wall"),
+                    "put_wall": (gex_sum or {}).get("put_wall"),
+                    "hvl": (gex_sum or {}).get("hvl"),
+                    "gamma_flip": (gex_sum or {}).get("gamma_flip"),
+                })
+            _rnd_memo[dte] = (_df, _meta, _lv)
+        return _rnd_memo[dte]
+
+    # ─────────────────────────────────────────────────────────────────────────
     #  TABS  (named for readability — order here controls UI order)
     # ─────────────────────────────────────────────────────────────────────────
     TAB_LABELS = [
@@ -790,6 +824,15 @@ def show_dashboard() -> None:
             atm_iv=iv_atm, iv_hv_ratio=iv_hv_ratio,
             em_lo=em_lo, em_hi=em_hi, dte=dte_v,
         ))
+
+        # 1b. IMPLIED DISTRIBUTION (RND) — the crown-jewel model, compact.
+        # New info on Overview (full implied distribution + skew), not a
+        # repeat of the header's simple 1σ EM bar. Shares the memoised compute.
+        from ui.widgets import rnd_mini_panel
+        _rnd_ov, _rnd_ov_meta, _rnd_ov_lv = _get_rnd(0)
+        _mini = rnd_mini_panel(_rnd_ov, _rnd_ov_lv, _rnd_ov_meta, spot)
+        if _mini:
+            _render_md(_mini)
 
         # 2. GEX FLIP ZONE — thermometer tactico
         _render_md(flip_zone_widget(spot, gex_sum))
@@ -1954,30 +1997,25 @@ def show_dashboard() -> None:
     # ── EXPECTED RANGE ───────────────────────────────────────────────────────
     with tab_erange:
         from quant.expected_range import compare_estimators, prob_cone
-        from quant.rnd import build_rnd, rnd_levels
         from quant.levels import _interp_iv_one_side
         from charts.expected_range import (
-            chart_estimator_comparison, chart_iv_vs_realized,
-            chart_prob_cone, chart_risk_neutral_density,
+            chart_estimator_comparison, chart_prob_cone,
+            chart_risk_neutral_density,
         )
         from ui.widgets import panel_rnd_levels_html, panel_em_accuracy_html
-        from config import dividend_yield_for
-        from quant.bs import rate_for_dte
 
         _render_md('<p class="bb-header">'
-                   'EXPECTED RANGE  ·  rango estadístico esperado de la sesión</p>')
+                   'EXPECTED RANGE  ·  distribución implícita (RND) + estimadores</p>')
         st.caption(
-            "Cinco estimadores del rango esperado en paralelo: "
-            "<b>IV-Gaussian</b> (modelo clásico), <b>Skew-adjusted</b> "
-            "(put-IV abajo / call-IV arriba), <b>Straddle MMM</b> (lo que "
-            "el mercado cotiza, sin modelo), <b>Realized vol</b> (lo que el "
-            "subyacente entregó) y la <b>Risk-Neutral Density</b> (distribución "
-            "implícita completa del chain). Útil para sizing de iron condors, "
-            "strangles y para detectar si la IV está cara/barata."
+            "El modelo central es la <b>Risk-Neutral Density</b>: la "
+            "distribución de probabilidad completa que el mercado de opciones "
+            "cotiza para el cierre, extraída del chain vía SVI (Gatheral) + "
+            "Breeden-Litzenberger, arbitrage-free y centrada en el forward. "
+            "Los niveles salen por inversión exacta de la CDF. Debajo, cuatro "
+            "estimadores clásicos del rango ±1σ como contraste."
         )
 
-        # Horizon selector — radio pills instead of the old full-width
-        # selectbox (a giant dropdown for 5 small values wasted a whole row).
+        # Horizon selector — radio pills.
         er_dte = st.radio(
             "Horizonte (DTE)", [0, 1, 2, 5, 7],
             index=0, key="er_dte", horizontal=True,
@@ -1985,101 +2023,26 @@ def show_dashboard() -> None:
             help="0 = hoy (intradía, fracción de día a las 16:00 ET).",
         )
 
-        # IV inputs: ATM call-side and put-side from the chain.
+        # IV inputs (feed the classical estimators in the expander).
         iv_call_side = _interp_iv_one_side(calls, spot) if not calls.empty else None
         iv_put_side = _interp_iv_one_side(puts, spot) if not puts.empty else None
-        # Realized vol (Yang-Zhang HV30) from the vol analytics already
-        # computed for this symbol, if present.
         hv_realized = None
         if "analytics_full" in dir() and analytics_full:
             hv_realized = (analytics_full.get("hv30_yang_zhang")
                            or analytics_full.get("hv30"))
+        iv_blend_er = None
+        if iv_call_side is not None and iv_put_side is not None:
+            iv_blend_er = (iv_call_side + iv_put_side) / 2.0
+        elif iv_call_side is not None:
+            iv_blend_er = iv_call_side
+        elif iv_put_side is not None:
+            iv_blend_er = iv_put_side
 
-        if not spot or spot <= 0 or (iv_call_side is None and iv_put_side is None):
-            st.warning("Expected Range requiere spot e IV ATM válidos en la cadena.")
+        if not spot or spot <= 0:
+            st.warning("Expected Range requiere spot válido en la cadena.")
         else:
-            estimates, T_years = compare_estimators(
-                spot=spot, calls=calls, puts=puts,
-                iv_call_pct=iv_call_side, iv_put_pct=iv_put_side,
-                realized_vol_pct=hv_realized,
-                dte=int(er_dte),
-            )
-
-            # Headline metrics
-            em1, em2, em3, em4 = st.columns(4)
-            by_method = {e.method: e for e in estimates}
-            def _em_metric(col, method, label):
-                e = by_method.get(method)
-                col.metric(
-                    label,
-                    (f"±${e.em_dollars:.2f}" if e else "—"),
-                    (f"{e.em_pct:.2f}%" if e else None),
-                )
-            _em_metric(em1, "IV Gaussian", "IV Gaussian 1σ")
-            _em_metric(em2, "Straddle MMM", "Straddle MMM 1σ")
-            _em_metric(em3, "Skew-adjusted", "Skew-adj 1σ")
-            _em_metric(em4, "Realized vol", "Realized 1σ")
-
-            # 1. Estimator comparison chart
-            fig_cmp = chart_estimator_comparison(estimates, spot, symbol)
-            if fig_cmp is not None:
-                st.plotly_chart(fig_cmp, use_container_width=True,
-                                key=f"er_cmp_{symbol}")
-
-            # IV vs realized read
-            iv_blend_er = None
-            if iv_call_side is not None and iv_put_side is not None:
-                iv_blend_er = (iv_call_side + iv_put_side) / 2.0
-            elif iv_call_side is not None:
-                iv_blend_er = iv_call_side
-            elif iv_put_side is not None:
-                iv_blend_er = iv_put_side
-            if iv_blend_er and hv_realized:
-                ratio = iv_blend_er / hv_realized
-                rich = ("IV CARA — favor vender vol" if ratio > 1.2
-                        else "IV BARATA — favor comprar vol" if ratio < 0.9
-                        else "IV ≈ realized")
-                rclr = ("#f59e0b" if ratio > 1.2 else
-                        "#06b6d4" if ratio < 0.9 else "#9090b0")
-                _render_md(
-                    f'<div style="background:rgba(15,17,24,0.85);border-left:3px '
-                    f'solid {rclr};padding:0.5rem 0.8rem;border-radius:0 4px 4px 0;'
-                    f'font-family:JetBrains Mono,monospace;font-size:0.82rem;'
-                    f'margin:0.3rem 0">IV/HV = <b style="color:{rclr}">'
-                    f'{ratio:.2f}×</b> · {rich}  '
-                    f'<span style="color:#7070a0">(IV {iv_blend_er:.1f}% vs '
-                    f'HV {hv_realized:.1f}%)</span></div>'
-                )
-
-            # 2. Probability cone
-            cone = prob_cone(spot, iv_blend_er or iv_call_side or iv_put_side,
-                             dtes=(0, 1, 2, 5), sigmas=(1.0, 2.0))
-            if not cone.empty:
-                fig_cone = chart_prob_cone(cone, spot, symbol)
-                if fig_cone is not None:
-                    st.plotly_chart(fig_cone, use_container_width=True,
-                                    key=f"er_cone_{symbol}")
-
-            # 3. Risk-neutral density — THE CENTRAL MODEL (SVI-based)
-            _render_md('<p class="bb-header" style="margin-top:0.5rem">'
-                       'RISK-NEUTRAL DENSITY  ·  modelo central (SVI)</p>')
-            st.caption(
-                "Distribución de probabilidad implícita extraída del chain "
-                "vía SVI (Gatheral) + Breeden-Litzenberger. Ajuste "
-                "arbitrage-free en espacio (log-moneyness, varianza total), "
-                "centrado en el forward, con colas extrapoladas. Los niveles "
-                "salen por inversión exacta de la CDF — son los más precisos "
-                "del tab.",
-            )
-            _r = rate_for_dte(int(er_dte))
-            try:
-                _r = float(np.atleast_1d(_r)[0])
-            except Exception:
-                _r = 0.045
-            _q = dividend_yield_for(symbol)
-            rnd, rnd_meta = build_rnd(
-                calls, puts, spot=spot, dte=int(er_dte), r=_r, q=_q,
-            )
+            # ── HERO: Risk-Neutral Density (the crown jewel, leads the tab) ──
+            rnd, rnd_meta, lv = _get_rnd(int(er_dte))
             if rnd is not None and not rnd.empty:
                 levels = {
                     "call_wall": (gex_sum or {}).get("call_wall"),
@@ -2087,39 +2050,95 @@ def show_dashboard() -> None:
                     "hvl": (gex_sum or {}).get("hvl"),
                     "gamma_flip": (gex_sum or {}).get("gamma_flip"),
                 }
-                lv = rnd_levels(rnd, spot=spot, levels=levels)
                 _render_md(panel_rnd_levels_html(lv, spot, meta=rnd_meta))
                 fig_rnd = chart_risk_neutral_density(
                     rnd, spot=spot, levels=levels, symbol=symbol,
                     rnd_levels_data=lv, method=rnd_meta.get("method"),
+                    confidence=rnd_meta.get("confidence"),
+                    forward=rnd_meta.get("forward"),
                 )
                 if fig_rnd is not None:
                     st.plotly_chart(fig_rnd, use_container_width=True,
                                     key=f"er_rnd_{symbol}")
             else:
-                st.caption(
-                    "Risk-neutral density requiere ≥5 strikes con IV% válida. "
-                    "Prueba con un símbolo líquido (SPY/SPX/QQQ) o un DTE con "
-                    "más strikes."
+                st.info(
+                    "Risk-neutral density requiere ≥5 strikes con IV% válida en "
+                    "este horizonte. Prueba SPY/SPX/QQQ o un DTE con más strikes."
                 )
 
-            # 4. EM Accuracy tracker — calibration (auto-recorded headless)
+            # ── Classical estimators (contrast) — tucked in an expander ─────
+            with st.expander("📐 Estimadores clásicos del rango ±1σ  ·  "
+                             "IV-Gaussian · Straddle · Skew · Realized · cono"):
+                if iv_call_side is None and iv_put_side is None:
+                    st.caption("Sin IV ATM válida en la cadena para los "
+                               "estimadores clásicos.")
+                else:
+                    estimates, _T = compare_estimators(
+                        spot=spot, calls=calls, puts=puts,
+                        iv_call_pct=iv_call_side, iv_put_pct=iv_put_side,
+                        realized_vol_pct=hv_realized, dte=int(er_dte),
+                    )
+                    by_method = {e.method: e for e in estimates}
+
+                    def _em_metric(col, method, label):
+                        e = by_method.get(method)
+                        col.metric(label, (f"±${e.em_dollars:.2f}" if e else "—"),
+                                   (f"{e.em_pct:.2f}%" if e else None))
+                    em1, em2, em3, em4 = st.columns(4)
+                    _em_metric(em1, "IV Gaussian", "IV Gaussian 1σ")
+                    _em_metric(em2, "Straddle MMM", "Straddle MMM 1σ")
+                    _em_metric(em3, "Skew-adjusted", "Skew-adj 1σ")
+                    _em_metric(em4, "Realized vol", "Realized 1σ")
+
+                    fig_cmp = chart_estimator_comparison(estimates, spot, symbol)
+                    if fig_cmp is not None:
+                        st.plotly_chart(fig_cmp, use_container_width=True,
+                                        key=f"er_cmp_{symbol}")
+
+                    if iv_blend_er and hv_realized:
+                        ratio = iv_blend_er / hv_realized
+                        rich = ("IV CARA — favor vender vol" if ratio > 1.2
+                                else "IV BARATA — favor comprar vol" if ratio < 0.9
+                                else "IV ≈ realized")
+                        rclr = ("#f59e0b" if ratio > 1.2 else
+                                "#06b6d4" if ratio < 0.9 else "#9090b0")
+                        _render_md(
+                            f'<div style="background:rgba(15,17,24,0.85);'
+                            f'border-left:3px solid {rclr};padding:0.5rem 0.8rem;'
+                            f'border-radius:0 4px 4px 0;font-family:JetBrains '
+                            f'Mono,monospace;font-size:0.82rem;margin:0.3rem 0">'
+                            f'IV/HV = <b style="color:{rclr}">{ratio:.2f}×</b> · '
+                            f'{rich}  <span style="color:#7070a0">(IV '
+                            f'{iv_blend_er:.1f}% vs HV {hv_realized:.1f}%)</span>'
+                            f'</div>'
+                        )
+
+                    cone = prob_cone(
+                        spot, iv_blend_er or iv_call_side or iv_put_side,
+                        dtes=(0, 1, 2, 5), sigmas=(1.0, 2.0))
+                    if not cone.empty:
+                        fig_cone = chart_prob_cone(cone, spot, symbol)
+                        if fig_cone is not None:
+                            st.plotly_chart(fig_cone, use_container_width=True,
+                                            key=f"er_cone_{symbol}")
+
+            # ── EM Accuracy tracker — calibration (auto-recorded headless) ──
             _render_md('<p class="bb-header" style="margin-top:0.5rem">'
                        'EM ACCURACY  ·  ¿el modelo acierta?</p>')
             try:
                 from data import em_store
                 from quant.em_tracker import accuracy_stats
-                hist = em_store.load_history(symbol, limit=250)
-                if hist:
-                    stats = accuracy_stats(hist, only_clean=True)
+                em_hist = em_store.load_history(symbol, limit=250)
+                if em_hist:
+                    stats = accuracy_stats(em_hist, only_clean=True)
                     _render_md(panel_em_accuracy_html(
                         stats, backend=em_store.backend_info().get("backend", "—")))
                 else:
                     st.caption(
                         "Aún sin registros para este símbolo. El job headless "
                         "(GitHub Actions) graba una predicción cada apertura y "
-                        "la liquida al cierre — necesita ~10 sesiones para un "
-                        "veredicto de calibración. Ver `docs/EM_TRACKER_SETUP.md`."
+                        "la liquida al cierre — ~10 sesiones para un veredicto. "
+                        "Ver `docs/EM_TRACKER_SETUP.md`."
                     )
             except Exception as exc:
                 log.warning("EM accuracy panel failed: %s", exc)

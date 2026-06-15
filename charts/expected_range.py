@@ -155,7 +155,9 @@ def chart_risk_neutral_density(rnd: pd.DataFrame, spot: float,
                                levels: Optional[dict] = None,
                                symbol: str = "",
                                rnd_levels_data: Optional[dict] = None,
-                               method: Optional[str] = None) -> Optional[go.Figure]:
+                               method: Optional[str] = None,
+                               confidence: Optional[str] = None,
+                               forward: Optional[float] = None) -> Optional[go.Figure]:
     """The implied PDF extracted from the chain (SVI → Breeden-Litzenberger).
 
     Overlays:
@@ -183,15 +185,24 @@ def chart_risk_neutral_density(rnd: pd.DataFrame, spot: float,
             fig.add_trace(go.Scatter(
                 x=k[mask], y=p[mask], mode="lines",
                 line=dict(width=0),
-                fill="tozeroy", fillcolor="rgba(34,197,94,0.16)",
-                name="IQR (P25–P75)", hoverinfo="skip",
+                fill="tozeroy", fillcolor="rgba(34,197,94,0.20)",
+                name="zona probable 50% (P25–P75)", hoverinfo="skip",
             ))
+            # Callout on the likely zone — the single most useful read.
+            kmid = 0.5 * (p25 + p75)
+            ymid = float(np.interp(kmid, k, p))
+            fig.add_annotation(
+                x=kmid, y=ymid * 0.45, text="zona más<br>probable · 50%",
+                showarrow=False, font=dict(size=8.5, color="#22c55e",
+                                           family=FONT_MONO),
+                bgcolor="rgba(8,12,8,0.55)", borderpad=2,
+            )
 
-    # ── Implied density curve
+    # ── Implied density curve (the hero)
     fig.add_trace(go.Scatter(
         x=k, y=p, mode="lines", name="Implied PDF (RND)",
-        line=dict(color=CYAN, width=2.4),
-        fill="tozeroy", fillcolor="rgba(6,182,212,0.10)",
+        line=dict(color=CYAN, width=2.8),
+        fill="tozeroy", fillcolor="rgba(6,182,212,0.14)",
         hovertemplate="K $%{x:,.1f}<br>dens %{y:.5f}<extra></extra>",
     ))
 
@@ -235,6 +246,16 @@ def chart_risk_neutral_density(rnd: pd.DataFrame, spot: float,
                   annotation_font=dict(size=10, color=ORANGE, family=FONT_MONO),
                   annotation_position="top", annotation_yshift=-27)
 
+    # ── Forward (martingale centre E_Q[S_T]) — distinct from spot so the
+    # cost-of-carry / dividend drift is visible when it matters.
+    if forward is not None and abs(float(forward) - spot) > 0.01 * spot * 0.05:
+        fig.add_vline(x=float(forward), line_dash="dot", line_color="#9090b0",
+                      line_width=1.2,
+                      annotation_text=f"fwd ${float(forward):,.1f}",
+                      annotation_font=dict(size=8, color="#9090b0",
+                                           family=FONT_MONO),
+                      annotation_position="bottom")
+
     # ── Key levels (walls) with implied P(below)
     level_colors = {"call_wall": GREEN, "put_wall": RED,
                     "hvl": CYAN, "gamma_flip": PURPLE}
@@ -262,12 +283,17 @@ def chart_risk_neutral_density(rnd: pd.DataFrame, spot: float,
         )
 
     method_tag = f"  ·  fit: {method.upper()}" if method else ""
+    conf_map = {"high": ("alta", "#22c55e"), "medium": ("media", "#f59e0b"),
+                "low": ("baja", "#f43f5e")}
+    conf_lbl, conf_clr = conf_map.get(confidence or "", ("", "#c0c0d8"))
+    conf_tag = (f"   ·   confianza <span style='color:{conf_clr}'>{conf_lbl}</span>"
+                if conf_lbl else "")
     fig.update_layout(
-        height=420,
+        height=480,
         title=dict(
             text=f"  RISK-NEUTRAL DENSITY  ·  {symbol}  ·  "
-                 f"distribución implícita{method_tag}",
-            font=dict(size=12, color="#c0c0d8", family=FONT_MONO), x=0,
+                 f"distribución implícita{method_tag}{conf_tag}",
+            font=dict(size=12.5, color="#c0c0d8", family=FONT_MONO), x=0,
         ),
         # Legend BELOW the plot — at the old top-right position it sat under
         # Plotly's modebar icons and was unreadable (live-audit finding).

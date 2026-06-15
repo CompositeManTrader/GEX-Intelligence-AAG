@@ -1427,6 +1427,121 @@ def panel_rnd_stats_html(stats: dict, spot: float) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 #  RND EXACT LEVELS panel (SVI model — central Expected Range model)
 # ─────────────────────────────────────────────────────────────────────────────
+def _rnd_sparkline_svg(rnd, levels: dict, spot: float,
+                       width: int = 360, height: int = 70) -> str:
+    """Inline SVG of the implied density: filled curve + P25–P75 shaded
+    'likely zone' + spot marker. Used by the compact Overview panel."""
+    import numpy as _np
+    try:
+        k = rnd["strike"].to_numpy(float)
+        p = rnd["pdf"].to_numpy(float)
+    except Exception:
+        return ""
+    if k.size < 3:
+        return ""
+    pct = (levels or {}).get("percentiles", {})
+    lo = pct.get("p5") or float(k.min())
+    hi = pct.get("p95") or float(k.max())
+    span = max(hi - lo, 1e-9)
+    lo, hi = lo - span * 0.10, hi + span * 0.10
+    mask = (k >= lo) & (k <= hi)
+    if mask.sum() < 3:
+        mask = _np.ones_like(k, dtype=bool)
+    ks, ps = k[mask], p[mask]
+    if ks.size > 80:                       # downsample for a compact path
+        idx = _np.linspace(0, ks.size - 1, 80).astype(int)
+        ks, ps = ks[idx], ps[idx]
+    kmin, kmax = float(ks.min()), float(ks.max())
+    pmax = float(ps.max()) or 1.0
+    pad = 7.0
+    sx = (lambda v: (v - kmin) / (kmax - kmin) * width if kmax > kmin else 0.0)
+    sy = (lambda v: height - pad - (v / pmax) * (height - 2 * pad))
+    line_pts = " ".join(f"{sx(a):.1f},{sy(b):.1f}" for a, b in zip(ks, ps))
+    fill_pts = (f"{sx(kmin):.1f},{height - pad:.1f} " + line_pts +
+                f" {sx(kmax):.1f},{height - pad:.1f}")
+    iqr = ""
+    p25, p75 = pct.get("p25"), pct.get("p75")
+    if p25 and p75:
+        x0, x1 = sx(max(p25, kmin)), sx(min(p75, kmax))
+        iqr = (f'<rect x="{x0:.1f}" y="{pad:.1f}" width="{max(x1 - x0, 1):.1f}" '
+               f'height="{height - 2 * pad:.1f}" fill="rgba(34,197,94,0.14)"/>')
+    spot_ln = ""
+    if kmin <= spot <= kmax:
+        xs = sx(spot)
+        spot_ln = (f'<line x1="{xs:.1f}" y1="{pad - 3:.1f}" x2="{xs:.1f}" '
+                   f'y2="{height - pad:.1f}" stroke="#f97316" stroke-width="1.6"/>')
+    return (
+        f'<svg width="100%" viewBox="0 0 {width} {height}" preserveAspectRatio="none" '
+        f'xmlns="http://www.w3.org/2000/svg" style="display:block">'
+        f'{iqr}<polygon points="{fill_pts}" fill="rgba(6,182,212,0.16)"/>'
+        f'<polyline points="{line_pts}" fill="none" stroke="#22d3ee" '
+        f'stroke-width="1.8"/>{spot_ln}</svg>'
+    )
+
+
+def rnd_mini_panel(rnd, levels: dict, meta: Optional[dict], spot: float) -> str:
+    """Compact Overview card surfacing the crown-jewel RND model: a mini
+    implied-distribution sparkline + the 1σ-equivalent band, skew and a
+    confidence dot. Returns '' when there is no usable density (kept silent
+    on Overview rather than showing an error box)."""
+    if rnd is None or getattr(rnd, "empty", True) or not levels:
+        return ""
+    pct = levels.get("percentiles", {})
+    p16, p84 = levels.get("p16"), levels.get("p84")
+    std_pct = levels.get("std_pct")
+    skew = levels.get("skew", 0.0) or 0.0
+    method = ((meta or {}).get("method") or "—").upper()
+    conf = (meta or {}).get("confidence", "—")
+    svg = _rnd_sparkline_svg(rnd, levels, spot)
+    if not svg:
+        return ""
+
+    band = (f"${p16:,.1f} – ${p84:,.1f}" if (p16 and p84) else "—")
+    band_pct = f"±{std_pct:.2f}%" if std_pct else ""
+    sk_clr = ("#f43f5e" if skew < -0.15 else
+              "#22c55e" if skew > 0.15 else "#9090b0")
+    sk_txt = ("sesgo bajista ▼" if skew < -0.15
+              else "sesgo alcista ▲" if skew > 0.15 else "≈ simétrico")
+    conf_map = {"high": ("#22c55e", "alta"), "medium": ("#f59e0b", "media"),
+                "low": ("#f43f5e", "baja")}
+    c_clr, c_txt = conf_map.get(conf, ("#9090b0", "—"))
+
+    return _html(f"""
+    <div style="background:linear-gradient(135deg,#0b0b16,#0e0e1c);
+         border:1px solid #1e1e32;border-radius:8px;padding:0.7rem 0.95rem;
+         margin:0.2rem 0 0.9rem;font-family:JetBrains Mono,monospace;">
+      <div style="display:flex;align-items:center;justify-content:space-between;
+           margin-bottom:0.5rem;">
+        <span style="font-size:0.6rem;color:#22d3ee;letter-spacing:0.14em;">
+          ◈ DISTRIBUCIÓN IMPLÍCITA · RISK-NEUTRAL DENSITY</span>
+        <span style="font-size:0.56rem;color:#5b5b80;">
+          modelo {method} · <span style="color:{c_clr}">●</span>
+          confianza {c_txt}</span>
+      </div>
+      <div style="display:flex;gap:1.1rem;align-items:center;flex-wrap:wrap;">
+        <div style="flex:1 1 320px;min-width:240px;">{svg}
+          <div style="display:flex;justify-content:space-between;
+               font-size:0.54rem;color:#5b5b80;margin-top:2px;">
+            <span>P5</span>
+            <span style="color:#22c55e;">zona probable 50% (P25–P75)</span>
+            <span>P95</span></div>
+        </div>
+        <div style="display:flex;gap:1.3rem;flex-wrap:wrap;">
+          <div><div style="font-size:0.56rem;color:#6b7280;">RANGO 1σ (P16–P84)</div>
+            <div style="font-size:0.92rem;font-weight:700;color:#e8e8f4;">{band}
+              <span style="font-size:0.6rem;color:#7070a0;">{band_pct}</span></div></div>
+          <div><div style="font-size:0.56rem;color:#6b7280;">SESGO</div>
+            <div style="font-size:0.92rem;font-weight:700;color:{sk_clr};">
+              {skew:+.2f} <span style="font-size:0.58rem;">{sk_txt}</span></div></div>
+        </div>
+      </div>
+      <div style="font-size:0.56rem;color:#4a4a68;margin-top:0.45rem;">
+        Lo que el mercado de opciones cotiza para el cierre · detalle completo en
+        <b style="color:#7070a0;">📐 Expected Range</b></div>
+    </div>
+    """)
+
+
 def panel_rnd_levels_html(levels_data: dict, spot: float,
                           meta: Optional[dict] = None) -> str:
     """Render the exact level table from the SVI risk-neutral density:
@@ -1568,19 +1683,36 @@ def panel_rnd_levels_html(levels_data: dict, spot: float,
             f'Niveles por inversión exacta de la CDF (no interpolación).</div>'
         )
 
+    def _stat(label, value, vclr="#e8e8f4", note=""):
+        note_html = (f'<span style="font-size:0.56rem;color:#7070a0;'
+                     f'margin-left:3px;">{note}</span>') if note else ""
+        return (
+            f'<div style="flex:1 1 120px;background:#0b0b15;border:1px solid '
+            f'#1a1a2c;border-radius:6px;padding:0.4rem 0.55rem;">'
+            f'<div style="color:#6b7280;font-size:0.55rem;letter-spacing:0.06em;'
+            f'text-transform:uppercase;margin-bottom:2px;">{label}</div>'
+            f'<div style="color:{vclr};font-weight:700;font-size:0.92rem;'
+            f'font-variant-numeric:tabular-nums;">{value}{note_html}</div></div>'
+        )
+
+    stat_cards = (
+        _stat("Mode (+probable)", f"${mode:,.2f}", "#06b6d4") +
+        _stat("Mediana P50", f"${pct.get('p50', 0):,.2f}") +
+        _stat("Rango 1σ (P16–P84)", f"${p16:,.0f}–{p84:,.0f}") +
+        _stat("σ implícita", f"${std:,.2f}", note=f"{std_pct:.2f}%") +
+        _stat("Skew", f"{skew:+.2f}", skew_clr, note=skew_txt) +
+        _stat("Kurtosis", f"{kurt:+.2f}", kurt_clr, note=kurt_txt)
+    )
+
     return _html(f"""
-<div style="background:rgba(15,17,24,0.85);border:1px solid #1e2230;border-radius:6px;padding:0.7rem 0.9rem;margin:0.5rem 0;font-family:JetBrains Mono,monospace">
-<div style="color:#9090b0;font-size:0.66rem;letter-spacing:0.14em;text-transform:uppercase;margin-bottom:0.5rem">🎯 NIVELES EXACTOS · risk-neutral density (SVI)</div>
-{conf_badge}
-<div style="display:flex;gap:1.2rem;flex-wrap:wrap;font-size:0.82rem;margin-bottom:0.4rem">
-<div><div style="color:#6b7280;font-size:0.6rem">MODE (+probable)</div><div style="color:#06b6d4;font-weight:700">${mode:,.2f}</div></div>
-<div><div style="color:#6b7280;font-size:0.6rem">MEDIANA P50</div><div style="color:#e0e0f0;font-weight:700">${pct.get('p50',0):,.2f}</div></div>
-<div><div style="color:#6b7280;font-size:0.6rem">1σ-equiv (P16–P84)</div><div style="color:#e0e0f0;font-weight:700">${p16:,.1f} – ${p84:,.1f}</div></div>
-<div><div style="color:#6b7280;font-size:0.6rem">σ IMPLÍCITA</div><div style="color:#e0e0f0;font-weight:700">${std:,.2f} ({std_pct:.2f}%)</div></div>
-<div><div style="color:#6b7280;font-size:0.6rem">SKEW</div><div style="color:{skew_clr};font-weight:700">{skew:+.2f} <span style="font-size:0.6rem">{skew_txt}</span></div></div>
-<div><div style="color:#6b7280;font-size:0.6rem">KURTOSIS</div><div style="color:{kurt_clr};font-weight:700">{kurt:+.2f} <span style="font-size:0.6rem">{kurt_txt}</span></div></div>
+<div style="background:linear-gradient(135deg,#0c0c18,#101020);border:1px solid #1e2230;border-radius:9px;padding:0.85rem 1rem;margin:0.5rem 0;font-family:JetBrains Mono,monospace;box-shadow:0 6px 22px rgba(0,0,0,0.32)">
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.6rem">
+<span style="color:#22d3ee;font-size:0.64rem;letter-spacing:0.14em;text-transform:uppercase">◈ NIVELES EXACTOS · RISK-NEUTRAL DENSITY</span>
+<span style="color:#4a4a68;font-size:0.56rem">inversión exacta de la CDF</span>
 </div>
-<div style="color:#7070a0;font-size:0.6rem;letter-spacing:0.1em;margin:0.3rem 0 0.1rem">ESCALERA DE PERCENTILES (probabilidad de cierre)</div>
+{conf_badge}
+<div style="display:flex;gap:0.45rem;flex-wrap:wrap;margin-bottom:0.55rem">{stat_cards}</div>
+<div style="color:#7070a0;font-size:0.58rem;letter-spacing:0.1em;margin:0.4rem 0 0.25rem">ESCALERA DE PERCENTILES · probabilidad de cierre</div>
 <div style="display:flex;gap:0.15rem">{pcells}</div>
 {levels_table}
 {foot}
