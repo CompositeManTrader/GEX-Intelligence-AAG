@@ -831,7 +831,7 @@ def show_dashboard() -> None:
         # T, su gamma ≈ la de 1 día → el GEX 0DTE estaría subvaluado.
         with st.expander("🔬 Validación de gamma · Schwab vs recalculada (0DTE)"):
             import numpy as _np
-            from quant import bs as _bs
+            from quant import bs
             from quant.gamma_audit import implied_T_from_gamma
 
             def _smallest_dte_atm(df):
