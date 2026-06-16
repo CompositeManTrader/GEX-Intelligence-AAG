@@ -833,6 +833,7 @@ def show_dashboard() -> None:
             import numpy as _np
             from quant import bs
             from quant.gamma_audit import implied_T_from_gamma
+            from config import dividend_yield_for
 
             def _smallest_dte_atm(df):
                 if df is None or df.empty or "DTE" not in df.columns:
