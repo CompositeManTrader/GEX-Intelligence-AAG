@@ -824,6 +824,89 @@ def show_dashboard() -> None:
         if price_err:
             st.error(f"Price history: {price_err}")
 
+        # ── VALIDACIÓN DE GAMMA — ¿con qué T calcula Schwab su gamma 0DTE? ──
+        # El perfil GEX usa la gamma REPORTADA por Schwab. Aquí comparamos, en
+        # los strikes near-ATM del menor DTE disponible, la gamma de Schwab vs
+        # bs.gamma con la T intradía real vs con T=1 día. Si Schwab floorea la
+        # T, su gamma ≈ la de 1 día → el GEX 0DTE estaría subvaluado.
+        with st.expander("🔬 Validación de gamma · Schwab vs recalculada (0DTE)"):
+            import numpy as _np
+            from quant import bs as _bs
+            from quant.gamma_audit import implied_T_from_gamma
+
+            def _smallest_dte_atm(df):
+                if df is None or df.empty or "DTE" not in df.columns:
+                    return None, None
+                d = pd.to_numeric(df["DTE"], errors="coerce")
+                dmin = int(d.min()) if d.notna().any() else None
+                if dmin is None:
+                    return None, None
+                sub = df[d == dmin].copy()
+                sub["_m"] = (pd.to_numeric(sub["Strike"], errors="coerce")
+                             - spot).abs()
+                return dmin, sub.nsmallest(6, "_m")
+
+            dmin_c, near_c = _smallest_dte_atm(calls_all)
+            now_et = datetime.datetime.now(ET_TZ)
+            T_intra = float(_np.atleast_1d(bs.time_to_expiry_years(0))[0])
+            secs_close = T_intra * 86400.0 * 365.0
+            T_1day = 1.0 / 365.0
+            st.caption(
+                f"Hora ET: **{now_et:%H:%M:%S}** · menor DTE disponible: "
+                f"**{dmin_c}** · T intradía del modelo = **{T_intra:.2e} años** "
+                f"(~{secs_close/3600:.2f} h al cierre) · T 1-día = {T_1day:.2e}."
+            )
+            if near_c is None or near_c.empty:
+                st.info("Sin cadena de calls para auditar.")
+            else:
+                _q = dividend_yield_for(symbol)
+                rows = []
+                ratios_intra, ratios_1d = [], []
+                for _, rr in near_c.iterrows():
+                    K = float(rr["Strike"]); g_sch = float(rr.get("Gamma") or 0)
+                    iv = float(rr.get("IV%") or 0) / 100.0
+                    if iv <= 0 or g_sch <= 0:
+                        continue
+                    r_ = float(_np.atleast_1d(bs.rate_for_dte(dmin_c))[0])
+                    g_intra = float(bs.gamma(spot, K, T_intra, iv, r_, _q))
+                    g_1d = float(bs.gamma(spot, K, T_1day, iv, r_, _q))
+                    ti = implied_T_from_gamma(g_sch, spot, K, iv, r_, _q)
+                    if g_intra > 0:
+                        ratios_intra.append(g_sch / g_intra)
+                    if g_1d > 0:
+                        ratios_1d.append(g_sch / g_1d)
+                    rows.append({
+                        "Strike": K, "IV%": rr.get("IV%"),
+                        "γ Schwab": round(g_sch, 5),
+                        "γ bs(T intradía)": round(g_intra, 5),
+                        "γ bs(T 1día)": round(g_1d, 5),
+                        "T implícita (días)": (round(ti * 365, 3)
+                                               if ti else None),
+                    })
+                if rows:
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True,
+                                 hide_index=True)
+                    med_i = float(_np.median(ratios_intra)) if ratios_intra else None
+                    med_d = float(_np.median(ratios_1d)) if ratios_1d else None
+                    msg = (f"Mediana γSchwab/γ(T intradía) = "
+                           f"**{med_i:.2f}** · γSchwab/γ(T 1día) = "
+                           f"**{med_d:.2f}**.")
+                    if med_i is not None and abs(med_i - 1) < 0.25:
+                        verdict = ("✅ Schwab usa una T ≈ intradía → la magnitud "
+                                   "del GEX 0DTE es razonable (solo conviene "
+                                   "recalcular por consistencia).")
+                    elif med_d is not None and abs(med_d - 1) < 0.30:
+                        verdict = ("🔴 Schwab usa ≈ T de 1 día (floor) → el GEX "
+                                   "0DTE está SUBVALUADO ~"
+                                   f"{(1/med_i if med_i else 0):.1f}× intradía. "
+                                   "Hay que recalcular la gamma.")
+                    else:
+                        verdict = ("⚠ Convención de Schwab no concluyente — "
+                                   "revisar la tabla manualmente.")
+                    st.markdown(msg + "  \n" + verdict)
+                else:
+                    st.info("Sin strikes con IV/gamma válidas para comparar.")
+
     # ── OVERVIEW ────────────────────────────────────────────────────────────
     with tab_overview:
         # 1. TRADE SETUP CARD — lo primero que ve el trader
