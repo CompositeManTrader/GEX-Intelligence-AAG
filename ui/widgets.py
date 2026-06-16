@@ -814,18 +814,18 @@ def overview_cockpit(symbol: str, spot: float, chg_p: Optional[float],
                 body = f"SHORT breakout · stop ${level:.0f} · deja correr"
         return (
             f'<div style="flex:1;background:#0e0e18;border:1px solid {bc};'
-            f'border-radius:9px;padding:8px 11px;">'
-            f'<div style="color:{hc};font-size:0.7rem;font-weight:700;">{head}</div>'
-            f'<div style="color:#e8e8f4;font-size:0.74rem;margin-top:3px;">{body}'
+            f'border-radius:9px;padding:7px 10px;">'
+            f'<div style="color:{hc};font-size:0.62rem;font-weight:700;">{head}</div>'
+            f'<div style="color:#e8e8f4;font-size:0.66rem;margin-top:3px;">{body}'
             f'</div></div>')
 
-    plan_html = (f'<div style="display:flex;gap:9px;margin-top:9px;">'
+    plan_html = (f'<div style="display:flex;gap:8px;margin-top:8px;">'
                  f'{_plan(cw, "up")}{_plan(pw, "down")}</div>')
 
     # ── Chips de contexto ────────────────────────────────────────────────────
     def _chip(label, val, vclr="#ececf6"):
         return (f'<span style="background:#0e0e18;border:1px solid #1e1e32;'
-                f'border-radius:6px;padding:4px 9px;font-size:0.68rem;'
+                f'border-radius:6px;padding:3px 8px;font-size:0.62rem;'
                 f'color:#aeaecb;">{label} <b style="color:{vclr}">{val}</b></span>')
     chips = ""
     if net is not None:
@@ -845,8 +845,8 @@ def overview_cockpit(symbol: str, spot: float, chg_p: Optional[float],
         chips += _chip("P/C", f"{p_c:.2f}")
     if max_pain:
         chips += _chip("Max Pain", f"{max_pain:.0f}")
-    chips_html = (f'<div style="display:flex;flex-wrap:wrap;gap:6px;'
-                  f'margin-top:9px;">{chips}</div>') if chips else ""
+    chips_html = (f'<div style="display:flex;flex-wrap:wrap;gap:5px;'
+                  f'margin-top:8px;">{chips}</div>') if chips else ""
 
     # ── Aviso condicional ────────────────────────────────────────────────────
     warn = ""
@@ -864,40 +864,40 @@ def overview_cockpit(symbol: str, spot: float, chg_p: Optional[float],
         warn = "RND de baja confianza (0DTE) — los niveles RND son orientativos."
     warn_html = (
         f'<div style="background:#1a1407;border:1px solid #5a4410;'
-        f'border-radius:7px;padding:7px 11px;font-size:0.7rem;color:#fbbf24;'
-        f'margin-top:9px;">⚠ <b>Vigila:</b> {warn}</div>') if warn else ""
+        f'border-radius:7px;padding:6px 10px;font-size:0.64rem;color:#fbbf24;'
+        f'margin-top:8px;">⚠ <b>Vigila:</b> {warn}</div>') if warn else ""
 
     chg_html = (f'<span style="color:{"#22c55e" if (chg_p or 0) >= 0 else "#f43f5e"};'
-                f'font-size:0.72rem;">{(chg_p or 0):+.2f}%</span>'
+                f'font-size:0.66rem;">{(chg_p or 0):+.2f}%</span>'
                 if chg_p is not None else "")
 
     return _html(f"""
     <div style="background:#0a0a12;border:1px solid #23233a;border-radius:12px;
-         padding:0.85rem 1rem;margin:0.2rem 0 0.9rem;
-         font-family:JetBrains Mono,monospace;">
+         padding:0.8rem 0.95rem;margin:0.2rem 0 0.9rem;
+         font-family:JetBrains Mono,monospace;font-size:0.7rem;">
       <div style="display:flex;justify-content:space-between;align-items:center;">
-        <div style="display:flex;align-items:center;gap:9px;">
-          <span style="color:#f97316;font-weight:800;">❯ GEX</span>
-          <span style="color:#f5f5ff;font-weight:800;">{symbol} ${spot:,.2f}</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="color:#f97316;font-weight:800;font-size:0.72rem;">❯ GEX</span>
+          <span style="color:#f5f5ff;font-weight:800;font-size:0.9rem;">{symbol} ${spot:,.2f}</span>
           {chg_html}
         </div>
         <span style="background:{reg_clr}1a;border:1px solid {reg_clr};
-              color:{reg_clr};border-radius:20px;padding:3px 11px;
-              font-size:0.68rem;font-weight:700;">{reg_lbl}</span>
+              color:{reg_clr};border-radius:20px;padding:3px 10px;
+              font-size:0.62rem;font-weight:700;">{reg_lbl}</span>
       </div>
 
       <div style="background:#11131c;border:1px solid #2a2a44;border-radius:10px;
-           padding:0.7rem 0.85rem;margin-top:0.6rem;">
+           padding:0.6rem 0.8rem;margin-top:0.55rem;">
         <div style="display:flex;justify-content:space-between;align-items:center;">
-          <span style="font-size:0.56rem;color:#5b5b80;letter-spacing:0.13em;">
+          <span style="font-size:0.55rem;color:#5b5b80;letter-spacing:0.13em;">
             ACCIÓN AHORA</span>
-          <span style="font-size:0.6rem;">{align_html} · conf
+          <span style="font-size:0.58rem;">{align_html} · conf
             <b style="color:{conf_clr}">{conf_pct}%</b></span>
         </div>
-        <div style="color:#fff;font-weight:800;font-size:1.15rem;margin-top:4px;
-             line-height:1.2;"><span style="color:{now_clr}">{now_ico}</span>
+        <div style="color:#fff;font-weight:800;font-size:0.92rem;margin-top:4px;
+             line-height:1.25;"><span style="color:{now_clr}">{now_ico}</span>
           {now_big}</div>
-        <div style="color:#cfcfe6;font-size:0.78rem;margin-top:4px;">{now_sub}</div>
+        <div style="color:#cfcfe6;font-size:0.7rem;margin-top:3px;">{now_sub}</div>
       </div>
 
       <div style="margin-top:0.7rem;">{svg}</div>
@@ -918,13 +918,15 @@ def _cockpit_price_map(spot, cw, pw, gf, hvl, vt_c, vt_p, mode) -> str:
     pad = max((hi - lo) * 0.07, spot * 0.0008)
     lo -= pad; hi += pad
     span = (hi - lo) or 1.0
-    X0, W = 16.0, 580.0
+    # viewBox ancho (1200) para que, al estirarse al ancho del Overview, el
+    # texto renderice proporcional (~11-12px) y no gigante.
+    X0, W = 28.0, 1144.0
 
     def X(p):
         return X0 + (p - lo) / span * W
 
-    parts = ['<svg viewBox="0 0 612 122" style="width:100%;display:block">']
-    parts.append('<text x="6" y="12" fill="#5b5b80" '
+    parts = ['<svg viewBox="0 0 1200 122" style="width:100%;display:block">']
+    parts.append('<text x="12" y="12" fill="#5b5b80" '
                  'font-family="JetBrains Mono,monospace" font-size="10" '
                  'letter-spacing="1.2">MAPA DE PRECIO · A ESCALA</text>')
     # zonas de acción cerca de los muros (solo en rango)
@@ -932,20 +934,20 @@ def _cockpit_price_map(spot, cw, pw, gf, hvl, vt_c, vt_p, mode) -> str:
     if mode == "range":
         if cw:
             x0 = X(cw - band)
-            parts.append(f'<rect x="{x0:.1f}" y="46" width="{X(cw) - x0 + 10:.1f}"'
+            parts.append(f'<rect x="{x0:.1f}" y="46" width="{X(cw) - x0 + 14:.1f}"'
                          f' height="22" rx="4" fill="#22c55e" opacity="0.10"/>')
             parts.append(f'<text x="{(x0 + X(cw)) / 2:.1f}" y="42" fill="#22c55e"'
-                         f' font-family="JetBrains Mono,monospace" font-size="9"'
+                         f' font-family="JetBrains Mono,monospace" font-size="9.5"'
                          f' text-anchor="middle">vende</text>')
         if pw:
             x1 = X(pw + band)
-            parts.append(f'<rect x="{X(pw) - 10:.1f}" y="46" '
-                         f'width="{x1 - X(pw) + 10:.1f}" height="22" rx="4" '
+            parts.append(f'<rect x="{X(pw) - 14:.1f}" y="46" '
+                         f'width="{x1 - X(pw) + 14:.1f}" height="22" rx="4" '
                          f'fill="#f43f5e" opacity="0.10"/>')
             parts.append(f'<text x="{(X(pw) + x1) / 2:.1f}" y="42" fill="#f43f5e"'
-                         f' font-family="JetBrains Mono,monospace" font-size="9"'
+                         f' font-family="JetBrains Mono,monospace" font-size="9.5"'
                          f' text-anchor="middle">compra</text>')
-    parts.append('<line x1="16" y1="57" x2="596" y2="57" stroke="#23233a" '
+    parts.append('<line x1="28" y1="57" x2="1172" y2="57" stroke="#23233a" '
                  'stroke-width="2"/>')
 
     def tick(p, clr, lbl, sub=None, major=True, dash=False):
@@ -979,10 +981,10 @@ def _cockpit_price_map(spot, cw, pw, gf, hvl, vt_c, vt_p, mode) -> str:
     parts.append(f'<line x1="{xs:.1f}" y1="32" x2="{xs:.1f}" y2="72" '
                  f'stroke="#22d3ee" stroke-width="2.5"/>')
     parts.append(f'<circle cx="{xs:.1f}" cy="57" r="5" fill="#22d3ee"/>')
-    bx = max(2, min(540, xs - 33))
-    parts.append(f'<rect x="{bx:.1f}" y="14" width="66" height="18" rx="4" '
+    bx = max(2, min(1108, xs - 44))
+    parts.append(f'<rect x="{bx:.1f}" y="14" width="88" height="18" rx="4" '
                  f'fill="#0a0a12" stroke="#22d3ee"/>')
-    parts.append(f'<text x="{bx + 33:.1f}" y="27" fill="#22d3ee" '
+    parts.append(f'<text x="{bx + 44:.1f}" y="27" fill="#22d3ee" '
                  f'font-family="JetBrains Mono,monospace" font-size="11" '
                  f'font-weight="700" text-anchor="middle">SPOT {spot:.0f}</text>')
 
@@ -990,7 +992,7 @@ def _cockpit_price_map(spot, cw, pw, gf, hvl, vt_c, vt_p, mode) -> str:
     if cw and pw and cw > pw:
         ppos = (spot - pw) / (cw - pw) * 100
         side = "más cerca del piso" if ppos < 50 else "más cerca del techo"
-        parts.append(f'<text x="306" y="112" fill="#7a7a98" '
+        parts.append(f'<text x="600" y="112" fill="#7a7a98" '
                      f'font-family="JetBrains Mono,monospace" font-size="10" '
                      f'text-anchor="middle">posición: {ppos:.0f}% del rango · '
                      f'{side}</text>')
