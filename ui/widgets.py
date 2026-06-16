@@ -676,6 +676,328 @@ def of_session_digest_panel(changes: dict) -> str:
     """)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  OVERVIEW COCKPIT  —  veredicto + mapa de precio a escala + acción AHORA
+# ─────────────────────────────────────────────────────────────────────────────
+def overview_cockpit(symbol: str, spot: float, chg_p: Optional[float],
+                     gex_sum: Optional[dict], gex_0dte: Optional[dict] = None,
+                     rnd_levels: Optional[dict] = None,
+                     rnd_meta: Optional[dict] = None,
+                     iv_hv: Optional[float] = None,
+                     hiro_snap: Optional[dict] = None,
+                     p_c: Optional[float] = None,
+                     max_pain: Optional[float] = None) -> str:
+    """Cockpit de decisión: lo que ves en 2 segundos. Régimen → la jugada,
+    la acción de AHORA según dónde está el precio, un mapa de niveles A ESCALA,
+    el plan en ambos extremos, contexto compacto y un aviso condicional."""
+    if not gex_sum or not spot or spot <= 0:
+        return _box_err("Sin datos GEX para el cockpit.")
+    g = gex_sum
+    regime = g.get("regime", "NEUTRAL")
+    cw, pw = g.get("call_wall"), g.get("put_wall")
+    gf, hvl = g.get("gamma_flip"), g.get("hvl")
+    vt_c, vt_p = g.get("vt_c"), g.get("vt_p")
+    net = g.get("total_gex")
+
+    if regime == "POSITIVE":
+        reg_lbl, reg_clr, mode = "GAMMA POSITIVA · RANGO", "#22c55e", "range"
+    elif regime == "NEGATIVE":
+        reg_lbl, reg_clr, mode = "GAMMA NEGATIVA · TENDENCIA", "#f43f5e", "trend"
+    else:
+        reg_lbl, reg_clr, mode = "RÉGIMEN NEUTRAL", "#f59e0b", "neutral"
+
+    # ── Alineación agregado vs 0DTE ──────────────────────────────────────────
+    reg0 = (gex_0dte or {}).get("regime")
+    aligned = bool(reg0 and reg0 == regime and regime != "NEUTRAL")
+    diverge = bool(reg0 and reg0 != regime and regime != "NEUTRAL"
+                   and reg0 != "NEUTRAL")
+    if aligned:
+        align_html = ('<span style="color:#22c55e">✓ agregado &amp; 0DTE '
+                      'alineados</span>')
+    elif diverge:
+        align_html = ('<span style="color:#fbbf24">⚠ agregado vs 0DTE '
+                      'divergen</span>')
+    else:
+        align_html = '<span style="color:#6c6c90">0DTE n/d</span>'
+
+    # ── Confluencia simple (alineación + confianza RND + IV/HV coherente) ────
+    conf_rnd = (rnd_meta or {}).get("confidence")
+    fac, tot = 0, 0
+    if reg0:
+        tot += 1; fac += 1 if aligned else 0
+    if conf_rnd:
+        tot += 1; fac += 1 if conf_rnd in ("high", "medium") else 0
+    if iv_hv:
+        tot += 1
+        if mode == "range" and iv_hv > 1.0:
+            fac += 1
+        elif mode == "trend" and iv_hv < 1.0:
+            fac += 1
+    conf_pct = int(round(fac / tot * 100)) if tot else 0
+    conf_clr = "#22c55e" if conf_pct >= 67 else ("#fbbf24" if conf_pct >= 34
+                                                 else "#f43f5e")
+
+    # ── Posición del precio dentro del rango estructural ─────────────────────
+    pos = None
+    if cw and pw and cw > pw:
+        pos = max(0.0, min(1.0, (spot - pw) / (cw - pw)))
+
+    def _near(a):
+        return a and abs(spot - a) / spot < 0.0015
+
+    # ── La ACCIÓN de AHORA (lo decisivo) ─────────────────────────────────────
+    if gf and _near(gf):
+        now_ico, now_clr = "⚠", "#fbbf24"
+        now_big = "CERCA DEL FLIP — régimen indefinido"
+        now_sub = "Reduce tamaño. Espera un cierre claro de un lado del Zero Γ."
+    elif pos is not None and pos >= 0.80:
+        if mode == "range":
+            now_ico, now_clr = "▼", "#f43f5e"
+            now_big = f"EN EL TECHO (${cw:.0f}) — vende / fade"
+            now_sub = (f"Stop arriba del Call Wall, objetivo el HVL "
+                       f"${hvl:.0f}." if hvl else "Stop arriba del Call Wall.")
+        else:
+            now_ico, now_clr = "▲", "#22c55e"
+            now_big = f"ROMPIENDO EL TECHO (${cw:.0f}) — sigue al alza"
+            now_sub = "Momentum: entra a favor, trailing stop. No fades."
+    elif pos is not None and pos <= 0.20:
+        if mode == "range":
+            now_ico, now_clr = "▲", "#22c55e"
+            now_big = f"EN EL PISO (${pw:.0f}) — compra / fade"
+            now_sub = (f"Stop debajo del Put Wall, objetivo el HVL "
+                       f"${hvl:.0f}." if hvl else "Stop debajo del Put Wall.")
+        else:
+            now_ico, now_clr = "▼", "#f43f5e"
+            now_big = f"ROMPIENDO EL PISO (${pw:.0f}) — sigue a la baja"
+            now_sub = "Momentum: entra a favor, trailing stop. No fades."
+    else:
+        if mode == "range":
+            now_ico, now_clr = "⏸", "#fbbf24"
+            now_big = "ESPERA — precio en zona media"
+            now_sub = (f"No persigas el centro. Actúa en los extremos: "
+                       f"vende ${cw:.0f} / compra ${pw:.0f}."
+                       if (cw and pw) else "Actúa en los muros.")
+        elif mode == "trend":
+            now_ico, now_clr = "≈", "#f43f5e"
+            now_big = "TENDENCIA en curso — opera con momentum"
+            now_sub = "El dealer amplifica. Sigue la dirección, no fades muros."
+        else:
+            now_ico, now_clr = "·", "#f59e0b"
+            now_big = "Sin sesgo claro"
+            now_sub = "Espera a que el precio defina un lado del Gamma Flip."
+
+    # ── Mapa de precio A ESCALA (SVG) ────────────────────────────────────────
+    svg = _cockpit_price_map(spot, cw, pw, gf, hvl, vt_c, vt_p, mode)
+
+    # ── Plan en ambos extremos ───────────────────────────────────────────────
+    def _plan(level, side):
+        if not level:
+            return ('<div style="flex:1;background:#0e0e18;border:1px solid '
+                    '#1e1e32;border-radius:9px;padding:8px 11px;color:#6c6c90;'
+                    'font-size:0.72rem;">— sin muro</div>')
+        tgt = hvl if hvl else spot
+        if mode == "range":
+            if side == "up":
+                head, hc, bc = f"▼ SI LLEGA A ${level:.0f}", "#22c55e", "#1e3a22"
+                body = (f"SHORT/fade · stop ${level + spot*0.0008:.0f} · "
+                        f"target ${tgt:.0f}")
+            else:
+                head, hc, bc = f"▲ SI LLEGA A ${level:.0f}", "#f43f5e", "#3a1e22"
+                body = (f"LONG/fade · stop ${level - spot*0.0008:.0f} · "
+                        f"target ${tgt:.0f}")
+        else:  # trend → breakout plays
+            if side == "up":
+                head, hc, bc = f"▲ SI ROMPE ${level:.0f}", "#22c55e", "#1e3a22"
+                body = f"LONG breakout · stop ${level:.0f} · deja correr"
+            else:
+                head, hc, bc = f"▼ SI ROMPE ${level:.0f}", "#f43f5e", "#3a1e22"
+                body = f"SHORT breakout · stop ${level:.0f} · deja correr"
+        return (
+            f'<div style="flex:1;background:#0e0e18;border:1px solid {bc};'
+            f'border-radius:9px;padding:8px 11px;">'
+            f'<div style="color:{hc};font-size:0.7rem;font-weight:700;">{head}</div>'
+            f'<div style="color:#e8e8f4;font-size:0.74rem;margin-top:3px;">{body}'
+            f'</div></div>')
+
+    plan_html = (f'<div style="display:flex;gap:9px;margin-top:9px;">'
+                 f'{_plan(cw, "up")}{_plan(pw, "down")}</div>')
+
+    # ── Chips de contexto ────────────────────────────────────────────────────
+    def _chip(label, val, vclr="#ececf6"):
+        return (f'<span style="background:#0e0e18;border:1px solid #1e1e32;'
+                f'border-radius:6px;padding:4px 9px;font-size:0.68rem;'
+                f'color:#aeaecb;">{label} <b style="color:{vclr}">{val}</b></span>')
+    chips = ""
+    if net is not None:
+        nclr = "#22c55e" if net >= 0 else "#f43f5e"
+        chips += _chip("Net GEX", f"${net/1e9:+.2f}B", nclr)
+    pct = (rnd_levels or {}).get("percentiles", {})
+    p16, p84 = pct.get("p16"), pct.get("p84")
+    if p16 and p84:
+        chips += _chip("RND 1σ", f"{p16:,.0f}–{p84:,.0f}", "#22d3ee")
+    if iv_hv:
+        chips += _chip("IV/HV", f"{iv_hv:.2f}×", "#fbbf24")
+    if hiro_snap and hiro_snap.get("hiro") is not None:
+        h = hiro_snap.get("hiro", 0)
+        chips += _chip("HIRO", ("▲ buy" if h >= 0 else "▼ sell"),
+                       "#22c55e" if h >= 0 else "#f43f5e")
+    if p_c is not None:
+        chips += _chip("P/C", f"{p_c:.2f}")
+    if max_pain:
+        chips += _chip("Max Pain", f"{max_pain:.0f}")
+    chips_html = (f'<div style="display:flex;flex-wrap:wrap;gap:6px;'
+                  f'margin-top:9px;">{chips}</div>') if chips else ""
+
+    # ── Aviso condicional ────────────────────────────────────────────────────
+    warn = ""
+    h = (hiro_snap or {}).get("hiro")
+    if diverge:
+        warn = ("Estructura y 0DTE divergen — para scalping pesa el 0DTE "
+                f"({reg0}).")
+    elif mode == "range" and pw and h is not None and h < 0:
+        warn = (f"HIRO vendiendo — si pierde el Put Wall ${pw:.0f} con volumen, "
+                f"el rango se rompe (posible giro a gamma negativa).")
+    elif mode == "range" and cw and h is not None and h > 0:
+        warn = (f"HIRO comprando — si supera el Call Wall ${cw:.0f} con volumen, "
+                f"el rango se rompe al alza.")
+    elif conf_rnd == "low":
+        warn = "RND de baja confianza (0DTE) — los niveles RND son orientativos."
+    warn_html = (
+        f'<div style="background:#1a1407;border:1px solid #5a4410;'
+        f'border-radius:7px;padding:7px 11px;font-size:0.7rem;color:#fbbf24;'
+        f'margin-top:9px;">⚠ <b>Vigila:</b> {warn}</div>') if warn else ""
+
+    chg_html = (f'<span style="color:{"#22c55e" if (chg_p or 0) >= 0 else "#f43f5e"};'
+                f'font-size:0.72rem;">{(chg_p or 0):+.2f}%</span>'
+                if chg_p is not None else "")
+
+    return _html(f"""
+    <div style="background:#0a0a12;border:1px solid #23233a;border-radius:12px;
+         padding:0.85rem 1rem;margin:0.2rem 0 0.9rem;
+         font-family:JetBrains Mono,monospace;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="display:flex;align-items:center;gap:9px;">
+          <span style="color:#f97316;font-weight:800;">❯ GEX</span>
+          <span style="color:#f5f5ff;font-weight:800;">{symbol} ${spot:,.2f}</span>
+          {chg_html}
+        </div>
+        <span style="background:{reg_clr}1a;border:1px solid {reg_clr};
+              color:{reg_clr};border-radius:20px;padding:3px 11px;
+              font-size:0.68rem;font-weight:700;">{reg_lbl}</span>
+      </div>
+
+      <div style="background:#11131c;border:1px solid #2a2a44;border-radius:10px;
+           padding:0.7rem 0.85rem;margin-top:0.6rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:0.56rem;color:#5b5b80;letter-spacing:0.13em;">
+            ACCIÓN AHORA</span>
+          <span style="font-size:0.6rem;">{align_html} · conf
+            <b style="color:{conf_clr}">{conf_pct}%</b></span>
+        </div>
+        <div style="color:#fff;font-weight:800;font-size:1.15rem;margin-top:4px;
+             line-height:1.2;"><span style="color:{now_clr}">{now_ico}</span>
+          {now_big}</div>
+        <div style="color:#cfcfe6;font-size:0.78rem;margin-top:4px;">{now_sub}</div>
+      </div>
+
+      <div style="margin-top:0.7rem;">{svg}</div>
+      {plan_html}
+      {chips_html}
+      {warn_html}
+    </div>
+    """)
+
+
+def _cockpit_price_map(spot, cw, pw, gf, hvl, vt_c, vt_p, mode) -> str:
+    """SVG horizontal del precio A ESCALA con muros, HVL, flip, VT y zonas de
+    acción cerca de los muros. Posiciones proporcionales al precio real."""
+    pts = [p for p in (cw, pw, gf, hvl, spot, vt_c, vt_p) if p]
+    if len(pts) < 2:
+        return ""
+    lo, hi = min(pts), max(pts)
+    pad = max((hi - lo) * 0.07, spot * 0.0008)
+    lo -= pad; hi += pad
+    span = (hi - lo) or 1.0
+    X0, W = 16.0, 580.0
+
+    def X(p):
+        return X0 + (p - lo) / span * W
+
+    parts = ['<svg viewBox="0 0 612 122" style="width:100%;display:block">']
+    parts.append('<text x="6" y="12" fill="#5b5b80" '
+                 'font-family="JetBrains Mono,monospace" font-size="10" '
+                 'letter-spacing="1.2">MAPA DE PRECIO · A ESCALA</text>')
+    # zonas de acción cerca de los muros (solo en rango)
+    band = spot * 0.0035
+    if mode == "range":
+        if cw:
+            x0 = X(cw - band)
+            parts.append(f'<rect x="{x0:.1f}" y="46" width="{X(cw) - x0 + 10:.1f}"'
+                         f' height="22" rx="4" fill="#22c55e" opacity="0.10"/>')
+            parts.append(f'<text x="{(x0 + X(cw)) / 2:.1f}" y="42" fill="#22c55e"'
+                         f' font-family="JetBrains Mono,monospace" font-size="9"'
+                         f' text-anchor="middle">vende</text>')
+        if pw:
+            x1 = X(pw + band)
+            parts.append(f'<rect x="{X(pw) - 10:.1f}" y="46" '
+                         f'width="{x1 - X(pw) + 10:.1f}" height="22" rx="4" '
+                         f'fill="#f43f5e" opacity="0.10"/>')
+            parts.append(f'<text x="{(X(pw) + x1) / 2:.1f}" y="42" fill="#f43f5e"'
+                         f' font-family="JetBrains Mono,monospace" font-size="9"'
+                         f' text-anchor="middle">compra</text>')
+    parts.append('<line x1="16" y1="57" x2="596" y2="57" stroke="#23233a" '
+                 'stroke-width="2"/>')
+
+    def tick(p, clr, lbl, sub=None, major=True, dash=False):
+        if not p:
+            return
+        x = X(p)
+        h = 20 if major else 12
+        da = ' stroke-dasharray="2 2"' if dash else ''
+        wd = 3 if major else 1.5
+        parts.append(f'<line x1="{x:.1f}" y1="{57 - h/2:.1f}" x2="{x:.1f}" '
+                     f'y2="{57 + h/2:.1f}" stroke="{clr}" stroke-width="{wd}"{da}/>')
+        fs = 11 if major else 9
+        fw = ' font-weight="700"' if major else ''
+        parts.append(f'<text x="{x:.1f}" y="80" fill="{clr}" '
+                     f'font-family="JetBrains Mono,monospace" font-size="{fs}"{fw} '
+                     f'text-anchor="middle">{p:.0f}</text>')
+        if sub:
+            parts.append(f'<text x="{x:.1f}" y="92" fill="#7a7a98" '
+                         f'font-family="JetBrains Mono,monospace" font-size="8.5" '
+                         f'text-anchor="middle">{sub}</text>')
+
+    tick(gf, "#f97316", "flip", "flip", major=True, dash=True)
+    tick(vt_p, "#fb7185", "vtp", None, major=False, dash=True)
+    tick(pw, "#f43f5e", "pw", "PUT WALL", major=True)
+    tick(hvl, "#a855f7", "hvl", "HVL imán", major=True, dash=True)
+    tick(vt_c, "#fbbf24", "vtc", None, major=False, dash=True)
+    tick(cw, "#22c55e", "cw", "CALL WALL", major=True)
+
+    # spot (encima de todo)
+    xs = X(spot)
+    parts.append(f'<line x1="{xs:.1f}" y1="32" x2="{xs:.1f}" y2="72" '
+                 f'stroke="#22d3ee" stroke-width="2.5"/>')
+    parts.append(f'<circle cx="{xs:.1f}" cy="57" r="5" fill="#22d3ee"/>')
+    bx = max(2, min(540, xs - 33))
+    parts.append(f'<rect x="{bx:.1f}" y="14" width="66" height="18" rx="4" '
+                 f'fill="#0a0a12" stroke="#22d3ee"/>')
+    parts.append(f'<text x="{bx + 33:.1f}" y="27" fill="#22d3ee" '
+                 f'font-family="JetBrains Mono,monospace" font-size="11" '
+                 f'font-weight="700" text-anchor="middle">SPOT {spot:.0f}</text>')
+
+    # nota de posición
+    if cw and pw and cw > pw:
+        ppos = (spot - pw) / (cw - pw) * 100
+        side = "más cerca del piso" if ppos < 50 else "más cerca del techo"
+        parts.append(f'<text x="306" y="112" fill="#7a7a98" '
+                     f'font-family="JetBrains Mono,monospace" font-size="10" '
+                     f'text-anchor="middle">posición: {ppos:.0f}% del rango · '
+                     f'{side}</text>')
+    parts.append('</svg>')
+    return "".join(parts)
+
+
 def regime_compare_panel(gex_agg: Optional[dict],
                          gex_0dte: Optional[dict]) -> str:
     """Compara el régimen de gamma AGREGADO (estructural, 0–60d) contra el

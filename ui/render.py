@@ -910,14 +910,16 @@ def show_dashboard() -> None:
 
     # ── OVERVIEW ────────────────────────────────────────────────────────────
     with tab_overview:
-        # 1. TRADE SETUP CARD — lo primero que ve el trader
+        # 1. COCKPIT DE DECISIÓN — veredicto + acción AHORA + mapa a escala.
+        # (Reemplaza la trade-setup-card: lo que el trader necesita en 2 seg.)
         iv_hv_ratio = (analytics_full or {}).get("iv_hv_ratio") if analytics_full else None
-        _render_md(trade_setup_card(
-            symbol=symbol, spot=spot,
-            gex_sum=gex_sum, vex_sum=vex_sum, cex_sum=cex_sum, dex_sum=dex_sum,
-            hiro_snap=hiro_snap, hiro_z=hiro_z,
-            atm_iv=iv_atm, iv_hv_ratio=iv_hv_ratio,
-            em_lo=em_lo, em_hi=em_hi, dte=dte_v,
+        from ui.widgets import overview_cockpit
+        _ck_rnd, _ck_meta, _ck_lv = _get_rnd(0)
+        _render_md(overview_cockpit(
+            symbol=symbol, spot=spot, chg_p=chg_p,
+            gex_sum=gex_sum, gex_0dte=gex_sum_0dte,
+            rnd_levels=_ck_lv, rnd_meta=_ck_meta, iv_hv=iv_hv_ratio,
+            hiro_snap=hiro_snap, p_c=p_c, max_pain=mp,
         ))
 
         # 1b. IMPLIED DISTRIBUTION (RND) — the crown-jewel model, compact.
