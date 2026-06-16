@@ -676,6 +676,88 @@ def of_session_digest_panel(changes: dict) -> str:
     """)
 
 
+def regime_compare_panel(gex_agg: Optional[dict],
+                         gex_0dte: Optional[dict]) -> str:
+    """Compara el régimen de gamma AGREGADO (estructural, 0–60d) contra el
+    0DTE (intradía) lado a lado, con una alerta cuando DIVERGEN — que es
+    justo la señal valiosa para scalping ('estructura LONG pero 0DTE ya
+    SHORT → pesa el 0DTE')."""
+    def _read(gs):
+        if not gs:
+            return None
+        return {"reg": gs.get("regime", "NEUTRAL"),
+                "net": gs.get("total_gex"), "gf": gs.get("gamma_flip")}
+
+    a, z = _read(gex_agg), _read(gex_0dte)
+
+    def _lab(reg):
+        if reg == "POSITIVE":
+            return "LONG Γ", "#22c55e", "dealer amortigua"
+        if reg == "NEGATIVE":
+            return "SHORT Γ", "#f43f5e", "dealer amplifica"
+        return "NEUTRAL", "#f59e0b", "régimen indefinido"
+
+    def _card(title, sub, data):
+        if not data:
+            body = ('<div style="font-size:0.95rem;color:#6b6b8a;'
+                    'font-weight:700;">— no disponible</div>'
+                    '<div style="font-size:0.6rem;color:#4a4a68;margin-top:4px;">'
+                    'sin 0DTE para este símbolo</div>')
+            bclr = "#1e1e32"
+        else:
+            lab, clr, desc = _lab(data["reg"])
+            net = data["net"]
+            net_txt = (f'${net / 1e9:+.2f}B' if net is not None else "—")
+            gf_txt = (f'· Zero Γ ${data["gf"]:.0f}' if data["gf"] else "")
+            body = (
+                f'<div style="font-size:1.15rem;color:{clr};font-weight:800;'
+                f'line-height:1;">{lab}</div>'
+                f'<div style="font-size:0.62rem;color:{clr};margin-top:3px;">'
+                f'{desc}</div>'
+                f'<div style="font-size:0.66rem;color:#9595b8;margin-top:5px;">'
+                f'Net GEX <b>{net_txt}</b> {gf_txt}</div>')
+            bclr = f'{clr}55'
+        return (
+            f'<div style="flex:1 1 160px;background:#0b0b15;border:1px solid '
+            f'{bclr};border-radius:7px;padding:0.6rem 0.75rem;">'
+            f'<div style="font-size:0.55rem;color:#5b5b80;letter-spacing:0.12em;'
+            f'text-transform:uppercase;margin-bottom:5px;">{title} '
+            f'<span style="color:#3c3c58;">· {sub}</span></div>{body}</div>')
+
+    # Divergence banner
+    diverge = (a and z and a["reg"] != z["reg"]
+               and a["reg"] != "NEUTRAL" and z["reg"] != "NEUTRAL")
+    if diverge:
+        banner = (
+            f'<div style="background:rgba(245,158,11,0.12);border:1px solid '
+            f'rgba(245,158,11,0.45);border-radius:6px;padding:0.4rem 0.7rem;'
+            f'margin-bottom:0.55rem;font-size:0.66rem;color:#fbbf24;">'
+            f'⚠ <b>DIVERGEN</b> — estructura {_lab(a["reg"])[0]} pero 0DTE '
+            f'{_lab(z["reg"])[0]}. Para scalping intradía pesa el <b>0DTE</b> '
+            f'(y más hacia el cierre).</div>')
+    elif a and z and a["reg"] == z["reg"] and a["reg"] != "NEUTRAL":
+        banner = (
+            f'<div style="background:rgba(34,197,94,0.10);border:1px solid '
+            f'rgba(34,197,94,0.35);border-radius:6px;padding:0.4rem 0.7rem;'
+            f'margin-bottom:0.55rem;font-size:0.66rem;color:#22c55e;">'
+            f'✓ <b>ALINEADOS</b> — agregado y 0DTE ambos '
+            f'{_lab(a["reg"])[0]}. Convicción más alta.</div>')
+    else:
+        banner = ""
+
+    return _html(
+        f'<div style="background:linear-gradient(135deg,#0b0b16,#0e0e1c);'
+        f'border:1px solid #1e1e32;border-radius:9px;padding:0.7rem 0.95rem;'
+        f'margin:0.2rem 0 0.4rem;font-family:JetBrains Mono,monospace;">'
+        f'<div style="font-size:0.56rem;color:#5b5b80;letter-spacing:0.14em;'
+        f'text-transform:uppercase;margin-bottom:0.5rem;">'
+        f'◭ RÉGIMEN DE GAMMA · ESTRUCTURAL vs INTRADÍA</div>'
+        f'{banner}'
+        f'<div style="display:flex;gap:0.6rem;flex-wrap:wrap;">'
+        f'{_card("Agregado", "0–60d", a)}'
+        f'{_card("0DTE", "hoy", z)}</div></div>')
+
+
 def _metric(label: str, value: str, color: str = "#e0e0f0",
             sub: Optional[str] = None) -> str:
     """Compact metric cell used by the trade-setup-card footer grid."""

@@ -385,6 +385,13 @@ def show_dashboard() -> None:
         calls_all, puts_all, spot, symbol=symbol,
         max_dte=max_dte, min_oi=min_oi,
     )
+    # 0DTE-only GEX (régimen intradía) — calculado a nivel de función para que
+    # el Overview pueda comparar el régimen agregado vs el de hoy y dejar elegir
+    # el alcance del decision panel. Vacío si el símbolo no tiene 0DTE.
+    _gex_df_0dte, gex_sum_0dte = compute_gex_profile(
+        calls_all, puts_all, spot, symbol=symbol,
+        max_dte=0, min_dte=0, min_oi=min_oi,
+    )
     vex_df, vex_sum = compute_vex_profile(
         calls_all, puts_all, spot, symbol=symbol,
         max_dte=max_dte, min_oi=min_oi,
@@ -845,9 +852,28 @@ def show_dashboard() -> None:
         from ui.widgets import panel_zones_html
         _render_md(panel_zones_html(gamma_zones, spot=spot))
 
-        # 4. DECISION PANEL legacy
-        _render_md('<p class="bb-header">DECISION PANEL  ·  Flow-weighted thesis</p>')
-        panel = build_decision_panel(spot, gex_sum, vex_sum, cex_sum, dex_sum,
+        # 4. DECISION PANEL — con selector de alcance (agregado vs 0DTE) y
+        #    comparación de régimen lado a lado (alerta si divergen).
+        from ui.widgets import regime_compare_panel
+        _render_md(regime_compare_panel(gex_sum, gex_sum_0dte))
+        dp_scope = st.radio(
+            "Alcance del decision panel",
+            options=["Agregado", "0DTE"],
+            format_func=lambda s: ("Agregado (0–60d · estructural)"
+                                   if s == "Agregado" else "0DTE (hoy · intradía)"),
+            horizontal=True, index=0, key="dp_scope",
+            help="Agregado = régimen estructural de todo el libro. 0DTE = el "
+                 "régimen que gobierna la sesión (pesa más hacia el cierre).",
+        )
+        _dp_gex = (gex_sum_0dte if (dp_scope == "0DTE" and gex_sum_0dte)
+                   else gex_sum)
+        _scope_lbl = ("0DTE · hoy" if (dp_scope == "0DTE" and gex_sum_0dte)
+                      else "Agregado · 0–60d")
+        if dp_scope == "0DTE" and not gex_sum_0dte:
+            st.caption("⚠ Sin 0DTE para este símbolo — mostrando el agregado.")
+        _render_md('<p class="bb-header">DECISION PANEL  ·  Flow-weighted thesis '
+                   f'<span style="color:#6c6c90;font-size:0.7rem">· {_scope_lbl}</span></p>')
+        panel = build_decision_panel(spot, _dp_gex, vex_sum, cex_sum, dex_sum,
                                      iv_atm, em_lo, em_hi, dte_v, vol_regime_str)
         _render_md(panel)
         # Quick KPI row
