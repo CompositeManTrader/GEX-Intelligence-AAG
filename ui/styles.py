@@ -301,10 +301,57 @@ h1, h2, h3 { color: #e0e0f0 !important; }
 .stDeployButton { display: none !important; }
 
 /* Suppress the brief opacity flicker while Streamlit re-renders the DOM:
- * keep the chart container fully visible at all times. */
+ * keep the chart container fully visible at all times. Plus a glassmorphism
+ * frame so every chart reads as a frosted card (Bloomberg + cristal). */
 .stPlotlyChart, [data-testid="stPlotlyChart"] {
     transition: none !important;
     opacity: 1 !important;
+    background: rgba(255,255,255,0.022) !important;
+    backdrop-filter: blur(9px) saturate(125%) !important;
+    -webkit-backdrop-filter: blur(9px) saturate(125%) !important;
+    border: 1px solid rgba(255,255,255,0.065) !important;
+    border-radius: 14px !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 8px 30px rgba(0,0,0,0.28) !important;
+    padding: 8px 10px 4px !important;
+    margin: 4px 0 12px !important;
+}
+
+/* ── Sophisticated segmented controls (st.radio horizontal → glass pills) ── */
+div[role="radiogroup"] { gap: 6px !important; flex-wrap: wrap !important; }
+div[role="radiogroup"] > label {
+    background: rgba(255,255,255,0.03) !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
+    border-radius: 9px !important;
+    padding: 4px 13px !important;
+    margin: 0 !important;
+    transition: background .18s ease, border-color .18s ease !important;
+    cursor: pointer !important;
+}
+div[role="radiogroup"] > label:hover {
+    background: rgba(249,115,22,0.10) !important;
+    border-color: rgba(249,115,22,0.40) !important;
+}
+div[role="radiogroup"] > label:has(input:checked) {
+    background: rgba(249,115,22,0.16) !important;
+    border-color: #f97316 !important;
+}
+/* hide the default radio dot for a clean segmented look */
+div[role="radiogroup"] > label > div:first-child { display: none !important; }
+div[role="radiogroup"] > label div { color: #c8c8e0 !important; font-size: 0.72rem !important; }
+
+/* ── Sliders — refined orange thumb on a slim track ── */
+[data-testid="stSlider"] [data-baseweb="slider"] div[role="slider"] {
+    background: #f97316 !important;
+    box-shadow: 0 0 0 4px rgba(249,115,22,0.18) !important;
+}
+
+/* ── Expanders → glass (upgrade the existing dark gradient) ── */
+[data-testid="stExpander"] {
+    background: rgba(255,255,255,0.022) !important;
+    backdrop-filter: blur(10px) saturate(125%) !important;
+    -webkit-backdrop-filter: blur(10px) saturate(125%) !important;
+    border: 1px solid rgba(255,255,255,0.07) !important;
+    border-radius: 12px !important;
 }
 
 /* When the script reruns, Streamlit briefly ghosts already-rendered

@@ -14,8 +14,10 @@ FONT_MONO = "JetBrains Mono, Courier New, monospace"
 
 
 BASE = dict(
-    plot_bgcolor=BG_PLOT,
-    paper_bgcolor=BG_DARK,
+    # Transparent paper so the glassmorphism chart frame (CSS .stPlotlyChart)
+    # shows through; a barely-there plot tint keeps the data area legible.
+    plot_bgcolor="rgba(255,255,255,0.014)",
+    paper_bgcolor="rgba(0,0,0,0)",
     font=dict(size=11, family=FONT_MONO, color="#7070a0"),
     margin=dict(l=55, r=24, t=42, b=36),
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
