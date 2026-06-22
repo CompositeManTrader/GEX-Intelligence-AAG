@@ -664,12 +664,13 @@ def show_dashboard() -> None:
         "💰 Open Interest",
         "📊 Vol Analytics",
         "📋 Chain",
+        "📤 Trade Card",
         "⚙ Ajustes",
     ]
     tabs = st.tabs(TAB_LABELS)
     (tab_overview, tab_0dte, tab_levels, tab_gex, tab_orderflow,
      tab_erange, tab_vex, tab_cex, tab_dex, tab_hiro, tab_ts, tab_smile,
-     tab_oi, tab_vol, tab_chain, tab_settings) = tabs
+     tab_oi, tab_vol, tab_chain, tab_card, tab_settings) = tabs
 
     # ── 🗺️ NIVELES — price & GEX levels map + key-levels panel ──────────────
     with tab_levels:
@@ -754,6 +755,110 @@ def show_dashboard() -> None:
                 )
         with lc_panel:
             _render_md(key_levels_panel(spot, lvl_sum, lvl_zones))
+
+    # ── 📤 TRADE CARD — arma un vertical con tus precios y mándalo a Telegram ─
+    with tab_card:
+        from charts.trade_card import (
+            build_payoff_figure, figure_to_png, send_to_telegram,
+            spread_metrics, telegram_caption,
+        )
+        from auth.schwab import get_secret
+
+        _render_md('<p class="bb-header">TRADE CARD  ·  vertical spreads → '
+                   'Telegram</p>')
+        st.caption(
+            "Arma un <b>bull put</b> (crédito) o <b>bear put</b> (débito) con "
+            "TUS precios, previsualiza el payoff con sus zonas y mándalo al "
+            "grupo. Tú decides los strikes y la prima — nada se autosugiere. "
+            "<b>No es asesoría financiera.</b>"
+        )
+
+        tcc1, tcc2, tcc3 = st.columns(3)
+        with tcc1:
+            tc_strat = st.selectbox(
+                "Estrategia", ["bull_put", "bear_put"],
+                format_func=lambda s: ("Bull Put Spread (crédito)"
+                                       if s == "bull_put"
+                                       else "Bear Put Spread (débito)"),
+                key="tc_strat")
+            tc_bull = tc_strat == "bull_put"
+            tc_sym = st.text_input("Símbolo", value=symbol, key="tc_sym")
+        with tcc2:
+            tc_spot = st.number_input("Spot", value=float(round(spot, 2)),
+                                      step=0.01, format="%.2f", key="tc_spot")
+            tc_ctr = st.number_input("Contratos", value=10, min_value=1,
+                                     step=1, key="tc_ctr")
+        with tcc3:
+            _k0 = float(round(spot))
+            tc_kH = st.number_input(
+                ("Strike vendido" if tc_bull else "Strike comprado") + " (sup.)",
+                value=_k0 - 3.0, step=0.5, format="%.1f", key="tc_kh")
+            tc_kL = st.number_input(
+                ("Strike comprado" if tc_bull else "Strike vendido") + " (inf.)",
+                value=_k0 - 5.0, step=0.5, format="%.1f", key="tc_kl")
+
+        tcc4, tcc5, tcc6 = st.columns(3)
+        with tcc4:
+            tc_prem = st.number_input(
+                "Crédito recibido" if tc_bull else "Débito pagado",
+                value=0.42, step=0.01, format="%.2f", key="tc_prem")
+        with tcc5:
+            tc_tp = st.slider("Take profit (% gana máx)", 25, 100, 50, 5,
+                              key="tc_tp")
+        with tcc6:
+            tc_stop = st.slider("Stop (% pierde máx)", 10, 100, 50, 5,
+                                key="tc_stop")
+        tc_tesis = st.text_input("Tesis (opcional)", key="tc_tesis",
+                                 placeholder="vacío → autogenera")
+
+        try:
+            tc_m = spread_metrics(tc_strat, tc_kH, tc_kL, tc_prem,
+                                  tc_tp, tc_stop, tc_ctr)
+        except ValueError as exc:
+            st.error(f"⚠ {exc}")
+            tc_m = None
+
+        if tc_m:
+            tc_fig = build_payoff_figure(tc_sym, tc_spot, tc_m)
+            st.plotly_chart(tc_fig, use_container_width=True, key="tc_payoff")
+
+            mt1, mt2, mt3, mt4 = st.columns(4)
+            mt1.metric("Crédito" if tc_bull else "Débito",
+                       f"${tc_m['prem']:.2f}")
+            mt2.metric("Gana en TP", f"+${tc_m['gain_tp_usd']:,.0f}")
+            mt3.metric("Pierde en stop", f"−${tc_m['loss_stop_usd']:,.0f}")
+            mt4.metric("Stop @", f"${tc_m['stop_price']:.2f}")
+
+            tc_cap = telegram_caption(tc_sym, tc_spot, tc_m, tc_tesis)
+            with st.expander("📝 Vista previa del mensaje (texto)"):
+                st.code(tc_cap, language=None)
+
+            st.markdown("---")
+            tc_tok = get_secret("TELEGRAM_BOT_TOKEN")
+            tc_chat = st.text_input(
+                "chat_id del grupo",
+                value=str(get_secret("TELEGRAM_CHAT_ID", "") or ""),
+                key="tc_chat",
+                help="ID del grupo/canal (negativo para grupos).")
+            tc_send = st.button("📤 Enviar a Telegram", type="primary",
+                                disabled=not (tc_tok and tc_chat),
+                                key="tc_send")
+            if not tc_tok:
+                st.info(
+                    "Configura `TELEGRAM_BOT_TOKEN` (y opcional "
+                    "`TELEGRAM_CHAT_ID`) en *Secrets* para habilitar el envío. "
+                    "El bot debe estar en el grupo.")
+            if tc_send and tc_tok and tc_chat:
+                with st.spinner("Enviando…"):
+                    tc_png = figure_to_png(tc_fig)
+                    tc_ok, tc_detail = send_to_telegram(
+                        tc_tok, tc_chat, tc_cap, tc_png)
+                if tc_ok:
+                    st.success("✅ Imagen enviada" if tc_png
+                               else "✅ Texto enviado (sin imagen — agrega "
+                                    "`kaleido` para el PNG)")
+                else:
+                    st.error(f"❌ Falló el envío: {tc_detail}")
 
     # ── ⚙ AJUSTES — parámetros + diagnóstico (movidos fuera del header) ─────
     with tab_settings:
