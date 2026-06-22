@@ -105,15 +105,17 @@ def chart_gex_profile(gex_df: pd.DataFrame, spot: float, summary: dict,
 
     # ── Level rails as elegant pill badges in the right margin ──────────────
     # Subtle dotted rail across the plot + an outlined glass badge at the edge.
+    # Single-line pills keep a low vertical footprint so adjacent strikes
+    # (e.g. spot / HVL / put-wall within $1) don't stack into an unreadable mess.
     def _rail(y, label, color, dash="dot", width=1.1, op=0.5):
         fig.add_hline(y=y, line_dash=dash, line_color=color,
                       line_width=width, opacity=op)
         fig.add_annotation(
             xref="paper", x=1.0, y=y, yref="y", xanchor="left", xshift=8,
-            text=f"{label}<br><b>${y:,.0f}</b>", showarrow=False, align="left",
-            font=dict(size=8.5, color=color, family=FONT_MONO),
-            bgcolor="rgba(11,11,20,0.82)", bordercolor=color,
-            borderwidth=1, borderpad=3,
+            text=f"{label} <b>${y:,.0f}</b>", showarrow=False, align="left",
+            font=dict(size=8, color=color, family=FONT_MONO),
+            bgcolor="rgba(11,11,20,0.85)", bordercolor=color,
+            borderwidth=1, borderpad=2,
         )
 
     # SPOT — glow (thick translucent under-line) + bright core + solid pill.
@@ -121,10 +123,11 @@ def chart_gex_profile(gex_df: pd.DataFrame, spot: float, summary: dict,
     fig.add_hline(y=spot, line_color=ORANGE, line_width=1.8)
     fig.add_annotation(
         xref="paper", x=1.0, y=spot, yref="y", xanchor="left", xshift=8,
-        text=f"SPOT<br><b>${spot:,.2f}</b>", showarrow=False, align="left",
-        font=dict(size=9, color="#0b0b14", family=FONT_MONO),
-        bgcolor=ORANGE, borderpad=3,
+        text=f"SPOT <b>${spot:,.2f}</b>", showarrow=False, align="left",
+        font=dict(size=8.5, color="#0b0b14", family=FONT_MONO),
+        bgcolor=ORANGE, borderpad=2,
     )
+    tol = max(spot * 0.0015, 0.2)  # ~0.15%: treat levels this close as coincident
     if cw is not None:
         _rail(cw, "CALL WALL", GREEN, dash="dashdot", width=1.3, op=0.6)
     if pw is not None:
@@ -133,7 +136,10 @@ def chart_gex_profile(gex_df: pd.DataFrame, spot: float, summary: dict,
     # penny underliers would have falsely suppressed the GF/HVL lines.
     if gf is not None and (cw is None or abs(gf - cw) > 0.5) and (pw is None or abs(gf - pw) > 0.5):
         _rail(gf, "ZERO Γ", PURPLE, dash="dot", width=1.4, op=0.6)
-    if hvl is not None and (cw is None or abs(hvl - cw) > 0.5) and (pw is None or abs(hvl - pw) > 0.5):
+    # Skip the HVL pill when it sits on top of spot/CW/PW (redundant label).
+    if (hvl is not None and abs(hvl - spot) > tol
+            and (cw is None or abs(hvl - cw) > 0.5)
+            and (pw is None or abs(hvl - pw) > 0.5)):
         _rail(hvl, "HVL · PIN", CYAN, dash="dot", width=1.1, op=0.55)
 
     # ── Gamma zones (P1/P2/P3) overlay ──────────────────────────────────
