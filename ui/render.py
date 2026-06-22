@@ -1285,12 +1285,23 @@ def show_dashboard() -> None:
         else:
             zdte_p = pd.DataFrame()
 
-        _render_md('<p class="bb-header">0DTE GAMMA  ·  Today-only dealer flow</p>')
+        _render_md(
+            '<div style="display:flex;align-items:baseline;gap:0.7rem;'
+            'margin:0.2rem 0 0.5rem;font-family:JetBrains Mono,monospace;">'
+            '<span style="font-size:1.3rem;font-weight:800;color:#f0f0fb;'
+            'letter-spacing:0.04em;">0DTE</span>'
+            '<span style="font-size:1.3rem;font-weight:800;'
+            'background:linear-gradient(90deg,#f97316,#fbbf24);'
+            '-webkit-background-clip:text;background-clip:text;color:transparent;'
+            'letter-spacing:0.04em;">GAMMA TERMINAL</span>'
+            '<span style="font-size:0.6rem;color:#6a6a90;letter-spacing:0.16em;'
+            'align-self:center;">FLUJO DEL DEALER · SOLO HOY</span></div>'
+        )
         st.caption(
-            "Filtro DTE = 0. Relevante para SPX/SPY/QQQ en horas finales: "
-            "charm colapsa a cero y gamma se concentra en el ATM. "
-            "Se ignora el min-OI global porque los contratos 0DTE típicamente "
-            "tienen OI bajo pero volumen y gamma altos."
+            "Filtro DTE = 0 · la gamma que vence HOY. En las horas finales el "
+            "charm colapsa a cero y la gamma se concentra en el ATM, "
+            "intensificando el pinning. Se ignora el min-OI (los 0DTE tienen OI "
+            "bajo pero volumen y gamma altos)."
         )
 
         if zdte_c.empty and zdte_p.empty:
@@ -1340,158 +1351,90 @@ def show_dashboard() -> None:
                     risk_color, risk_label = "#f59e0b", "POWER HOUR"
                 else:
                     risk_color, risk_label = "#22c55e", "REGULAR SESSION"
-                eod_html = (
-                    f'<div style="background:rgba(15,17,24,0.85);'
-                    f'border:1px solid #1e2230;border-left:4px solid {risk_color};'
-                    f'border-radius:0 4px 4px 0;padding:0.5rem 0.9rem;'
-                    f'margin:0.4rem 0 0.6rem;font-family:JetBrains Mono,monospace;'
-                    f'display:flex;justify-content:space-between;align-items:center">'
-                    f'<div><div style="color:#6b7280;font-size:0.62rem;'
-                    f'letter-spacing:0.14em">⏱ TIME TO CLOSE</div>'
-                    f'<div style="color:{risk_color};font-size:1.1rem;'
-                    f'font-weight:700">{int(minutes_to_close)} min</div></div>'
-                    f'<div style="color:{risk_color};font-size:0.82rem;'
-                    f'font-weight:700;letter-spacing:0.08em">{risk_label}</div>'
-                    f'</div>'
-                )
-                _render_md(eod_html)
-
-                # ── Headline metrics row 1: GEX / DEX / VEX / CEX 0DTE
-                total_g_m = zdte_sum.get("total_gex", 0) / 1e6
-                total_d_m = (zdte_dex_sum or {}).get("total_dex", 0) / 1e6
-                total_v_m = (zdte_vex_sum or {}).get("total_vex", 0) / 1e6
-                total_c_m = (zdte_cex_sum or {}).get("total_cex", 0) / 1e6
-                z1, z2, z3, z4 = st.columns(4)
-                z1.metric(
-                    "0DTE Net GEX",
-                    f"${total_g_m:+.1f}M",
-                    "LONG Γ" if total_g_m >= 0 else "SHORT Γ",
-                )
-                z2.metric(
-                    "0DTE Net DEX",
-                    f"${total_d_m:+.1f}M",
-                    ("CALL-HEAVY" if total_d_m > 0
-                     else "PUT-HEAVY" if total_d_m < 0 else "NEUTRAL"),
-                )
-                z3.metric(
-                    "0DTE Net VEX",
-                    (f"${total_v_m/1000:+,.1f}B/vol pt" if abs(total_v_m) >= 1000
-                     else f"${total_v_m:+.1f}M/vol pt"),
-                    help="Cambio en delta dealer por +1 pt IV. En 0DTE "
-                         "decae rápido (vanna → 0 con T → 0).",
-                )
-                z4.metric(
-                    "0DTE Net CEX",
-                    (f"${total_c_m/1000:+,.1f}B/día" if abs(total_c_m) >= 1000
-                     else f"${total_c_m:+.1f}M/día"),
-                    help="Delta decay del dealer por día. Geométricamente "
-                         "grande en 0DTE — drives end-of-day flow.",
-                )
-
-                # Headline metrics row 2: walls + flip + counts
-                z5, z6, z7, z8 = st.columns(4)
-                z5.metric(
-                    "Call Wall",
-                    (f"${zdte_sum['call_wall']:.0f}"
-                     if zdte_sum.get("call_wall") else "—"),
-                )
-                z6.metric(
-                    "Put Wall",
-                    (f"${zdte_sum['put_wall']:.0f}"
-                     if zdte_sum.get("put_wall") else "—"),
-                )
-                gf = zdte_sum.get("gamma_flip")
-                z7.metric(
-                    "Zero Γ",
-                    f"${gf:.0f}" if gf else "—",
-                    (f"{(gf - spot)/spot*100:+.2f}% vs spot"
-                     if gf and spot and spot > 0 else None),
-                )
-                z8.metric(
-                    "HVL (pin)",
-                    (f"${zdte_sum['hvl']:.0f}"
-                     if zdte_sum.get("hvl") else "—"),
-                    help="Strike con mayor |Net GEX|. Imán del pinning "
-                         "en régimen LONG Γ.",
-                )
+                from ui.widgets import panel_0dte_glass_metrics
+                _render_md(panel_0dte_glass_metrics(
+                    zdte_sum, zdte_dex_sum, zdte_vex_sum, zdte_cex_sum,
+                    spot, minutes_to_close, risk_color, risk_label,
+                ))
 
                 # ── Gamma zones panel — same widget as Overview, scoped
                 # to the 0DTE profile.
                 _render_md(panel_zones_html(zdte_zones, spot=spot))
 
-                # ── Expected-Move analyzer (0DTE) ────────────────────────
-                # The legacy 1σ EM in interpret_0dte stalled at [spot, spot]
-                # when dte=0 (sqrt(0)=0). The new analyzer uses fractional
-                # T from bs.time_to_expiry_years and produces multi-sigma
-                # bands plus an iron-condor strike picker.
-                from quant.expected_move import (
-                    compute_em_bands, suggest_iron_condor,
-                )
-                from quant.levels import _interp_iv_one_side
-                from charts.expected_move import chart_em_bands
-                from ui.widgets import panel_em_table_html, panel_em_ic_html
+                with st.expander("📐 Sizing de Iron Condor 0DTE · bandas multi-σ (avanzado)", expanded=False):
+                    # ── Expected-Move analyzer (0DTE) ────────────────────────
+                    # The legacy 1σ EM in interpret_0dte stalled at [spot, spot]
+                    # when dte=0 (sqrt(0)=0). The new analyzer uses fractional
+                    # T from bs.time_to_expiry_years and produces multi-sigma
+                    # bands plus an iron-condor strike picker.
+                    from quant.expected_move import (
+                        compute_em_bands, suggest_iron_condor,
+                    )
+                    from quant.levels import _interp_iv_one_side
+                    from charts.expected_move import chart_em_bands
+                    from ui.widgets import panel_em_table_html, panel_em_ic_html
 
-                iv_call_zdte = _interp_iv_one_side(zdte_c, spot)
-                iv_put_zdte = _interp_iv_one_side(zdte_p, spot)
-                # Controls for the trader: target POP for the IC + wing width.
-                _render_md(
-                    '<p class="bb-header" style="margin-top:0.4rem">'
-                    'EXPECTED MOVE 0DTE  ·  Bandas multi-σ + Iron Condor</p>'
-                )
-                cem1, cem2 = st.columns([1, 1])
-                with cem1:
-                    target_pop = st.slider(
-                        "Target POP iron condor (%)",
-                        min_value=50, max_value=90, value=70, step=5,
-                        key="zdte_ic_target_pop",
-                        help=("Probabilidad objetivo de que el spot termine "
-                              "dentro del rango [short_put, short_call]. "
-                              "Más alto = strikes más alejados = menor crédito."),
+                    iv_call_zdte = _interp_iv_one_side(zdte_c, spot)
+                    iv_put_zdte = _interp_iv_one_side(zdte_p, spot)
+                    # Controls for the trader: target POP for the IC + wing width.
+                    _render_md(
+                        '<p class="bb-header" style="margin-top:0.4rem">'
+                        'EXPECTED MOVE 0DTE  ·  Bandas multi-σ + Iron Condor</p>'
                     )
-                with cem2:
-                    wing_width = st.slider(
-                        "Ancho del wing (pts)",
-                        min_value=1.0, max_value=20.0, value=5.0, step=1.0,
-                        key="zdte_ic_wing_width",
-                        help=("Distancia entre short y long en cada lado. "
-                              "Mayor wing = mayor crédito pero mayor max loss."),
-                    )
-                em_analysis = compute_em_bands(
-                    spot=spot,
-                    iv_call_pct=iv_call_zdte,
-                    iv_put_pct=iv_put_zdte,
-                    dte=0,
-                )
-                if em_analysis is not None:
-                    ic_suggestion = suggest_iron_condor(
-                        em_analysis,
-                        target_pop=target_pop / 100.0,
-                        wing_width=float(wing_width),
-                    )
-                    # Lay the two cards side by side using st.columns —
-                    # more reliable than nested flexbox in a single
-                    # markdown chunk (Streamlit's CommonMark renderer
-                    # has been flaky with nested HTML flex layouts).
-                    cem_l, cem_r = st.columns([1, 1])
-                    with cem_l:
-                        _render_md(panel_em_table_html(em_analysis))
-                    with cem_r:
-                        _render_md(panel_em_ic_html(ic_suggestion))
-                    fig_em = chart_em_bands(
-                        em_analysis, symbol=f"{symbol} 0DTE",
-                        ic_suggestion=ic_suggestion,
-                    )
-                    if fig_em is not None:
-                        st.plotly_chart(
-                            fig_em, use_container_width=True,
-                            key=f"0dte_em_{symbol}",
+                    cem1, cem2 = st.columns([1, 1])
+                    with cem1:
+                        target_pop = st.slider(
+                            "Target POP iron condor (%)",
+                            min_value=50, max_value=90, value=70, step=5,
+                            key="zdte_ic_target_pop",
+                            help=("Probabilidad objetivo de que el spot termine "
+                                  "dentro del rango [short_put, short_call]. "
+                                  "Más alto = strikes más alejados = menor crédito."),
                         )
-                else:
-                    st.caption(
-                        "Expected Move no disponible — IV ATM no se pudo "
-                        "resolver. Asegúrate de que la cadena 0DTE tenga "
-                        "strikes con IV%>1% cerca del spot."
+                    with cem2:
+                        wing_width = st.slider(
+                            "Ancho del wing (pts)",
+                            min_value=1.0, max_value=20.0, value=5.0, step=1.0,
+                            key="zdte_ic_wing_width",
+                            help=("Distancia entre short y long en cada lado. "
+                                  "Mayor wing = mayor crédito pero mayor max loss."),
+                        )
+                    em_analysis = compute_em_bands(
+                        spot=spot,
+                        iv_call_pct=iv_call_zdte,
+                        iv_put_pct=iv_put_zdte,
+                        dte=0,
                     )
+                    if em_analysis is not None:
+                        ic_suggestion = suggest_iron_condor(
+                            em_analysis,
+                            target_pop=target_pop / 100.0,
+                            wing_width=float(wing_width),
+                        )
+                        # Lay the two cards side by side using st.columns —
+                        # more reliable than nested flexbox in a single
+                        # markdown chunk (Streamlit's CommonMark renderer
+                        # has been flaky with nested HTML flex layouts).
+                        cem_l, cem_r = st.columns([1, 1])
+                        with cem_l:
+                            _render_md(panel_em_table_html(em_analysis))
+                        with cem_r:
+                            _render_md(panel_em_ic_html(ic_suggestion))
+                        fig_em = chart_em_bands(
+                            em_analysis, symbol=f"{symbol} 0DTE",
+                            ic_suggestion=ic_suggestion,
+                        )
+                        if fig_em is not None:
+                            st.plotly_chart(
+                                fig_em, use_container_width=True,
+                                key=f"0dte_em_{symbol}",
+                            )
+                    else:
+                        st.caption(
+                            "Expected Move no disponible — IV ATM no se pudo "
+                            "resolver. Asegúrate de que la cadena 0DTE tenga "
+                            "strikes con IV%>1% cerca del spot."
+                        )
 
                 # ── View + Zoom controls (paridad con GEX Total) ────────
                 VIEW_OPTS = ["all", "net", "call", "put"]

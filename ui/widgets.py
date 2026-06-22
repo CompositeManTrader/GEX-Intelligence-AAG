@@ -1000,6 +1000,118 @@ def _cockpit_price_map(spot, cw, pw, gf, hvl, vt_c, vt_p, mode) -> str:
     return "".join(parts)
 
 
+def panel_0dte_glass_metrics(zdte_sum: Optional[dict],
+                             dex_sum: Optional[dict],
+                             vex_sum: Optional[dict],
+                             cex_sum: Optional[dict],
+                             spot: float, minutes_to_close: float,
+                             risk_color: str, risk_label: str) -> str:
+    """Hero glassmorphism ('cristal water') para el 0DTE: cuenta-regresiva al
+    cierre + 8 métricas (exposiciones y niveles) en tarjetas de cristal
+    esmerilado sobre un fondo con orbes de color que el blur refracta.
+    Estética Bloomberg + sofisticada."""
+    g = zdte_sum or {}
+    net_g = g.get("total_gex", 0) / 1e6
+    net_d = (dex_sum or {}).get("total_dex", 0) / 1e6
+    net_v = (vex_sum or {}).get("total_vex", 0) / 1e6
+    net_c = (cex_sum or {}).get("total_cex", 0) / 1e6
+    cw, pw = g.get("call_wall"), g.get("put_wall")
+    gf, hvl = g.get("gamma_flip"), g.get("hvl")
+
+    GREEN, RED, CYAN = "#34d399", "#fb7185", "#22d3ee"
+    GOLD, PURPLE, INK = "#fbbf24", "#c4b5fd", "#f0f0fb"
+
+    GLASS = ("background:rgba(255,255,255,0.045);"
+             "backdrop-filter:blur(16px) saturate(150%);"
+             "-webkit-backdrop-filter:blur(16px) saturate(150%);"
+             "border:1px solid rgba(255,255,255,0.10);border-radius:13px;"
+             "box-shadow:inset 0 1px 0 rgba(255,255,255,0.10),"
+             "0 8px 30px rgba(0,0,0,0.32);")
+
+    def _mm(v, unit=""):
+        return (f"${v/1000:+,.1f}B{unit}" if abs(v) >= 1000
+                else f"${v:+.1f}M{unit}")
+
+    def tile(label, value, vclr, sub=""):
+        sub_html = (f'<div style="font-size:0.56rem;color:#9a9ac0;margin-top:3px;'
+                    f'white-space:nowrap;">{sub}</div>') if sub else ""
+        return (
+            f'<div style="{GLASS}padding:0.55rem 0.7rem;">'
+            f'<div style="font-size:0.53rem;color:#8a8ab0;letter-spacing:0.13em;'
+            f'text-transform:uppercase;white-space:nowrap;">{label}</div>'
+            f'<div style="font-size:1.02rem;font-weight:800;color:{vclr};'
+            f'margin-top:4px;font-variant-numeric:tabular-nums;line-height:1;'
+            f'white-space:nowrap;">{value}</div>{sub_html}</div>')
+
+    expos = (
+        tile("Net GEX", _mm(net_g), GREEN if net_g >= 0 else RED,
+             "LONG Γ · amortigua" if net_g >= 0 else "SHORT Γ · amplifica")
+        + tile("Net DEX", _mm(net_d), GREEN if net_d >= 0 else RED,
+               "call-heavy" if net_d > 0 else
+               ("put-heavy" if net_d < 0 else "neutral"))
+        + tile("Net VEX", _mm(net_v, "/vol"), CYAN, "vanna → 0 al cierre")
+        + tile("Net CEX", _mm(net_c, "/día"), GOLD, "charm · flujo EOD"))
+
+    gf_sub = (f"{(gf - spot)/spot*100:+.2f}% vs spot"
+              if gf and spot and spot > 0 else "pivote de régimen")
+    levels = (
+        tile("Call Wall", f"${cw:.0f}" if cw else "—", GREEN, "techo de γ")
+        + tile("Put Wall", f"${pw:.0f}" if pw else "—", RED, "piso de γ")
+        + tile("Zero Γ", f"${gf:.0f}" if gf else "—", PURPLE, gf_sub)
+        + tile("HVL · pin", f"${hvl:.0f}" if hvl else "—", CYAN, "imán de pinning"))
+
+    mins = int(minutes_to_close)
+    eod = (
+        f'<div style="{GLASS}border-left:3px solid {risk_color};'
+        f'padding:0.6rem 0.85rem;display:flex;justify-content:space-between;'
+        f'align-items:center;gap:1rem;flex-wrap:wrap;">'
+        f'<div><div style="font-size:0.53rem;color:#8a8ab0;letter-spacing:0.14em;">'
+        f'TIME TO CLOSE</div><div style="font-size:1.5rem;font-weight:800;'
+        f'color:{risk_color};line-height:1;">{mins}<span style="font-size:0.78rem;'
+        f'color:#9a9ac0;font-weight:500;"> min</span></div></div>'
+        f'<div style="text-align:center;"><div style="font-size:0.53rem;'
+        f'color:#8a8ab0;letter-spacing:0.1em;">SPOT</div>'
+        f'<div style="font-size:1.15rem;font-weight:800;color:{INK};">'
+        f'${spot:,.2f}</div></div>'
+        f'<div style="color:{risk_color};font-size:0.8rem;font-weight:700;'
+        f'letter-spacing:0.06em;">{risk_label}</div></div>')
+
+    orbs = (
+        '<div style="position:absolute;top:-70px;left:-50px;width:300px;'
+        'height:240px;background:radial-gradient(circle,rgba(249,115,22,0.20),'
+        'transparent 68%);pointer-events:none;"></div>'
+        '<div style="position:absolute;top:-50px;right:-40px;width:280px;'
+        'height:220px;background:radial-gradient(circle,rgba(34,211,238,0.18),'
+        'transparent 68%);pointer-events:none;"></div>'
+        '<div style="position:absolute;bottom:-90px;left:34%;width:360px;'
+        'height:260px;background:radial-gradient(circle,rgba(168,85,247,0.16),'
+        'transparent 68%);pointer-events:none;"></div>')
+
+    def _seclab(t):
+        return (f'<div style="font-size:0.52rem;color:#6a6a90;'
+                f'letter-spacing:0.18em;text-transform:uppercase;'
+                f'margin:0.7rem 0 0.4rem;">{t}</div>')
+
+    grid = ("display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));"
+            "gap:9px;")
+    return _html(f"""
+    <div style="position:relative;overflow:hidden;border-radius:18px;
+         padding:0.9rem;margin:0.3rem 0 0.9rem;
+         background:linear-gradient(160deg,#0c0e1a 0%,#09090f 100%);
+         border:1px solid rgba(255,255,255,0.07);
+         font-family:JetBrains Mono,monospace;">
+      {orbs}
+      <div style="position:relative;z-index:1;">
+        {eod}
+        {_seclab('Exposiciones 0DTE · flujo de cobertura del dealer')}
+        <div style="{grid}">{expos}</div>
+        {_seclab('Niveles 0DTE · estructura de gamma de hoy')}
+        <div style="{grid}">{levels}</div>
+      </div>
+    </div>
+    """)
+
+
 def regime_compare_panel(gex_agg: Optional[dict],
                          gex_0dte: Optional[dict]) -> str:
     """Compara el régimen de gamma AGREGADO (estructural, 0–60d) contra el
