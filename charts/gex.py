@@ -53,37 +53,49 @@ def chart_gex_profile(gex_df: pd.DataFrame, spot: float, summary: dict,
     # In "net" mode, render Net as bars (more readable when it's the only series).
     net_as_bars = v == "net"
 
+    # Glass-hero-consistent palette (emerald / rose / gold).
+    C_CALL = "rgba(52,211,153,0.88)"
+    C_PUT = "rgba(251,113,133,0.88)"
+    C_GOLD = "#fbbf24"
+
     fig = go.Figure()
+
+    # ── ATM focal band — a faint highlight around spot for instant anchoring ─
+    atm_pad = max(spot * 0.0018, 0.2)
+    fig.add_hrect(y0=spot - atm_pad, y1=spot + atm_pad,
+                  fillcolor="rgba(249,115,22,0.06)", line_width=0, layer="below")
+
     if show_call:
         fig.add_trace(go.Bar(
             y=df["Strike"], x=df["C_GEX_M"], orientation="h", name="Call GEX",
-            marker=dict(color="rgba(34,197,94,0.78)", line=dict(width=0)),
-            hovertemplate="<b>Strike $%{y:.1f}</b><br>Call GEX: $%{x:.1f}M<extra></extra>",
+            marker=dict(color=C_CALL, cornerradius=3,
+                        line=dict(width=0.5, color="rgba(52,211,153,0.35)")),
+            hovertemplate="<b>$%{y:.1f}</b>  ·  Call GEX $%{x:.1f}M<extra></extra>",
         ))
     if show_put:
         fig.add_trace(go.Bar(
             y=df["Strike"], x=df["P_GEX_M"], orientation="h", name="Put GEX",
-            marker=dict(color="rgba(244,63,94,0.78)", line=dict(width=0)),
-            hovertemplate="<b>Strike $%{y:.1f}</b><br>Put GEX: $%{x:.1f}M<extra></extra>",
+            marker=dict(color=C_PUT, cornerradius=3,
+                        line=dict(width=0.5, color="rgba(251,113,133,0.35)")),
+            hovertemplate="<b>$%{y:.1f}</b>  ·  Put GEX $%{x:.1f}M<extra></extra>",
         ))
     if show_net:
         if net_as_bars:
-            # Color each bar by sign for readability
-            net_colors = [
-                "rgba(34,197,94,0.78)" if v >= 0 else "rgba(244,63,94,0.78)"
-                for v in df["Net_GEX_M"]
-            ]
+            net_colors = [C_CALL if v >= 0 else C_PUT for v in df["Net_GEX_M"]]
             fig.add_trace(go.Bar(
                 y=df["Strike"], x=df["Net_GEX_M"], orientation="h", name="Net GEX",
-                marker=dict(color=net_colors, line=dict(width=0)),
-                hovertemplate="<b>Strike $%{y:.1f}</b><br>Net GEX: $%{x:+.1f}M<extra></extra>",
+                marker=dict(color=net_colors, cornerradius=3, line=dict(width=0)),
+                hovertemplate="<b>$%{y:.1f}</b>  ·  Net GEX $%{x:+.1f}M<extra></extra>",
             ))
         else:
+            # Net as a smooth profile curve (gold) overlaying the call/put bars —
+            # reads like a SpotGamma-style gamma profile, not scattered dots.
+            dfo = df.sort_values("Strike")
             fig.add_trace(go.Scatter(
-                y=df["Strike"], x=df["Net_GEX_M"], mode="markers", name="Net GEX",
-                marker=dict(symbol="diamond", size=5, color="#fbbf24",
-                            line=dict(width=1, color="#000")),
-                hovertemplate="<b>Strike $%{y:.1f}</b><br>Net GEX: $%{x:+.1f}M<extra></extra>",
+                y=dfo["Strike"], x=dfo["Net_GEX_M"], mode="lines", name="Net GEX",
+                line=dict(color=C_GOLD, width=1.8, shape="spline", smoothing=0.6),
+                fill="tozerox", fillcolor="rgba(251,191,36,0.07)",
+                hovertemplate="<b>$%{y:.1f}</b>  ·  Net GEX $%{x:+.1f}M<extra></extra>",
             ))
 
     cw = summary.get("call_wall")
@@ -91,32 +103,38 @@ def chart_gex_profile(gex_df: pd.DataFrame, spot: float, summary: dict,
     gf = summary.get("gamma_flip")
     hvl = summary.get("hvl")
 
-    fig.add_hline(y=spot, line_dash="solid", line_color=ORANGE, line_width=2,
-                  annotation_text=f"  SPOT ${spot:.2f}",
-                  annotation_font_size=11, annotation_font_color=ORANGE,
-                  annotation_position="top right")
+    # ── Level rails as elegant pill badges in the right margin ──────────────
+    # Subtle dotted rail across the plot + an outlined glass badge at the edge.
+    def _rail(y, label, color, dash="dot", width=1.1, op=0.5):
+        fig.add_hline(y=y, line_dash=dash, line_color=color,
+                      line_width=width, opacity=op)
+        fig.add_annotation(
+            xref="paper", x=1.0, y=y, yref="y", xanchor="left", xshift=8,
+            text=f"{label}<br><b>${y:,.0f}</b>", showarrow=False, align="left",
+            font=dict(size=8.5, color=color, family=FONT_MONO),
+            bgcolor="rgba(11,11,20,0.82)", bordercolor=color,
+            borderwidth=1, borderpad=3,
+        )
+
+    # SPOT — glow (thick translucent under-line) + bright core + solid pill.
+    fig.add_hline(y=spot, line_color="rgba(249,115,22,0.22)", line_width=7)
+    fig.add_hline(y=spot, line_color=ORANGE, line_width=1.8)
+    fig.add_annotation(
+        xref="paper", x=1.0, y=spot, yref="y", xanchor="left", xshift=8,
+        text=f"SPOT<br><b>${spot:,.2f}</b>", showarrow=False, align="left",
+        font=dict(size=9, color="#0b0b14", family=FONT_MONO),
+        bgcolor=ORANGE, borderpad=3,
+    )
     if cw is not None:
-        fig.add_hline(y=cw, line_dash="dashdot", line_color=GREEN, line_width=1.2,
-                      annotation_text=f"  CALL WALL ${cw:.0f}",
-                      annotation_font_size=10, annotation_font_color=GREEN,
-                      annotation_position="top right")
+        _rail(cw, "CALL WALL", GREEN, dash="dashdot", width=1.3, op=0.6)
     if pw is not None:
-        fig.add_hline(y=pw, line_dash="dashdot", line_color=RED, line_width=1.2,
-                      annotation_text=f"  PUT WALL ${pw:.0f}",
-                      annotation_font_size=10, annotation_font_color=RED,
-                      annotation_position="bottom right")
+        _rail(pw, "PUT WALL", RED, dash="dashdot", width=1.3, op=0.6)
     # `cw is None` rather than `not cw`: a legitimate strike of 0 on
     # penny underliers would have falsely suppressed the GF/HVL lines.
     if gf is not None and (cw is None or abs(gf - cw) > 0.5) and (pw is None or abs(gf - pw) > 0.5):
-        fig.add_hline(y=gf, line_dash="dot", line_color=PURPLE, line_width=1.4,
-                      annotation_text=f"  ZERO Γ ${gf:.0f}",
-                      annotation_font_size=10, annotation_font_color=PURPLE,
-                      annotation_position="top right")
+        _rail(gf, "ZERO Γ", PURPLE, dash="dot", width=1.4, op=0.6)
     if hvl is not None and (cw is None or abs(hvl - cw) > 0.5) and (pw is None or abs(hvl - pw) > 0.5):
-        fig.add_hline(y=hvl, line_dash="dashdot", line_color=CYAN, line_width=1,
-                      annotation_text=f"  HVL ${hvl:.0f}",
-                      annotation_font_size=9, annotation_font_color=CYAN,
-                      annotation_position="bottom right")
+        _rail(hvl, "HVL · PIN", CYAN, dash="dot", width=1.1, op=0.55)
 
     # ── Gamma zones (P1/P2/P3) overlay ──────────────────────────────────
     # Horizontal bands spanning each zone's [low, high] strike range.
@@ -175,20 +193,24 @@ def chart_gex_profile(gex_df: pd.DataFrame, spot: float, summary: dict,
     total_bn = summary.get("total_gex", 0) / 1e9
     r_color = GREEN if regime == "POSITIVE" else (RED if regime == "NEGATIVE" else ORANGE)
 
+    # Wider right margin so the level pills sit cleanly in the gutter.
+    base = {k: v for k, v in BASE.items() if k != "margin"}
     fig.update_layout(
-        height=640, barmode="overlay",
+        height=640, barmode="overlay", bargap=0.14, hovermode="y unified",
         title=dict(
-            text=f"  {symbol}  ·  {regime} Γ  ·  Net: ${total_bn:+.3f}B  ·  "
-                 f"DTE ≤ {summary.get('max_dte', 60)}d  ·  "
-                 f"{summary.get('n_strikes', 0)} strikes",
-            font=dict(size=12, color=r_color, family=FONT_MONO), x=0
+            text=(f"<b>{symbol}</b>  ·  <span style='color:{r_color}'>{regime} Γ"
+                  f"</span>  ·  NET ${total_bn:+.2f}B  ·  DTE ≤ "
+                  f"{summary.get('max_dte', 60)}d  ·  "
+                  f"{summary.get('n_strikes', 0)} strikes"),
+            font=dict(size=11.5, color="#8a8ab0", family=FONT_MONO), x=0.01,
         ),
-        xaxis_title="Gamma Exposure ($M per 1% move)",
-        yaxis_title="Strike",
-        **BASE,
+        xaxis_title="Gamma Exposure  ·  $M per 1% move",
+        yaxis_title=None,
+        margin=dict(l=20, r=92, t=44, b=38),
+        **base,
     )
     fig.update_xaxes(**AX_ZERO)
-    fig.update_yaxes(**AX_NOZERO, tickformat="$,.0f")
+    fig.update_yaxes(**AX_NOZERO, tickformat="$,.0f", side="left")
     return fig
 
 
