@@ -189,9 +189,110 @@ def build_payoff_figure(symbol: str, spot: float, m: dict) -> go.Figure:
     return fig
 
 
+def render_card_png(symbol: str, spot: float, m: dict,
+                    tesis: str = "") -> Optional[bytes]:
+    """Self-contained payoff card as a PNG via matplotlib's Agg backend.
+
+    Preferred over ``figure_to_png`` for delivery because it renders headless
+    (no Chrome/kaleido), which is what Streamlit Cloud can actually do.
+    Returns ``None`` if matplotlib isn't installed."""
+    try:
+        import io
+
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception:
+        return None
+
+    bull = m["bull"]
+    kH, kL = m["k_high"], m["k_low"]
+    mp, ml, be = m["max_profit"], m["max_loss"], m["breakeven"]
+    sp = float(spot)
+    stop, tp, ls = m["stop_price"], m["tp_profit"], m["loss_stop"]
+
+    lo = min(kL, sp, stop)
+    hi = max(kH, sp, stop)
+    pad = max((hi - lo) * 0.4, (kH - kL) * 0.6, 1.5)
+    xmin, xmax = lo - pad, hi + pad
+    xs = [xmin, kL, kH, xmax]
+    ys = [_payoff(m["strat"], x, kH, kL, mp, ml) for x in xs]
+    span = max(mp + ml, 0.2)
+    ylo, yhi = -ml - span * 0.18, mp + span * 0.18
+    mono = {"family": "monospace"}
+
+    fig, ax = plt.subplots(figsize=(10, 6.2), dpi=110)
+    fig.patch.set_facecolor("#0b0b14")
+    ax.set_facecolor("#0e0e1a")
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ylo, yhi)
+
+    if bull:
+        ax.axvspan(xmin, be, color=ROSE, alpha=0.10)
+        ax.axvspan(be, xmax, color=EMERALD, alpha=0.11)
+    else:
+        ax.axvspan(xmin, be, color=EMERALD, alpha=0.11)
+        ax.axvspan(be, xmax, color=ROSE, alpha=0.10)
+
+    ax.axhline(0, color="#ffffff", alpha=0.22, lw=1, ls="--")
+    for k in (kL, kH):
+        ax.axvline(k, color="#ffffff", alpha=0.28, lw=1, ls=":")
+    ax.axhline(tp, color=EMERALD, lw=1, ls="--")
+    ax.axhline(-ls, color=RED, lw=1, ls="--")
+    ax.axvline(stop, color=RED, lw=1.4)
+    ax.axvline(be, color=GOLD, lw=1, ls=":")
+    ax.axvline(sp, color=ORANGE, alpha=0.6, lw=1, ls=":")
+    ax.plot(xs, ys, color=INK, lw=2.6, solid_joinstyle="round")
+    sy = _payoff(m["strat"], sp, kH, kL, mp, ml)
+    ax.plot([sp], [sy], "o", color=ORANGE, markersize=11,
+            markeredgecolor="#0b0b14", markeredgewidth=1.6)
+
+    ax.text(xmax if bull else xmin, mp, f" +${mp:.2f} ", color=EMERALD,
+            va="bottom", ha="right" if bull else "left", fontsize=11, **mono)
+    ax.text(xmin if bull else xmax, -ml, f" −${ml:.2f} ", color=ROSE,
+            va="top", ha="left" if bull else "right", fontsize=11, **mono)
+    ax.text(xmin, tp, f" TP +${tp:.2f}", color=EMERALD, va="bottom", ha="left",
+            fontsize=10, **mono)
+    ax.text(be, yhi, f"BE {be:.2f}", color=GOLD, va="top", ha="center",
+            fontsize=10, **mono)
+    ax.text(stop, ylo, f"stop {stop:.2f}", color=RED, va="bottom",
+            ha="center", fontsize=10, **mono)
+    ax.text(sp, sy, " spot", color=ORANGE, va="bottom", ha="left",
+            fontsize=10, **mono)
+
+    for s in ax.spines.values():
+        s.set_color("#1a1a2a")
+    ax.tick_params(colors="#606080", labelsize=9)
+    ax.set_xticks([kL, kH])
+    ax.grid(color="#ffffff", alpha=0.04)
+    ax.set_xlabel("precio al cierre", color="#606080", fontsize=10, **mono)
+    ax.set_ylabel("P/L por acción ($)", color="#606080", fontsize=10, **mono)
+
+    legs = (f"Vende PUT {kH:g} · Compra PUT {kL:g}" if bull
+            else f"Compra PUT {kH:g} · Vende PUT {kL:g}")
+    prima = (f"crédito +${m['prem']:.2f}" if bull else f"débito ${m['prem']:.2f}")
+    rr = f"  ·  R:R 1:{m['rr']:.1f}" if m["rr"] else ""
+    fig.text(0.015, 0.965, f"❯ GEX  ·  {symbol} ${sp:.2f}",
+             color=ORANGE, fontsize=15, va="top", **mono)
+    fig.text(0.015, 0.918, f"{STRATS[m['strat']]}", color=INK, fontsize=12,
+             va="top", **mono)
+    fig.text(0.985, 0.95,
+             f"{legs}\n{prima}  ·  gana ${mp:.2f}  ·  pierde ${ml:.2f}{rr}",
+             color=MUTE, fontsize=9.5, va="top", ha="right", **mono)
+    foot = (tesis.strip()[:90] if tesis.strip() else "No es asesoría financiera")
+    fig.text(0.015, 0.02, foot, color="#5a5a7a", fontsize=9, va="bottom", **mono)
+    fig.subplots_adjust(left=0.075, right=0.97, top=0.84, bottom=0.11)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", facecolor=fig.get_facecolor())
+    plt.close(fig)
+    return buf.getvalue()
+
+
 def figure_to_png(fig: go.Figure, width: int = 1000, height: int = 620,
                   scale: int = 2) -> Optional[bytes]:
-    """PNG bytes via kaleido, or ``None`` if static export isn't available."""
+    """PNG bytes via kaleido, or ``None`` if static export isn't available.
+    Fallback to ``render_card_png`` (matplotlib) for headless delivery."""
     try:
         return fig.to_image(format="png", width=width, height=height,
                             scale=scale)

@@ -759,7 +759,7 @@ def show_dashboard() -> None:
     # ── 📤 TRADE CARD — arma un vertical con tus precios y mándalo a Telegram ─
     with tab_card:
         from charts.trade_card import (
-            build_payoff_figure, figure_to_png, send_to_telegram,
+            build_payoff_figure, render_card_png, send_to_telegram,
             spread_metrics, telegram_caption, telegram_get_chats,
         )
         from auth.schwab import get_secret
@@ -865,13 +865,12 @@ def show_dashboard() -> None:
                     "El bot debe estar en el grupo.")
             if tc_send and tc_tok and tc_chat:
                 with st.spinner("Enviando…"):
-                    tc_png = figure_to_png(tc_fig)
+                    tc_png = render_card_png(tc_sym, tc_spot, tc_m, tc_tesis)
                     tc_ok, tc_detail = send_to_telegram(
                         tc_tok, tc_chat, tc_cap, tc_png)
                 if tc_ok:
                     st.success("✅ Imagen enviada" if tc_png
-                               else "✅ Texto enviado (sin imagen — agrega "
-                                    "`kaleido` para el PNG)")
+                               else "✅ Texto enviado (sin imagen disponible)")
                 else:
                     st.error(f"❌ Falló el envío: {tc_detail}")
 

@@ -4,8 +4,26 @@ from __future__ import annotations
 import pytest
 
 from charts.trade_card import (
-    _parse_chats, build_payoff_figure, spread_metrics, telegram_caption,
+    _parse_chats, build_payoff_figure, render_card_png, spread_metrics,
+    telegram_caption,
 )
+
+
+def test_render_card_png_is_valid_png():
+    m = spread_metrics("bull_put", 742, 740, 0.42, tp_pct=50, stop_pct=50,
+                       contracts=10)
+    png = render_card_png("SPY", 744.76, m, tesis="pin en HVL 745")
+    assert isinstance(png, (bytes, type(None)))
+    if png is not None:                       # matplotlib disponible
+        assert png[:8] == b"\x89PNG\r\n\x1a\n"
+        assert len(png) > 2000
+
+
+def test_render_card_png_bear():
+    m = spread_metrics("bear_put", 745, 740, 1.70)
+    png = render_card_png("QQQ", 744.0, m)
+    if png is not None:
+        assert png[:8] == b"\x89PNG\r\n\x1a\n"
 
 
 def test_parse_chats_dedupes_and_labels():
