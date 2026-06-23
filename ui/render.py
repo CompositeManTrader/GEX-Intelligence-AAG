@@ -760,7 +760,7 @@ def show_dashboard() -> None:
     with tab_card:
         from charts.trade_card import (
             build_payoff_figure, figure_to_png, send_to_telegram,
-            spread_metrics, telegram_caption,
+            spread_metrics, telegram_caption, telegram_get_chats,
         )
         from auth.schwab import get_secret
 
@@ -840,6 +840,21 @@ def show_dashboard() -> None:
                 value=str(get_secret("TELEGRAM_CHAT_ID", "") or ""),
                 key="tc_chat",
                 help="ID del grupo/canal (negativo para grupos).")
+            if tc_tok and st.button("🔍 Detectar chat_id", key="tc_detect"):
+                tc_chats, tc_err = telegram_get_chats(tc_tok)
+                if tc_err:
+                    st.error(f"No pude leer: {tc_err}")
+                elif not tc_chats:
+                    st.warning(
+                        "Tu bot no ha visto ningún chat aún. Agrégalo al grupo "
+                        "y escribe un mensaje ahí (o desactiva *privacy* en "
+                        "@BotFather), luego reintenta.")
+                else:
+                    st.caption("Chats que ve tu bot — copia el id con el ícono "
+                               "de la esquina ↗ y pégalo arriba:")
+                    for _c in tc_chats:
+                        st.write(f"**{_c['title']}**  ·  {_c['type']}")
+                        st.code(str(_c["id"]), language=None)
             tc_send = st.button("📤 Enviar a Telegram", type="primary",
                                 disabled=not (tc_tok and tc_chat),
                                 key="tc_send")

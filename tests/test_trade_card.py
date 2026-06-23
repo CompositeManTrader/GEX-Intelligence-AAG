@@ -4,8 +4,32 @@ from __future__ import annotations
 import pytest
 
 from charts.trade_card import (
-    build_payoff_figure, spread_metrics, telegram_caption,
+    _parse_chats, build_payoff_figure, spread_metrics, telegram_caption,
 )
+
+
+def test_parse_chats_dedupes_and_labels():
+    result = [
+        {"message": {"chat": {"id": -1001234567890, "type": "supergroup",
+                              "title": "GEX Signals"}}},
+        {"message": {"chat": {"id": -1001234567890, "type": "supergroup",
+                              "title": "GEX Signals"}}},      # duplicado
+        {"channel_post": {"chat": {"id": -100999, "type": "channel",
+                                   "title": "Canal"}}},
+        {"my_chat_member": {"chat": {"id": 42, "type": "private",
+                                     "first_name": "Alberto"}}},
+        {"edited_message": {"text": "sin chat"}},             # ignorado
+    ]
+    chats = _parse_chats(result)
+    ids = {c["id"]: c for c in chats}
+    assert set(ids) == {-1001234567890, -100999, 42}          # deduped
+    assert ids[-1001234567890]["title"] == "GEX Signals"
+    assert ids[42]["title"] == "Alberto"
+
+
+def test_parse_chats_empty():
+    assert _parse_chats(None) == []
+    assert _parse_chats([]) == []
 
 
 def test_bull_put_credit_metrics():

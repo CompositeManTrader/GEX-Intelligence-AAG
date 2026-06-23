@@ -231,6 +231,47 @@ def telegram_caption(symbol: str, spot: float, m: dict, tesis: str = "") -> str:
     ])
 
 
+def _parse_chats(result: Optional[list]) -> list[dict]:
+    """Distinct chats from a ``getUpdates`` result payload (pure + testable).
+
+    Walks every update kind that carries a ``chat`` object and dedupes by id,
+    keeping a friendly label. The bot must have *seen* a message in the chat
+    (privacy mode off, or mentioned) for it to show up here."""
+    seen: dict = {}
+    for upd in result or []:
+        if not isinstance(upd, dict):
+            continue
+        for key in ("message", "channel_post", "edited_message",
+                    "edited_channel_post", "my_chat_member"):
+            obj = upd.get(key)
+            if isinstance(obj, dict) and isinstance(obj.get("chat"), dict):
+                c = obj["chat"]
+                label = (c.get("title") or c.get("username")
+                         or c.get("first_name") or "(privado)")
+                seen[c["id"]] = {"id": c["id"], "title": label,
+                                 "type": c.get("type", "")}
+    return list(seen.values())
+
+
+def telegram_get_chats(bot_token: str, timeout: int = 15):
+    """Chats the bot has seen via ``getUpdates``. Returns ``(chats, error)``.
+
+    ``error`` is ``None`` on success. Empty list usually means the bot hasn't
+    seen a message yet (add it to the group + post there, or disable privacy)."""
+    import requests
+
+    try:
+        r = requests.get(
+            f"https://api.telegram.org/bot{bot_token}/getUpdates",
+            timeout=timeout)
+        j = r.json()
+        if not j.get("ok"):
+            return [], j.get("description", "error desconocido")
+        return _parse_chats(j.get("result")), None
+    except Exception as e:
+        return [], str(e)
+
+
 def send_to_telegram(bot_token: str, chat_id: str, caption: str,
                      png: Optional[bytes] = None, timeout: int = 20):
     """Post to a Telegram chat. ``sendPhoto`` when a PNG is supplied, else
