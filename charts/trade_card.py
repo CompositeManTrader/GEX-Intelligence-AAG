@@ -26,7 +26,7 @@ EMERALD = "#34d399"
 ROSE = "#fb7185"
 RED = "#f87171"
 GOLD = "#fbbf24"
-ORANGE = "#f97316"
+ORANGE = "#F5A623"
 INK = "#f0f0fb"
 MUTE = "#7a7a98"
 MONO = "JetBrains Mono, monospace"
@@ -144,7 +144,7 @@ def build_payoff_figure(symbol: str, spot: float, m: dict) -> go.Figure:
     fig.add_vline(x=be, line_color=GOLD, line_width=1, line_dash="dot",
                   annotation_text=f"BE ${be:.2f}", annotation_font_color=GOLD,
                   annotation_font_size=11, annotation_position="top")
-    fig.add_vline(x=sp, line_color="rgba(249,115,22,0.6)", line_width=1,
+    fig.add_vline(x=sp, line_color="rgba(245,166,35,0.6)", line_width=1,
                   line_dash="dot")
 
     fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines",

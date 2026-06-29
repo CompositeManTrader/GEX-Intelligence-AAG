@@ -206,7 +206,7 @@ def chart_term_structure(ts_df: pd.DataFrame) -> Optional[go.Figure]:
 
     fig = go.Figure()
     # Filled baseline band
-    fig.add_hline(y=front_iv, line_dash="dot", line_color="rgba(249,115,22,0.5)",
+    fig.add_hline(y=front_iv, line_dash="dot", line_color="rgba(245,166,35,0.5)",
                   line_width=1,
                   annotation_text=f"  Front {front_iv:.1f}%",
                   annotation_font_color=ORANGE, annotation_font_size=9)
@@ -217,7 +217,7 @@ def chart_term_structure(ts_df: pd.DataFrame) -> Optional[go.Figure]:
         marker=dict(size=10, color=colors,
                     line=dict(width=1.5, color="#0b0b14")),
         fill="tonexty",
-        fillcolor="rgba(249,115,22,0.05)",
+        fillcolor="rgba(245,166,35,0.05)",
         hovertemplate="DTE %{x}d · IV %{y:.2f}%  ·  %{customdata}<extra></extra>",
         customdata=[str(e)[:10] for e in ts["Expiry"]],
         name="ATM IV",
@@ -377,7 +377,7 @@ def chart_iv_hv_history(analytics: dict, atm_iv: Optional[float]
     fig.add_trace(go.Scatter(
         x=hv_dates, y=hv30_s.values, name="HV30",
         line=dict(color=ORANGE, width=2), fill="tozeroy",
-        fillcolor="rgba(249,115,22,0.06)",
+        fillcolor="rgba(245,166,35,0.06)",
         hovertemplate="%{x|%Y-%m-%d}<br>HV30: %{y:.1f}%<extra></extra>",
     ))
     if atm_iv:

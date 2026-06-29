@@ -30,7 +30,7 @@ _BOX = (
 
 def _box(body: str, tone: str = "info") -> str:
     clr = {
-        "bull": "#22c55e", "bear": "#f43f5e", "warn": "#f59e0b",
+        "bull": "#22c55e", "bear": "#f43f5e", "warn": "#F5A623",
         "info": "#3b82f6", "neutral": "#8b8ba7",
     }.get(tone, "#8b8ba7")
     return _BOX.format(clr=clr, body=body)
@@ -73,7 +73,7 @@ def interpret_gex_profile(gex_sum: dict, spot: float) -> str:
         )
     else:
         parts.append(
-            f"<b>Régimen NEUTRAL</b> (Net GEX {_chip(f'${total_bn:+.2f}B', '249,115,22')}). "
+            f"<b>Régimen NEUTRAL</b> (Net GEX {_chip(f'${total_bn:+.2f}B', '245,166,35')}). "
             "Flujo de hedging mixto, régimen transicional."
         )
     # Levels

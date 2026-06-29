@@ -110,10 +110,18 @@ def show_dashboard() -> None:
     with b_brand:
         st.markdown(
             '<div class="brand">'
-            '<div class="brand-line"><span class="brand-prompt">❯</span>'
+            '<div class="brand-line">'
+            '<svg viewBox="0 0 64 64" width="30" height="30" '
+            'style="margin-right:3px;flex-shrink:0" aria-label="Spread Trading Club">'
+            '<path d="M6 50 C 18 50, 24 16, 32 15 C 40 16, 46 50, 58 50" '
+            'fill="none" stroke="#F5A623" stroke-width="6" stroke-linecap="round"/>'
+            '<line x1="24" y1="49" x2="24" y2="27" stroke="#F4F5F6" stroke-width="4.2"/>'
+            '<line x1="40" y1="49" x2="40" y2="27" stroke="#F4F5F6" stroke-width="4.2"/>'
+            '<circle cx="24" cy="27" r="4" fill="#F4F5F6"/>'
+            '<circle cx="40" cy="27" r="4" fill="#F4F5F6"/></svg>'
             '<span class="brand-word">GEX</span>'
             '<span class="brand-cursor"></span></div>'
-            '<div class="brand-tag">INTELLIGENCE TERMINAL</div></div>',
+            '<div class="brand-tag">SPREAD · TRADING · CLUB</div></div>',
             unsafe_allow_html=True,
         )
     with b_sym:
@@ -505,7 +513,7 @@ def show_dashboard() -> None:
                 dist_pct = (spot - gf_now) / spot * 100
                 dist_pts = (spot - gf_now) * (fut_spec.etf_ratio if fut_spec else 1.0)
                 color = "#22c55e" if dist_pct > 0.3 else (
-                    "#f43f5e" if dist_pct < -0.3 else "#f59e0b")
+                    "#f43f5e" if dist_pct < -0.3 else "#F5A623")
                 pt_lbl = (f"{fut_spec.root}pts" if fut_spec else "$pts")
                 st.markdown(
                     f'<div style="font-family:JetBrains Mono,monospace;'
@@ -1410,7 +1418,7 @@ def show_dashboard() -> None:
             '<span style="font-size:1.3rem;font-weight:800;color:#f0f0fb;'
             'letter-spacing:0.04em;">0DTE</span>'
             '<span style="font-size:1.3rem;font-weight:800;'
-            'background:linear-gradient(90deg,#f97316,#fbbf24);'
+            'background:linear-gradient(90deg,#F5A623,#fbbf24);'
             '-webkit-background-clip:text;background-clip:text;color:transparent;'
             'letter-spacing:0.04em;">GAMMA TERMINAL</span>'
             '<span style="font-size:0.6rem;color:#6a6a90;letter-spacing:0.16em;'
@@ -1467,7 +1475,7 @@ def show_dashboard() -> None:
                 elif minutes_to_close <= 30:
                     risk_color, risk_label = "#f43f5e", "EOD RISK · CHARM ACCELERATION"
                 elif minutes_to_close <= 90:
-                    risk_color, risk_label = "#f59e0b", "POWER HOUR"
+                    risk_color, risk_label = "#F5A623", "POWER HOUR"
                 else:
                     risk_color, risk_label = "#22c55e", "REGULAR SESSION"
                 from ui.widgets import panel_0dte_glass_metrics
@@ -1975,7 +1983,7 @@ def show_dashboard() -> None:
                         rich = ("IV CARA — favor vender vol" if ratio > 1.2
                                 else "IV BARATA — favor comprar vol" if ratio < 0.9
                                 else "IV ≈ realized")
-                        rclr = ("#f59e0b" if ratio > 1.2 else
+                        rclr = ("#F5A623" if ratio > 1.2 else
                                 "#06b6d4" if ratio < 0.9 else "#9090b0")
                         _render_md(
                             f'<div style="background:rgba(15,17,24,0.85);'
@@ -2261,7 +2269,7 @@ def show_dashboard() -> None:
     # ── FOOTER ──────────────────────────────────────────────────────────────
     st.markdown('<hr class="bb-divider">', unsafe_allow_html=True)
     st.markdown(
-        f'<p class="footer">❯ GEX · INTELLIGENCE TERMINAL  ·  {symbol}  ·  '
+        f'<p class="footer">GEX · SPREAD TRADING CLUB  ·  {symbol}  ·  '
         f'{last_refresh.strftime("%Y-%m-%d %H:%M:%S")} UTC'
         f'  ·  Charles Schwab API  ·  Datos en tiempo real'
         f'  ·  No constituye asesoramiento financiero</p>',
@@ -2298,11 +2306,17 @@ def show_connect_screen() -> None:
         else:
             st.markdown("""
             <div style="display:flex;justify-content:center;align-items:center;gap:11px;margin:0.6rem 0 0.45rem;">
-            <span style="color:#f97316;font-family:'JetBrains Mono',monospace;font-size:2.1rem;font-weight:800;line-height:1;">&#10095;</span>
-            <span style="color:#f5f5ff;font-family:'JetBrains Mono',monospace;font-size:2rem;font-weight:800;letter-spacing:0.12em;line-height:1;">GEX</span>
+            <svg viewBox="0 0 64 64" width="46" height="46" style="flex-shrink:0" aria-label="Spread Trading Club">
+              <path d="M6 50 C 18 50, 24 16, 32 15 C 40 16, 46 50, 58 50" fill="none" stroke="#F5A623" stroke-width="6" stroke-linecap="round"/>
+              <line x1="24" y1="49" x2="24" y2="27" stroke="#F4F5F6" stroke-width="4.2"/>
+              <line x1="40" y1="49" x2="40" y2="27" stroke="#F4F5F6" stroke-width="4.2"/>
+              <circle cx="24" cy="27" r="4" fill="#F4F5F6"/>
+              <circle cx="40" cy="27" r="4" fill="#F4F5F6"/>
+            </svg>
+            <span style="color:#F4F5F6;font-family:'Space Grotesk',system-ui,sans-serif;font-size:2rem;font-weight:700;letter-spacing:0.04em;line-height:1;">GEX</span>
             <span class="brand-cursor" style="width:14px;height:1.75rem;"></span>
             </div>
-            <div style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:0.6rem;color:#5b5b80;letter-spacing:0.32em;margin-bottom:0.7rem;">INTELLIGENCE&nbsp;TERMINAL</div>
+            <div style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:0.6rem;color:#9AA1A9;letter-spacing:0.3em;margin-bottom:0.7rem;">SPREAD&nbsp;·&nbsp;TRADING&nbsp;·&nbsp;CLUB</div>
             <p class="conn-sub">Primera configuración — solo necesitas hacerlo una vez.</p>
             """, unsafe_allow_html=True)
 

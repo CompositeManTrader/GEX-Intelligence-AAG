@@ -4,7 +4,7 @@ from __future__ import annotations
 BG_DARK = "#0b0b14"
 BG_PLOT = "#0e0e1a"
 GRID_CLR = "rgba(255,255,255,0.04)"
-ORANGE = "#f97316"
+ORANGE = "#F5A623"
 GREEN = "#22c55e"
 RED = "#f43f5e"
 BLUE = "#3b82f6"
@@ -36,7 +36,7 @@ AX_NOZERO = dict(**AX, zeroline=False)
 
 
 def vline(fig, x, row=None, col=None, color=None, label=True, text=None):
-    clr = color or "rgba(249,115,22,0.5)"
+    clr = color or "rgba(245,166,35,0.5)"
     kw = dict(x=x, line_dash="dot", line_color=clr, line_width=1.2)
     if label:
         kw.update(annotation_text=text or f"  ${x:.0f}",

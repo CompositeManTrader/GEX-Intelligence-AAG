@@ -71,7 +71,7 @@ def chart_session_trajectory(ticks: list[dict],
     fig.add_trace(go.Scatter(
         x=df["ts_et"], y=df["net_gex_mm"], name="Net GEX (0–60d)",
         line=dict(color=ORANGE, width=2.0),
-        fill="tozeroy", fillcolor="rgba(249,115,22,0.07)",
+        fill="tozeroy", fillcolor="rgba(245,166,35,0.07)",
         hovertemplate="%{x|%H:%M} · $%{y:,.0f}M<extra>Net GEX</extra>",
     ), secondary_y=False)
     if "gex_0dte_mm" in df.columns and df["gex_0dte_mm"].notna().any():

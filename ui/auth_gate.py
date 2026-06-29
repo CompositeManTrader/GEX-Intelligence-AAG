@@ -120,14 +120,20 @@ def _render_gate(single: Optional[str], users: dict[str, str]) -> None:
         st.markdown(
             """
             <div style="text-align:center;margin-bottom:1.2rem;">
-              <div style="display:flex;justify-content:center;align-items:center;gap:10px;margin-bottom:0.45rem;">
-              <span style="color:#f97316;font-family:'JetBrains Mono',monospace;font-size:1.9rem;font-weight:800;line-height:1;">&#10095;</span>
-              <span style="color:#f5f5ff;font-family:'JetBrains Mono',monospace;font-size:1.8rem;font-weight:800;letter-spacing:0.12em;line-height:1;">GEX</span>
+              <div style="display:flex;justify-content:center;align-items:center;gap:11px;margin-bottom:0.45rem;">
+              <svg viewBox="0 0 64 64" width="42" height="42" style="flex-shrink:0" aria-label="Spread Trading Club">
+                <path d="M6 50 C 18 50, 24 16, 32 15 C 40 16, 46 50, 58 50" fill="none" stroke="#F5A623" stroke-width="6" stroke-linecap="round"/>
+                <line x1="24" y1="49" x2="24" y2="27" stroke="#F4F5F6" stroke-width="4.2"/>
+                <line x1="40" y1="49" x2="40" y2="27" stroke="#F4F5F6" stroke-width="4.2"/>
+                <circle cx="24" cy="27" r="4" fill="#F4F5F6"/>
+                <circle cx="40" cy="27" r="4" fill="#F4F5F6"/>
+              </svg>
+              <span style="color:#F4F5F6;font-family:'Space Grotesk',system-ui,sans-serif;font-size:1.9rem;font-weight:700;letter-spacing:0.04em;line-height:1;">GEX</span>
               <span class="brand-cursor" style="width:13px;height:1.6rem;"></span>
               </div>
-              <div style="font-family:'JetBrains Mono',monospace;font-size:0.56rem;
-                   color:#5b5b80;letter-spacing:0.3em;margin-bottom:0.5rem;">INTELLIGENCE&nbsp;TERMINAL</div>
-              <p style="font-family:'JetBrains Mono',monospace;font-size:0.75rem;
+              <div style="font-family:'JetBrains Mono',monospace;font-size:0.58rem;
+                   color:#9AA1A9;letter-spacing:0.28em;margin-bottom:0.5rem;">SPREAD&nbsp;·&nbsp;TRADING&nbsp;·&nbsp;CLUB</div>
+              <p style="font-family:'Inter',system-ui,sans-serif;font-size:0.78rem;
                    color:#7070a0;margin:0;">🔒 Acceso restringido</p>
             </div>
             """,

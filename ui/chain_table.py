@@ -137,7 +137,7 @@ def build_table(c_df: pd.DataFrame, p_df: pd.DataFrame,
             for col in c_cols:
                 bg = "background:rgba(34,197,94,0.04);" if c_itm and not is_atm else ""
                 parts.append(f'<td style="{bg}">{_fmt(cr.get(col, float("nan")), col)}</td>')
-            mid = ("background:rgba(249,115,22,0.1);color:#f97316;font-weight:800;"
+            mid = ("background:rgba(245,166,35,0.1);color:#F5A623;font-weight:800;"
                    if is_atm else
                    "background:#0d0d1a;color:#9090b0;font-weight:600;")
             pct = _pct_label(s, spot)

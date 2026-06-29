@@ -63,7 +63,7 @@ def chart_gex_profile(gex_df: pd.DataFrame, spot: float, summary: dict,
     # ── ATM focal band — a faint highlight around spot for instant anchoring ─
     atm_pad = max(spot * 0.0018, 0.2)
     fig.add_hrect(y0=spot - atm_pad, y1=spot + atm_pad,
-                  fillcolor="rgba(249,115,22,0.06)", line_width=0, layer="below")
+                  fillcolor="rgba(245,166,35,0.06)", line_width=0, layer="below")
 
     if show_call:
         fig.add_trace(go.Bar(
@@ -119,7 +119,7 @@ def chart_gex_profile(gex_df: pd.DataFrame, spot: float, summary: dict,
         )
 
     # SPOT — glow (thick translucent under-line) + bright core + solid pill.
-    fig.add_hline(y=spot, line_color="rgba(249,115,22,0.22)", line_width=7)
+    fig.add_hline(y=spot, line_color="rgba(245,166,35,0.22)", line_width=7)
     fig.add_hline(y=spot, line_color=ORANGE, line_width=1.8)
     fig.add_annotation(
         xref="paper", x=1.0, y=spot, yref="y", xanchor="left", xshift=8,
@@ -168,8 +168,8 @@ def chart_gex_profile(gex_df: pd.DataFrame, spot: float, summary: dict,
                 fill = f"rgba(244,63,94,{alpha})"
                 stroke = "#f43f5e"
             else:
-                fill = f"rgba(245,158,11,{alpha})"
-                stroke = "#f59e0b"
+                fill = f"rgba(245,166,35,{alpha})"
+                stroke = "#F5A623"
             # Single-strike clusters (low == high) collapse `add_hrect`
             # to an invisible line. Same padding logic as intraday.py so
             # the band is at least visible. ~0.5% of spot is a sensible

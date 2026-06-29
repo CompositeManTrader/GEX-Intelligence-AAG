@@ -31,7 +31,7 @@ from charts.theme import (
 # Per-band colour ramp: smaller sigma = denser fill, larger = lighter.
 _BAND_STYLE = {
     0.5: ("rgba(34,197,94,0.22)",  "#22c55e"),
-    1.0: ("rgba(245,158,11,0.20)", "#f59e0b"),
+    1.0: ("rgba(245,166,35,0.20)", "#F5A623"),
     1.5: ("rgba(168,85,247,0.16)", "#a855f7"),
     2.0: ("rgba(244,63,94,0.12)",  "#f43f5e"),
 }

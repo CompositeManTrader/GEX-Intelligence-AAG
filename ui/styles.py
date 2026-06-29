@@ -5,11 +5,12 @@ CSS = """
 /* Load the REAL brand fonts — without this import the whole app silently
  * falls back to the OS generic monospace (Courier-ish), which is why the
  * terminal aesthetic looked inconsistent across machines. */
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap');
 
 html, body, [data-testid="stApp"], .main, .block-container {
-    background-color: #080810 !important;
+    background-color: #0A0B0D !important;
     color: #c8c8d8 !important;
+    font-family: 'Inter', system-ui, sans-serif !important;
 }
 .block-container { padding: 2rem 1.6rem 2rem !important; max-width: 100% !important; }
 
@@ -29,17 +30,17 @@ input, textarea, select,
     transition: all 0.15s;
 }
 [data-testid="stButton"] button:hover {
-    border-color: #f97316 !important; color: #f97316 !important;
-    background: rgba(249,115,22,0.08) !important;
+    border-color: #F5A623 !important; color: #F5A623 !important;
+    background: rgba(245,166,35,0.08) !important;
 }
 button[kind="primary"] {
-    background: #f97316 !important; border-color: #f97316 !important;
+    background: #F5A623 !important; border-color: #F5A623 !important;
     color: #000 !important; font-weight: 700 !important;
 }
-button[kind="primary"]:hover { background: #fb923c !important; color: #000 !important; }
+button[kind="primary"]:hover { background: #F5A623 !important; color: #000 !important; }
 [data-testid="stLinkButton"] a {
-    background: rgba(249,115,22,0.12) !important; border: 1px solid #f97316 !important;
-    color: #f97316 !important; border-radius: 4px !important;
+    background: rgba(245,166,35,0.12) !important; border: 1px solid #F5A623 !important;
+    color: #F5A623 !important; border-radius: 4px !important;
     padding: 8px 18px !important; font-size: 0.82rem !important;
     text-decoration: none !important; display: block !important; text-align: center !important;
 }
@@ -81,22 +82,23 @@ button[kind="primary"]:hover { background: #fb923c !important; color: #000 !impo
     transition: color .15s, background .15s;
 }
 .stTabs [data-baseweb="tab"]:hover {
-    color: #b4b4d6 !important; background: rgba(249,115,22,0.05) !important;
+    color: #b4b4d6 !important; background: rgba(245,166,35,0.05) !important;
 }
 .stTabs [aria-selected="true"] {
-    background: rgba(249,115,22,0.06) !important; color: #f97316 !important;
-    text-shadow: 0 0 12px rgba(249,115,22,0.25);
+    background: rgba(245,166,35,0.06) !important; color: #F5A623 !important;
+    text-shadow: 0 0 12px rgba(245,166,35,0.25);
 }
 /* baseweb's own underline track + sliding highlight → themed */
 .stTabs [data-baseweb="tab-border"] { background-color: #18182a !important; }
 .stTabs [data-baseweb="tab-highlight"] {
-    background-color: #f97316 !important; height: 2px !important;
-    box-shadow: 0 0 8px rgba(249,115,22,0.5);
+    background-color: #F5A623 !important; height: 2px !important;
+    box-shadow: 0 0 8px rgba(245,166,35,0.5);
 }
 
 .stCaption p, [data-testid="stCaptionContainer"] p { color: #505070 !important; font-size: 0.72rem !important; }
 p, .stMarkdown p { color: #a0a0c0 !important; }
-h1, h2, h3 { color: #e0e0f0 !important; }
+h1, h2, h3 { color: #e0e0f0 !important;
+    font-family: 'Space Grotesk', system-ui, sans-serif !important; font-weight: 700 !important; }
 
 [data-testid="stSidebar"] { background: #0a0a14 !important; border-right: 1px solid #1a1a2a !important; }
 [data-testid="stSidebarContent"] * { color: #a0a0c0 !important; }
@@ -112,27 +114,27 @@ h1, h2, h3 { color: #e0e0f0 !important; }
     font-size: 0.68rem !important; letter-spacing: 0.09em !important;
     text-transform: uppercase; padding: 0.45rem 0.85rem !important;
 }
-[data-testid="stExpander"] summary:hover { color: #f97316 !important; }
-[data-testid="stExpander"] summary svg { fill: #f97316 !important; }
+[data-testid="stExpander"] summary:hover { color: #F5A623 !important; }
+[data-testid="stExpander"] summary svg { fill: #F5A623 !important; }
 
 /* Brand mark — terminal prompt lockup ( ❯ GEX ▮ ) */
 @keyframes brand-blink { 50% { opacity: 0; } }
 .brand { display:flex; flex-direction:column; justify-content:center; padding-top:1px; }
 .brand-line { display:flex; align-items:center; gap:8px; }
-.brand-prompt { color:#f97316; font-family:'JetBrains Mono',monospace;
+.brand-prompt { color:#F5A623; font-family:'JetBrains Mono',monospace;
     font-size:1.35rem; font-weight:800; line-height:1; }
-.brand-word { color:#f5f5ff; font-family:'JetBrains Mono',monospace;
-    font-size:1.22rem; font-weight:800; letter-spacing:0.11em; line-height:1; }
-.brand-cursor { display:inline-block; width:10px; height:1.12rem; background:#f97316;
-    box-shadow:0 0 8px rgba(249,115,22,0.5);
+.brand-word { color:#F4F5F6; font-family:'Space Grotesk',system-ui,sans-serif;
+    font-size:1.32rem; font-weight:700; letter-spacing:0.04em; line-height:1; }
+.brand-cursor { display:inline-block; width:10px; height:1.12rem; background:#F5A623;
+    box-shadow:0 0 8px rgba(245,166,35,0.5);
     animation:brand-blink 1.1s steps(1) infinite; }
-.brand-tag { font-family:'JetBrains Mono',monospace; font-size:0.5rem; color:#5b5b80;
-    letter-spacing:0.28em; margin-top:6px; white-space:nowrap; }
+.brand-tag { font-family:'JetBrains Mono',monospace; font-size:0.52rem; color:#9AA1A9;
+    letter-spacing:0.26em; margin-top:5px; white-space:nowrap; }
 
 .bb-header {
     font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; font-weight: 700;
     text-transform: uppercase; letter-spacing: 0.12em;
-    color: #f97316; border-left: 3px solid #f97316;
+    color: #F5A623; border-left: 3px solid #F5A623;
     padding-left: 10px; margin: 1.4rem 0 0.8rem;
 }
 .bb-divider { border: none; border-top: 1px solid #1a1a2a; margin: 1.2rem 0; }
@@ -140,7 +142,7 @@ h1, h2, h3 { color: #e0e0f0 !important; }
 .conn-sub   { font-size: 0.82rem; color: #606080; text-align: center; margin: 0 0 1.6rem;
               font-family: 'Inter', sans-serif; }
 .step-num   { display: inline-flex; align-items: center; justify-content: center;
-              background: #f97316; color: #000; border-radius: 50%;
+              background: #F5A623; color: #000; border-radius: 50%;
               width: 22px; height: 22px; font-size: 0.7rem; font-weight: 800;
               margin-right: 8px; flex-shrink: 0; }
 .step-label { font-size: 0.8rem; color: #9595b8; font-family: 'JetBrains Mono', monospace;
@@ -179,22 +181,22 @@ h1, h2, h3 { color: #e0e0f0 !important; }
 .chain tbody tr:hover td { background: #111120 !important; }
 .itm-c td { background: rgba(34,197,94,0.04) !important; }
 .itm-p td { background: rgba(244,63,94,0.04) !important; }
-.atm-row td { background: rgba(249,115,22,0.07) !important; border-top: 1px solid rgba(249,115,22,0.3) !important; border-bottom: 1px solid rgba(249,115,22,0.3) !important; }
+.atm-row td { background: rgba(245,166,35,0.07) !important; border-top: 1px solid rgba(245,166,35,0.3) !important; border-bottom: 1px solid rgba(245,166,35,0.3) !important; }
 .strike     { font-weight: 700; color: #d0d0e8; }
-.atm-strike { color: #f97316 !important; font-weight: 800; }
+.atm-strike { color: #F5A623 !important; font-weight: 800; }
 .pos { color: #22c55e !important; }
 .neg { color: #f43f5e !important; }
 .neu { color: #6060a0; }
 .hi  { color: #e0e0f8 !important; font-weight: 600; }
 .call-hdr { background: rgba(34,197,94,0.08) !important; color: #22c55e !important; font-weight: 700 !important; }
 .put-hdr  { background: rgba(244,63,94,0.08) !important; color: #f43f5e !important; font-weight: 700 !important; }
-.mid-hdr  { background: #0d0d1a !important; color: #f97316 !important; font-weight: 800 !important; }
+.mid-hdr  { background: #0d0d1a !important; color: #F5A623 !important; font-weight: 800 !important; }
 
 .badge { display: inline-block; padding: 2px 8px; border-radius: 3px;
          font-size: 0.68rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
 .badge-green  { background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.3); }
 .badge-red    { background: rgba(244,63,94,0.15); color: #f43f5e; border: 1px solid rgba(244,63,94,0.3); }
-.badge-orange { background: rgba(249,115,22,0.15); color: #f97316; border: 1px solid rgba(249,115,22,0.3); }
+.badge-orange { background: rgba(245,166,35,0.15); color: #F5A623; border: 1px solid rgba(245,166,35,0.3); }
 .badge-gray   { background: rgba(100,100,150,0.15); color: #8080a0; border: 1px solid rgba(100,100,150,0.3); }
 
 .stat-row { display:flex; gap:24px; align-items:baseline; margin-bottom:0.5rem; }
@@ -225,7 +227,7 @@ h1, h2, h3 { color: #e0e0f0 !important; }
     font-family: 'Inter', -apple-system, sans-serif;
 }
 .decision-body b { color: #e8e8f8; }
-.decision-body code { background: #1a1a2a; color: #f97316; padding: 1px 6px;
+.decision-body code { background: #1a1a2a; color: #F5A623; padding: 1px 6px;
                       border-radius: 3px; font-family: 'JetBrains Mono', monospace;
                       font-size: 0.78rem; }
 
@@ -241,14 +243,14 @@ h1, h2, h3 { color: #e0e0f0 !important; }
           margin-right:7px; vertical-align:middle; }
 .mh-dot.live { background:#22c55e; box-shadow:0 0 9px #22c55e;
                animation:mh-pulse 1.8s ease-in-out infinite; }
-.mh-dot.idle { background:#f59e0b; box-shadow:0 0 7px rgba(245,158,11,0.6); }
+.mh-dot.idle { background:#F5A623; box-shadow:0 0 7px rgba(245,166,35,0.6); }
 .mh-dot.off  { background:#6b6b8a; }
 .mh-cell:hover { background:rgba(255,255,255,0.018); }
 
 /* Toggle accent → brand orange (best-effort across Streamlit versions) */
 [data-testid="stToggle"] [role="switch"][aria-checked="true"],
 [data-baseweb="checkbox"] [aria-checked="true"] > div:first-child {
-    background-color: #f97316 !important;
+    background-color: #F5A623 !important;
 }
 
 /* ─── Toolbar / command-bar polish ─────────────────────────────────────── */
@@ -263,9 +265,9 @@ h1, h2, h3 { color: #e0e0f0 !important; }
     color: #45456a !important; font-weight: 400 !important; letter-spacing: 0;
 }
 [data-testid="stTextInput"] input:focus {
-    border-color: #f97316 !important;
-    box-shadow: 0 0 0 1px rgba(249,115,22,0.4),
-                0 0 14px rgba(249,115,22,0.14) !important;
+    border-color: #F5A623 !important;
+    box-shadow: 0 0 0 1px rgba(245,166,35,0.4),
+                0 0 14px rgba(245,166,35,0.14) !important;
 }
 [data-baseweb="select"] > div {
     background: #101019 !important; border-color: #24243a !important;
@@ -273,8 +275,8 @@ h1, h2, h3 { color: #e0e0f0 !important; }
     border-radius: 5px !important; transition: border-color .15s, box-shadow .15s;
 }
 [data-baseweb="select"]:focus-within > div {
-    border-color: #f97316 !important;
-    box-shadow: 0 0 0 1px rgba(249,115,22,0.35) !important;
+    border-color: #F5A623 !important;
+    box-shadow: 0 0 0 1px rgba(245,166,35,0.35) !important;
 }
 [data-testid="stButton"] button {
     padding: 0.5rem 0.55rem !important; font-size: 0.7rem !important;
@@ -328,12 +330,12 @@ div[role="radiogroup"] > label {
     cursor: pointer !important;
 }
 div[role="radiogroup"] > label:hover {
-    background: rgba(249,115,22,0.10) !important;
-    border-color: rgba(249,115,22,0.40) !important;
+    background: rgba(245,166,35,0.10) !important;
+    border-color: rgba(245,166,35,0.40) !important;
 }
 div[role="radiogroup"] > label:has(input:checked) {
-    background: rgba(249,115,22,0.16) !important;
-    border-color: #f97316 !important;
+    background: rgba(245,166,35,0.16) !important;
+    border-color: #F5A623 !important;
 }
 /* hide the default radio dot for a clean segmented look */
 div[role="radiogroup"] > label > div:first-child { display: none !important; }
@@ -341,8 +343,8 @@ div[role="radiogroup"] > label div { color: #c8c8e0 !important; font-size: 0.72r
 
 /* ── Sliders — refined orange thumb on a slim track ── */
 [data-testid="stSlider"] [data-baseweb="slider"] div[role="slider"] {
-    background: #f97316 !important;
-    box-shadow: 0 0 0 4px rgba(249,115,22,0.18) !important;
+    background: #F5A623 !important;
+    box-shadow: 0 0 0 4px rgba(245,166,35,0.18) !important;
 }
 
 /* ── Expanders → glass (upgrade the existing dark gradient) ── */

@@ -19,7 +19,7 @@ from charts.theme import (
 
 _METHOD_COLOR = {
     "IV Gaussian":   "#a78bfa",
-    "Skew-adjusted": "#f59e0b",
+    "Skew-adjusted": "#F5A623",
     "Straddle MMM":  "#06b6d4",
     "Realized vol":  "#94a3b8",
 }
@@ -221,9 +221,9 @@ def chart_risk_neutral_density(rnd: pd.DataFrame, spot: float,
 
     # ── Percentile markers (P10/25/50/75/90)
     pct_specs = [
-        ("p10", "#f59e0b", "P10"), ("p25", "#22c55e", "P25"),
+        ("p10", "#F5A623", "P10"), ("p25", "#22c55e", "P25"),
         ("p50", "#e0e0f0", "P50 (mediana)"),
-        ("p75", "#22c55e", "P75"), ("p90", "#f59e0b", "P90"),
+        ("p75", "#22c55e", "P75"), ("p90", "#F5A623", "P90"),
     ]
     # Stagger the labels on two rows (and SPOT on a third) — on narrow 0DTE
     # densities P25/P50/P75 + SPOT sit within a few dollars and the
@@ -283,7 +283,7 @@ def chart_risk_neutral_density(rnd: pd.DataFrame, spot: float,
         )
 
     method_tag = f"  ·  fit: {method.upper()}" if method else ""
-    conf_map = {"high": ("alta", "#22c55e"), "medium": ("media", "#f59e0b"),
+    conf_map = {"high": ("alta", "#22c55e"), "medium": ("media", "#F5A623"),
                 "low": ("baja", "#f43f5e")}
     conf_lbl, conf_clr = conf_map.get(confidence or "", ("", "#c0c0d8"))
     conf_tag = (f"   ·   confianza <span style='color:{conf_clr}'>{conf_lbl}</span>"

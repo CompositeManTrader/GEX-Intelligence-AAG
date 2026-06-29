@@ -170,7 +170,7 @@ def render_intraday_chart(
             if day_min < rth_open:
                 fig.add_vrect(
                     x0=day_min, x1=rth_open,
-                    fillcolor="rgba(245,158,11,0.04)",
+                    fillcolor="rgba(245,166,35,0.04)",
                     line=dict(width=0), layer="below",
                     row=1, col=1,
                 )
@@ -206,7 +206,7 @@ def render_intraday_chart(
             elif side == "put_dominant":
                 fill, stroke_clr = f"rgba(244,63,94,{alpha})", "#f43f5e"
             else:
-                fill, stroke_clr = f"rgba(245,158,11,{alpha})", "#f59e0b"
+                fill, stroke_clr = f"rgba(245,166,35,{alpha})", "#F5A623"
             fig.add_hrect(
                 y0=low_p, y1=high_p,
                 fillcolor=fill, opacity=1.0,

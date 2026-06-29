@@ -72,11 +72,11 @@ def market_header(
     if ms == "OPEN":
         dot_cls, dot_lbl, dot_col = "live", "LIVE", "#22c55e"
     elif ms in ("PRE", "POST"):
-        dot_cls, dot_lbl, dot_col = "idle", ms, "#f59e0b"
+        dot_cls, dot_lbl, dot_col = "idle", ms, "#F5A623"
     elif ms == "CLOSED":
         dot_cls, dot_lbl, dot_col = "off", "CLOSED", "#6b6b8a"
     else:
-        dot_cls, dot_lbl, dot_col = "idle", "MKT", "#f59e0b"
+        dot_cls, dot_lbl, dot_col = "idle", "MKT", "#F5A623"
 
     def cell(label: str, value: str, vcolor: str = "#dcdcf0",
              sub: Optional[str] = None) -> str:
@@ -131,14 +131,14 @@ def market_header(
     <div style="position:relative;background:linear-gradient(135deg,#0b0b16 0%,#0e0e1c 55%,#0c0c18 100%);
          border:1px solid #1e1e32;border-radius:8px;padding:0.95rem 1.2rem 0.85rem;
          margin:0.2rem 0 0.9rem;box-shadow:0 1px 0 rgba(255,255,255,0.02) inset,0 6px 22px rgba(0,0,0,0.35);overflow:hidden;">
-      <div style="position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(to right,#f97316,rgba(249,115,22,0) 60%);"></div>
+      <div style="position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(to right,#F5A623,rgba(245,166,35,0) 60%);"></div>
       <div style="display:flex;align-items:center;justify-content:space-between;gap:1.2rem;flex-wrap:wrap;">
         <div style="display:flex;align-items:center;gap:1.15rem;min-width:260px;">
           <div>
             <div style="font-size:0.6rem;color:{dot_col};letter-spacing:0.14em;font-family:JetBrains Mono,monospace;margin-bottom:3px;">
               <span class="mh-dot {dot_cls}"></span>{dot_lbl}
             </div>
-            <div style="font-size:1.2rem;font-weight:800;color:#f97316;font-family:JetBrains Mono,monospace;letter-spacing:0.08em;line-height:1;">{symbol}</div>
+            <div style="font-size:1.2rem;font-weight:800;color:#F5A623;font-family:JetBrains Mono,monospace;letter-spacing:0.08em;line-height:1;">{symbol}</div>
           </div>
           <div style="display:flex;align-items:baseline;gap:0.7rem;flex-wrap:wrap;">
             <span style="font-size:2.1rem;font-weight:800;color:#f5f5ff;font-family:JetBrains Mono,monospace;font-variant-numeric:tabular-nums;line-height:1;text-shadow:0 0 18px rgba(245,245,255,0.12);">${spot:,.2f}</span>
@@ -190,11 +190,11 @@ def flip_zone_widget(spot: float, gex_sum: Optional[dict]) -> str:
     elif regime == "NEGATIVE":
         color, status = "#f43f5e", "INESTABLE · dealer amplifica"
     else:
-        color, status = "#f59e0b", "NEUTRAL · régimen indefinido"
+        color, status = "#F5A623", "NEUTRAL · régimen indefinido"
     if a < 0.3:
         prox_col, prox_lbl = "#f43f5e", "cruce de régimen INMINENTE"
     elif a < 1.0:
-        prox_col, prox_lbl = "#f59e0b", "flip cercano — atención"
+        prox_col, prox_lbl = "#F5A623", "flip cercano — atención"
     else:
         prox_col, prox_lbl = "#8a8aa8", "flip lejano"
 
@@ -209,7 +209,7 @@ def flip_zone_widget(spot: float, gex_sum: Optional[dict]) -> str:
         # "Régimen actual: NEGATIVE. Cruzar → cambia a NEGATIVE". When the
         # net-GEX sign and the flip side DISAGREE the book is in transition
         # (multiple crossings / mixed expiries) — say that honestly.
-        cross_msg = (f'⚠ <b style="color:#f59e0b">Señales mixtas</b>: net GEX '
+        cross_msg = (f'⚠ <b style="color:#F5A623">Señales mixtas</b>: net GEX '
                      f'{regime} con Zero Γ '
                      f'{"encima" if above else "debajo"} del spot — libro en '
                      f'transición; trata el régimen con cautela.')
@@ -228,7 +228,7 @@ def flip_zone_widget(spot: float, gex_sum: Optional[dict]) -> str:
         bar_html = (
             f'<div style="position:relative;height:14px;margin:8px 0 4px;'
             f'background:linear-gradient(to right,rgba(244,63,94,.25) 0%,'
-            f'rgba(245,158,11,.15) 45%,rgba(245,158,11,.15) 55%,'
+            f'rgba(245,166,35,.15) 45%,rgba(245,166,35,.15) 55%,'
             f'rgba(34,197,94,.25) 100%);'
             f'border:1px solid #2a2a3a;border-radius:3px;">'
             f'<div title="Put Wall ${pw:.0f}" '
@@ -395,7 +395,7 @@ def trade_setup_card(
     elif score <= -2:
         bias_word, bias_sub, bias_clr, arrow = "SHORT", "bearish", "#f43f5e", "▼"
     else:
-        bias_word, bias_sub, bias_clr, arrow = "NEUTRAL", "range", "#f59e0b", "◆"
+        bias_word, bias_sub, bias_clr, arrow = "NEUTRAL", "range", "#F5A623", "◆"
 
     # ── Level-based targets (structural, not made up) ───────────────────────
     lv = _derive_levels(score, spot, cw, pw, gf, hvl, em_lo, em_hi, regime)
@@ -405,7 +405,7 @@ def trade_setup_card(
     n = len([v for _, v, _ in votes if v != 0])
     conf = int(min(100, abs(score) / max(1, n) * 100)) if n else 0
     conf_clr = ("#22c55e" if conf >= 67 else
-                "#f59e0b" if conf >= 34 else "#f43f5e")
+                "#F5A623" if conf >= 34 else "#f43f5e")
 
     # ── Votes (2-column compact grid) ───────────────────────────────────────
     vote_cells = ""
@@ -438,18 +438,18 @@ def trade_setup_card(
             left_lbl, left_clr, left_val = "STOP", "#f43f5e", stop
             right_lbl, right_clr, right_val = "TARGET", "#22c55e", target
             grad = ("linear-gradient(to right,rgba(244,63,94,.30) 0%,"
-                    "rgba(245,158,11,.16) 45%,rgba(34,197,94,.30) 100%)")
+                    "rgba(245,166,35,.16) 45%,rgba(34,197,94,.30) 100%)")
         else:
             risk, reward = stop - emid, emid - target
             left_lbl, left_clr, left_val = "TARGET", "#22c55e", target
             right_lbl, right_clr, right_val = "STOP", "#f43f5e", stop
             grad = ("linear-gradient(to right,rgba(34,197,94,.30) 0%,"
-                    "rgba(245,158,11,.16) 55%,rgba(244,63,94,.30) 100%)")
+                    "rgba(245,166,35,.16) 55%,rgba(244,63,94,.30) 100%)")
         rr = (reward / risk) if risk and risk > 0 else None
         risk_pct = risk / spot * 100 if spot else 0
         reward_pct = reward / spot * 100 if spot else 0
         rr_clr = ("#22c55e" if (rr or 0) >= 2 else
-                  "#f59e0b" if (rr or 0) >= 1 else "#f43f5e")
+                  "#F5A623" if (rr or 0) >= 1 else "#f43f5e")
 
         pts = [stop, target, elo, ehi, spot]
         lo, hi = min(pts), max(pts)
@@ -656,11 +656,11 @@ def of_session_digest_panel(changes: dict) -> str:
     span = f'{_et(changes.get("first_ts"))} → {_et(changes.get("last_ts"))} ET'
     return _html(f"""
     <div style="background:linear-gradient(135deg,#0b0b16,#0e0e1c);
-         border:1px solid #1e1e32;border-left:4px solid #f97316;
+         border:1px solid #1e1e32;border-left:4px solid #F5A623;
          padding:0.85rem 1.05rem;border-radius:8px;margin:0.4rem 0 0.9rem;
          font-family:JetBrains Mono,monospace;">
       <div style="display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;">
-        <div style="font-size:0.62rem;color:#f97316;letter-spacing:0.14em;">
+        <div style="font-size:0.62rem;color:#F5A623;letter-spacing:0.14em;">
           ¿QUÉ CAMBIÓ EN LA SESIÓN?
         </div>
         <div style="font-size:0.6rem;color:#5b5b80;">{span} · {changes["n_ticks"]} snapshots</div>
@@ -704,7 +704,7 @@ def overview_cockpit(symbol: str, spot: float, chg_p: Optional[float],
     elif regime == "NEGATIVE":
         reg_lbl, reg_clr, mode = "GAMMA NEGATIVA · TENDENCIA", "#f43f5e", "trend"
     else:
-        reg_lbl, reg_clr, mode = "RÉGIMEN NEUTRAL", "#f59e0b", "neutral"
+        reg_lbl, reg_clr, mode = "RÉGIMEN NEUTRAL", "#F5A623", "neutral"
 
     # ── Alineación agregado vs 0DTE ──────────────────────────────────────────
     reg0 = (gex_0dte or {}).get("regime")
@@ -782,7 +782,7 @@ def overview_cockpit(symbol: str, spot: float, chg_p: Optional[float],
             now_big = "TENDENCIA en curso — opera con momentum"
             now_sub = "El dealer amplifica. Sigue la dirección, no fades muros."
         else:
-            now_ico, now_clr = "·", "#f59e0b"
+            now_ico, now_clr = "·", "#F5A623"
             now_big = "Sin sesgo claro"
             now_sub = "Espera a que el precio defina un lado del Gamma Flip."
 
@@ -877,7 +877,7 @@ def overview_cockpit(symbol: str, spot: float, chg_p: Optional[float],
          font-family:JetBrains Mono,monospace;font-size:0.7rem;">
       <div style="display:flex;justify-content:space-between;align-items:center;">
         <div style="display:flex;align-items:center;gap:8px;">
-          <span style="color:#f97316;font-weight:800;font-size:0.72rem;">❯ GEX</span>
+          <span style="color:#F5A623;font-weight:800;font-size:0.72rem;">❯ GEX</span>
           <span style="color:#f5f5ff;font-weight:800;font-size:0.9rem;">{symbol} ${spot:,.2f}</span>
           {chg_html}
         </div>
@@ -969,7 +969,7 @@ def _cockpit_price_map(spot, cw, pw, gf, hvl, vt_c, vt_p, mode) -> str:
                          f'font-family="JetBrains Mono,monospace" font-size="8.5" '
                          f'text-anchor="middle">{sub}</text>')
 
-    tick(gf, "#f97316", "flip", "flip", major=True, dash=True)
+    tick(gf, "#F5A623", "flip", "flip", major=True, dash=True)
     tick(vt_p, "#fb7185", "vtp", None, major=False, dash=True)
     tick(pw, "#f43f5e", "pw", "PUT WALL", major=True)
     tick(hvl, "#a855f7", "hvl", "HVL imán", major=True, dash=True)
@@ -1078,7 +1078,7 @@ def panel_0dte_glass_metrics(zdte_sum: Optional[dict],
 
     orbs = (
         '<div style="position:absolute;top:-70px;left:-50px;width:300px;'
-        'height:240px;background:radial-gradient(circle,rgba(249,115,22,0.20),'
+        'height:240px;background:radial-gradient(circle,rgba(245,166,35,0.20),'
         'transparent 68%);pointer-events:none;"></div>'
         '<div style="position:absolute;top:-50px;right:-40px;width:280px;'
         'height:220px;background:radial-gradient(circle,rgba(34,211,238,0.18),'
@@ -1131,7 +1131,7 @@ def regime_compare_panel(gex_agg: Optional[dict],
             return "LONG Γ", "#22c55e", "dealer amortigua"
         if reg == "NEGATIVE":
             return "SHORT Γ", "#f43f5e", "dealer amplifica"
-        return "NEUTRAL", "#f59e0b", "régimen indefinido"
+        return "NEUTRAL", "#F5A623", "régimen indefinido"
 
     def _card(title, sub, data):
         if not data:
@@ -1165,8 +1165,8 @@ def regime_compare_panel(gex_agg: Optional[dict],
                and a["reg"] != "NEUTRAL" and z["reg"] != "NEUTRAL")
     if diverge:
         banner = (
-            f'<div style="background:rgba(245,158,11,0.12);border:1px solid '
-            f'rgba(245,158,11,0.45);border-radius:6px;padding:0.4rem 0.7rem;'
+            f'<div style="background:rgba(245,166,35,0.12);border:1px solid '
+            f'rgba(245,166,35,0.45);border-radius:6px;padding:0.4rem 0.7rem;'
             f'margin-bottom:0.55rem;font-size:0.66rem;color:#fbbf24;">'
             f'⚠ <b>DIVERGEN</b> — estructura {_lab(a["reg"])[0]} pero 0DTE '
             f'{_lab(z["reg"])[0]}. Para scalping intradía pesa el <b>0DTE</b> '
@@ -1317,7 +1317,7 @@ def trading_hero(display_root: str, chain_symbol: str,
     regime_color = {
         "POSITIVE": "#22c55e",
         "NEGATIVE": "#f43f5e",
-        "NEUTRAL": "#f59e0b",
+        "NEUTRAL": "#F5A623",
     }.get(regime or "NEUTRAL", "#9ca3af")
 
     gex_str = (f"${net_gex_bn:+.2f}B" if net_gex_bn is not None else "—")
@@ -1423,7 +1423,7 @@ def levels_strip(spot: float, fut_spec,
     body += _row("CALL WALL",  cw,  "#22c55e", "Resistencia · cap arriba")
     body += _row("HVL",        hvl, "#06b6d4", "Atractor · imán intradía")
     body += _row("ZERO Γ",     gf,  "#a855f7", "Régimen · cruce = volatilidad")
-    body += _row("MAX PAIN",   mp,  "#f59e0b", "Pin · cierre objetivo")
+    body += _row("MAX PAIN",   mp,  "#F5A623", "Pin · cierre objetivo")
     body += _row("PUT WALL",   pw,  "#f43f5e", "Soporte · cap abajo")
     return body
 
@@ -1459,7 +1459,7 @@ def position_sizer(account_size: float, risk_pct: float,
     </div>
     <div>
       <div style="color:#6b7280;font-size:0.58rem">Riesgo / trade</div>
-      <div style="color:#f59e0b;font-size:1rem;font-weight:700">
+      <div style="color:#F5A623;font-size:1rem;font-weight:700">
         ${risk_dollars:,.0f} <span style="font-size:0.7rem">({risk_pct:.1f}%)</span>
       </div>
     </div>
@@ -1520,7 +1520,7 @@ def panel_zones_html(zones: list, spot: Optional[float] = None) -> str:
             side_color = "#f43f5e"
             side_label = "PUT ▼"
         else:
-            side_color = "#f59e0b"
+            side_color = "#F5A623"
             side_label = "MIXED ◇"
 
         # Is spot inside this zone right now?
@@ -1662,7 +1662,7 @@ def panel_em_table_html(analysis) -> str:
         if sigma <= 0.5:
             color = "#22c55e"
         elif sigma <= 1.0:
-            color = "#f59e0b"
+            color = "#F5A623"
         elif sigma <= 1.5:
             color = "#a855f7"
         else:
@@ -1729,7 +1729,7 @@ def panel_em_ic_html(ic_suggestion) -> str:
 """)
     pop = float(ic.get("prob_of_profit", 0) or 0) * 100
     pop_color = ("#22c55e" if pop >= 70 else
-                 "#f59e0b" if pop >= 50 else "#f43f5e")
+                 "#F5A623" if pop >= 50 else "#f43f5e")
     target_pop = int(float(ic.get("target_pop", 0.7) or 0.7) * 100)
     short_put = float(ic["short_put"])
     long_put = float(ic["long_put"])
@@ -1903,7 +1903,7 @@ def panel_rnd_stats_html(stats: dict, spot: float) -> str:
                 "#22c55e" if skew > 0.15 else "#9090b0")
     kurt_txt = ("colas GORDAS (riesgo de cola alto)" if kurt > 0.5
                 else "colas finas" if kurt < -0.5 else "≈ normal")
-    kurt_clr = "#f59e0b" if abs(kurt) > 0.5 else "#9090b0"
+    kurt_clr = "#F5A623" if abs(kurt) > 0.5 else "#9090b0"
 
     rows = ""
     for name, info in (stats.get("level_probs") or {}).items():
@@ -1998,7 +1998,7 @@ def _rnd_sparkline_svg(rnd, levels: dict, spot: float,
     if kmin <= spot <= kmax:
         xs = sx(spot)
         spot_ln = (f'<line x1="{xs:.1f}" y1="{pad - 3:.1f}" x2="{xs:.1f}" '
-                   f'y2="{height - pad:.1f}" stroke="#f97316" stroke-width="1.6"/>')
+                   f'y2="{height - pad:.1f}" stroke="#F5A623" stroke-width="1.6"/>')
     return (
         f'<svg width="100%" viewBox="0 0 {width} {height}" preserveAspectRatio="none" '
         f'xmlns="http://www.w3.org/2000/svg" style="display:block">'
@@ -2031,7 +2031,7 @@ def rnd_mini_panel(rnd, levels: dict, meta: Optional[dict], spot: float) -> str:
               "#22c55e" if skew > 0.15 else "#9090b0")
     sk_txt = ("sesgo bajista ▼" if skew < -0.15
               else "sesgo alcista ▲" if skew > 0.15 else "≈ simétrico")
-    conf_map = {"high": ("#22c55e", "alta"), "medium": ("#f59e0b", "media"),
+    conf_map = {"high": ("#22c55e", "alta"), "medium": ("#F5A623", "media"),
                 "low": ("#f43f5e", "baja")}
     c_clr, c_txt = conf_map.get(conf, ("#9090b0", "—"))
 
@@ -2096,14 +2096,14 @@ def panel_rnd_levels_html(levels_data: dict, spot: float,
                 "#22c55e" if skew > 0.15 else "#9090b0")
     skew_txt = ("sesgo bajista" if skew < -0.15
                 else "sesgo alcista" if skew > 0.15 else "≈ simétrico")
-    kurt_clr = "#f59e0b" if abs(kurt) > 0.5 else "#9090b0"
+    kurt_clr = "#F5A623" if abs(kurt) > 0.5 else "#9090b0"
     kurt_txt = ("colas GORDAS" if kurt > 0.5
                 else "colas finas" if kurt < -0.5 else "≈ normal")
 
     # Percentile ladder as a horizontal strip
     pcells = ""
-    pct_order = [("p5", "#f43f5e"), ("p10", "#f59e0b"), ("p25", "#22c55e"),
-                 ("p50", "#e0e0f0"), ("p75", "#22c55e"), ("p90", "#f59e0b"),
+    pct_order = [("p5", "#f43f5e"), ("p10", "#F5A623"), ("p25", "#22c55e"),
+                 ("p50", "#e0e0f0"), ("p75", "#22c55e"), ("p90", "#F5A623"),
                  ("p95", "#f43f5e")]
     for key, clr in pct_order:
         v = pct.get(key)
@@ -2158,7 +2158,7 @@ def panel_rnd_levels_html(levels_data: dict, spot: float,
         fwd = meta.get("forward")
         arb_txt = ("✓ arbitrage-free" if arb is True
                    else "⚠ no verificado" if arb is None else "✗ con arbitraje")
-        arb_clr = "#22c55e" if arb is True else "#f59e0b"
+        arb_clr = "#22c55e" if arb is True else "#F5A623"
         rmse_txt = f"RMSE {rmse:.1e}" if rmse is not None else ""
         # Diagnostics: surface WHY a non-SVI method was used (the SVI fit was
         # rejected or unavailable), plus n_strikes / min_g, so the fallback
@@ -2174,7 +2174,7 @@ def panel_rnd_levels_html(levels_data: dict, spot: float,
             diag += (' · <span style="color:#22c55e">calib penalizada '
                      'arb-free</span>')
         elif reject and (meta.get("method") != "svi"):
-            diag += (f' · <span style="color:#f59e0b">SVI rechazado: '
+            diag += (f' · <span style="color:#F5A623">SVI rechazado: '
                      f'{reject}</span>')
         # Honesty flags: negative density mass (corrupt fallback) and how much
         # of the tails is pure extrapolation beyond the observed strikes.
@@ -2184,7 +2184,7 @@ def panel_rnd_levels_html(levels_data: dict, spot: float,
             diag += (f' · <span style="color:#f43f5e">masa neg {neg:.1f}% '
                      f'(densidad poco fiable)</span>')
         if extrap is not None and extrap > 25.0:
-            diag += (f' · <span style="color:#f59e0b">colas extrapoladas '
+            diag += (f' · <span style="color:#F5A623">colas extrapoladas '
                      f'{extrap:.0f}%</span>')
         # Prominent confidence badge — the honest bottom line for the trader.
         conf = meta.get("confidence")
@@ -2199,8 +2199,8 @@ def panel_rnd_levels_html(levels_data: dict, spot: float,
                 '</div>')
         elif conf == "medium":
             conf_badge = (
-                '<div style="background:rgba(245,158,11,0.10);border:1px solid '
-                'rgba(245,158,11,0.35);border-radius:5px;padding:0.35rem 0.65rem;'
+                '<div style="background:rgba(245,166,35,0.10);border:1px solid '
+                'rgba(245,166,35,0.35);border-radius:5px;padding:0.35rem 0.65rem;'
                 'margin-bottom:0.55rem;font-size:0.64rem;color:#fbbf24;'
                 f'font-family:JetBrains Mono,monospace;">◐ Confianza media — '
                 f'{reasons}.</div>')
@@ -2271,7 +2271,7 @@ def panel_em_accuracy_html(stats: dict, backend: str = "—") -> str:
         else:
             obs = observed * 100
             # green if within ±6pts of target, amber otherwise
-            clr = "#22c55e" if abs(obs - expected) <= 6 else "#f59e0b"
+            clr = "#22c55e" if abs(obs - expected) <= 6 else "#F5A623"
             obs_txt = f"{obs:.0f}%"
         return (
             f'<tr><td style="padding:3px 10px;color:#c0c0d8">{label}</td>'
