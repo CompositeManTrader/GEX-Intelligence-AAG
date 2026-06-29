@@ -6,9 +6,27 @@ import pandas as pd
 import pytest
 
 from quant.exposures import (
-    compute_cex_profile, compute_dex_profile, compute_gex_profile,
-    compute_vex_profile, filter_chain, gamma_flip_on_spot_grid,
+    _find_wall, compute_cex_profile, compute_dex_profile,
+    compute_gex_profile, compute_vex_profile, filter_chain,
+    gamma_flip_on_spot_grid,
 )
+
+
+def test_find_wall_isolated_peak_not_shifted():
+    """Regression: an ISOLATED Net-GEX peak (the 0DTE ATM-pinning case) must
+    report the wall AT the peak strike, not one strike below. The 3-wide
+    box smoother spreads [0,10,0] into a tied plateau [3.33,3.33,3.33] and a
+    naive argmax picked the lowest tied strike."""
+    strikes = np.array([100.0, 105.0, 110.0, 115.0, 120.0])
+    # Call wall: isolated positive peak at 110.
+    assert _find_wall(strikes, np.array([0, 0, 10, 0, 0.0]), sign=+1) == 110.0
+    # Put wall: isolated negative peak at 110.
+    assert _find_wall(strikes, np.array([0, 0, -10, 0, 0.0]), sign=-1) == 110.0
+    # A smooth hump is unaffected (no tie) — still the true peak.
+    assert _find_wall(strikes, np.array([1, 4, 9, 5, 2.0]), sign=+1) == 110.0
+    # Spot-constrained search still lands on the true peak.
+    assert _find_wall(strikes, np.array([0, 0, 10, 0, 0.0]),
+                      sign=+1, spot=104.0) == 110.0
 
 
 def _synthetic_chain(spot: float = 100.0, n: int = 11):

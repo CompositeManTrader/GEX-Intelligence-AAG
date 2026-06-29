@@ -150,7 +150,7 @@ def chart_smile_0dte(
             mode="markers",
             marker=dict(size=11, color="rgba(234,57,67,0.0)",
                         line=dict(color=RED, width=2)),
-            name=f"Rich zone (>μ + {rich_sigma:.1f}σ)",
+            name=f"Rich zone (>mediana + {rich_sigma:.1f}σ)",
             hovertemplate=(
                 "RICH<br>K %{customdata:.0f}<br>"
                 "IV %{y:.1f}%<extra></extra>"

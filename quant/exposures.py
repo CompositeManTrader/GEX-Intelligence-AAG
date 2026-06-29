@@ -125,6 +125,17 @@ def _find_wall(strikes: np.ndarray, values: np.ndarray,
     peak = float(smooth[idx])
     if peak <= 0:
         return None
+    # Tie-break: `np.convolve(..., mode="same")` spreads an ISOLATED peak
+    # into a flat plateau across its neighbours (e.g. [0,10,0] → [3.33,
+    # 3.33,3.33]), and `np.argmax` returns the FIRST tied index — which is
+    # the strike BELOW the true peak. This shifts the wall one strike off in
+    # exactly the 0DTE ATM-pinning case (a single dominant strike). Among the
+    # smoothed-tied indices, pick the one with the largest RAW value = the
+    # real peak. On a clean hump there is no tie, so this is a no-op.
+    tied = np.where(smooth >= peak - 1e-9)[0]
+    if tied.size > 1:
+        idx = int(tied[int(np.argmax(series[tied]))])
+        peak = float(smooth[idx])
     # Threshold against the max of the (already sign-flipped) smoothed
     # series — same side only. Using max(|·|) was wrong because it picks
     # up the opposite wall and can suppress legitimate peaks.

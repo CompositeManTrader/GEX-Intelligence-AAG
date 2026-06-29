@@ -396,9 +396,13 @@ def show_dashboard() -> None:
     # 0DTE-only GEX (régimen intradía) — calculado a nivel de función para que
     # el Overview pueda comparar el régimen agregado vs el de hoy y dejar elegir
     # el alcance del decision panel. Vacío si el símbolo no tiene 0DTE.
+    # min_oi=0 para 0DTE: los contratos 0DTE tienen OI bajo pero volumen y
+    # gamma altos; aplicar el min-OI global excluiría strikes legítimos. Debe
+    # coincidir con la pestaña dedicada GEX 0DTE (que usa min_oi=0), si no el
+    # régimen/muros 0DTE del Overview divergen de los de la pestaña.
     _gex_df_0dte, gex_sum_0dte = compute_gex_profile(
         calls_all, puts_all, spot, symbol=symbol,
-        max_dte=0, min_dte=0, min_oi=min_oi,
+        max_dte=0, min_dte=0, min_oi=0,
     )
     vex_df, vex_sum = compute_vex_profile(
         calls_all, puts_all, spot, symbol=symbol,
@@ -723,11 +727,13 @@ def show_dashboard() -> None:
         # near-zero-net 0DTE books. The map must show the real zero-gamma.
         if scope == "0DTE":
             _lo, _hi = 0, 0
+            _scope_min_oi = 0      # 0DTE ignora el min-OI (igual que la pestaña)
         else:
             _lo, _hi = 1, max_dte          # "Resto" = all but today's expiry
+            _scope_min_oi = min_oi
         _bdf, _bsum = compute_gex_profile(
             calls_all, puts_all, spot, symbol=symbol,
-            max_dte=_hi, min_dte=_lo, min_oi=min_oi,
+            max_dte=_hi, min_dte=_lo, min_oi=_scope_min_oi,
             use_spot_grid_flip=True,
         )
         lvl_sum = _bsum or {}
@@ -1623,7 +1629,7 @@ def show_dashboard() -> None:
                     "IV reutilizada directamente de la cadena (columna IV% de "
                     "data.parse.clean). Market_IV usa la convención OTM: "
                     "put-IV para K&lt;S, call-IV para K≥S. Overlay de walls "
-                    "GEX. Strikes en zona <b>rica</b> (IV &gt; μ+1σ) marcados "
+                    "GEX. Strikes en zona <b>rica</b> (IV &gt; mediana+1σ) marcados "
                     "con anillo rojo."
                 )
                 # X-axis toggle + rich-zone σ slider
