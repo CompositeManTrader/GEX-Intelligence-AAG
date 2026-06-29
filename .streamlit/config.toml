@@ -1,0 +1,10 @@
+# Tema base de Spread Trading Club — fija los colores nativos de Streamlit
+# (botones primarios, sliders, focos) a la marca, antes de que el CSS los
+# refine. Sin esto, el primaryColor por defecto (#FF4B4B rojo) se cuela en el
+# botón ENTRAR y otros controles primarios.
+[theme]
+base = "dark"
+primaryColor = "#F5A623"            # ámbar — único acento de marca
+backgroundColor = "#0A0B0D"         # fondo base
+secondaryBackgroundColor = "#15171A"  # superficies/tarjetas
+textColor = "#F4F5F6"               # texto (blanco de marca)
