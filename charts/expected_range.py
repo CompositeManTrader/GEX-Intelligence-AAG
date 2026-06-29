@@ -185,7 +185,7 @@ def chart_risk_neutral_density(rnd: pd.DataFrame, spot: float,
             fig.add_trace(go.Scatter(
                 x=k[mask], y=p[mask], mode="lines",
                 line=dict(width=0),
-                fill="tozeroy", fillcolor="rgba(34,197,94,0.20)",
+                fill="tozeroy", fillcolor="rgba(22,199,132,0.20)",
                 name="zona probable 50% (P25–P75)", hoverinfo="skip",
             ))
             # Callout on the likely zone — the single most useful read.
@@ -193,7 +193,7 @@ def chart_risk_neutral_density(rnd: pd.DataFrame, spot: float,
             ymid = float(np.interp(kmid, k, p))
             fig.add_annotation(
                 x=kmid, y=ymid * 0.45, text="zona más<br>probable · 50%",
-                showarrow=False, font=dict(size=8.5, color="#22c55e",
+                showarrow=False, font=dict(size=8.5, color="#16C784",
                                            family=FONT_MONO),
                 bgcolor="rgba(8,12,8,0.55)", borderpad=2,
             )
@@ -221,9 +221,9 @@ def chart_risk_neutral_density(rnd: pd.DataFrame, spot: float,
 
     # ── Percentile markers (P10/25/50/75/90)
     pct_specs = [
-        ("p10", "#F5A623", "P10"), ("p25", "#22c55e", "P25"),
+        ("p10", "#F5A623", "P10"), ("p25", "#16C784", "P25"),
         ("p50", "#e0e0f0", "P50 (mediana)"),
-        ("p75", "#22c55e", "P75"), ("p90", "#F5A623", "P90"),
+        ("p75", "#16C784", "P75"), ("p90", "#F5A623", "P90"),
     ]
     # Stagger the labels on two rows (and SPOT on a third) — on narrow 0DTE
     # densities P25/P50/P75 + SPOT sit within a few dollars and the
@@ -283,8 +283,8 @@ def chart_risk_neutral_density(rnd: pd.DataFrame, spot: float,
         )
 
     method_tag = f"  ·  fit: {method.upper()}" if method else ""
-    conf_map = {"high": ("alta", "#22c55e"), "medium": ("media", "#F5A623"),
-                "low": ("baja", "#f43f5e")}
+    conf_map = {"high": ("alta", "#16C784"), "medium": ("media", "#F5A623"),
+                "low": ("baja", "#EA3943")}
     conf_lbl, conf_clr = conf_map.get(confidence or "", ("", "#c0c0d8"))
     conf_tag = (f"   ·   confianza <span style='color:{conf_clr}'>{conf_lbl}</span>"
                 if conf_lbl else "")

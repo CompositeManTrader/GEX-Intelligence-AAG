@@ -148,7 +148,7 @@ def chart_smile_0dte(
         fig.add_trace(go.Scatter(
             x=x_series[mask], y=y_market[mask],
             mode="markers",
-            marker=dict(size=11, color="rgba(244,63,94,0.0)",
+            marker=dict(size=11, color="rgba(234,57,67,0.0)",
                         line=dict(color=RED, width=2)),
             name=f"Rich zone (>μ + {rich_sigma:.1f}σ)",
             hovertemplate=(

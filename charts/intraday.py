@@ -202,9 +202,9 @@ def render_intraday_chart(
                 low_p, high_p = low, high
             alpha = max(0.04, 0.16 - 0.05 * (rank - 1))
             if side == "call_dominant":
-                fill, stroke_clr = f"rgba(34,197,94,{alpha})", "#22c55e"
+                fill, stroke_clr = f"rgba(22,199,132,{alpha})", "#16C784"
             elif side == "put_dominant":
-                fill, stroke_clr = f"rgba(244,63,94,{alpha})", "#f43f5e"
+                fill, stroke_clr = f"rgba(234,57,67,{alpha})", "#EA3943"
             else:
                 fill, stroke_clr = f"rgba(245,166,35,{alpha})", "#F5A623"
             fig.add_hrect(
@@ -272,20 +272,20 @@ def render_intraday_chart(
     # of the session extremes — useful for "is the high being retested?"
     fig.add_trace(go.Scatter(
         x=[hi_ts], y=[hi_day], mode="markers+text",
-        marker=dict(symbol="triangle-down", size=10, color="#22c55e",
+        marker=dict(symbol="triangle-down", size=10, color="#16C784",
                     line=dict(color="#0b0b14", width=1)),
         text=[f"H ${hi_day:.2f}"],
         textposition="top center",
-        textfont=dict(size=9, color="#22c55e", family=FONT_MONO),
+        textfont=dict(size=9, color="#16C784", family=FONT_MONO),
         hoverinfo="skip", showlegend=False,
     ), row=1, col=1)
     fig.add_trace(go.Scatter(
         x=[lo_ts], y=[lo_day], mode="markers+text",
-        marker=dict(symbol="triangle-up", size=10, color="#f43f5e",
+        marker=dict(symbol="triangle-up", size=10, color="#EA3943",
                     line=dict(color="#0b0b14", width=1)),
         text=[f"L ${lo_day:.2f}"],
         textposition="bottom center",
-        textfont=dict(size=9, color="#f43f5e", family=FONT_MONO),
+        textfont=dict(size=9, color="#EA3943", family=FONT_MONO),
         hoverinfo="skip", showlegend=False,
     ), row=1, col=1)
 
@@ -490,7 +490,7 @@ def chart_session_profile(price_df: pd.DataFrame,
     nan_mask = grouped["close"].isna() | grouped["open"].isna()
     grouped["color"] = np.where(
         grouped["close"] >= grouped["open"],
-        "rgba(34,197,94,0.78)", "rgba(244,63,94,0.78)",
+        "rgba(22,199,132,0.78)", "rgba(234,57,67,0.78)",
     )
     grouped.loc[nan_mask, "color"] = "rgba(120,120,150,0.30)"
 

@@ -54,8 +54,8 @@ def chart_gex_profile(gex_df: pd.DataFrame, spot: float, summary: dict,
     net_as_bars = v == "net"
 
     # Glass-hero-consistent palette (emerald / rose / gold).
-    C_CALL = "rgba(52,211,153,0.88)"
-    C_PUT = "rgba(251,113,133,0.88)"
+    C_CALL = "rgba(22,199,132,0.88)"
+    C_PUT = "rgba(234,57,67,0.88)"
     C_GOLD = "#fbbf24"
 
     fig = go.Figure()
@@ -69,14 +69,14 @@ def chart_gex_profile(gex_df: pd.DataFrame, spot: float, summary: dict,
         fig.add_trace(go.Bar(
             y=df["Strike"], x=df["C_GEX_M"], orientation="h", name="Call GEX",
             marker=dict(color=C_CALL, cornerradius=3,
-                        line=dict(width=0.5, color="rgba(52,211,153,0.35)")),
+                        line=dict(width=0.5, color="rgba(22,199,132,0.35)")),
             hovertemplate="<b>$%{y:.1f}</b>  ·  Call GEX $%{x:.1f}M<extra></extra>",
         ))
     if show_put:
         fig.add_trace(go.Bar(
             y=df["Strike"], x=df["P_GEX_M"], orientation="h", name="Put GEX",
             marker=dict(color=C_PUT, cornerradius=3,
-                        line=dict(width=0.5, color="rgba(251,113,133,0.35)")),
+                        line=dict(width=0.5, color="rgba(234,57,67,0.35)")),
             hovertemplate="<b>$%{y:.1f}</b>  ·  Put GEX $%{x:.1f}M<extra></extra>",
         ))
     if show_net:
@@ -162,11 +162,11 @@ def chart_gex_profile(gex_df: pd.DataFrame, spot: float, summary: dict,
             # Opacity ramp: P1 = 0.18, P2 = 0.12, P3+ = 0.07
             alpha = max(0.05, 0.20 - 0.06 * (rank - 1))
             if side == "call_dominant":
-                fill = f"rgba(34,197,94,{alpha})"
-                stroke = "#22c55e"
+                fill = f"rgba(22,199,132,{alpha})"
+                stroke = "#16C784"
             elif side == "put_dominant":
-                fill = f"rgba(244,63,94,{alpha})"
-                stroke = "#f43f5e"
+                fill = f"rgba(234,57,67,{alpha})"
+                stroke = "#EA3943"
             else:
                 fill = f"rgba(245,166,35,{alpha})"
                 stroke = "#F5A623"
@@ -234,14 +234,14 @@ def chart_cum_gex(gex_df: pd.DataFrame, spot: float, summary: dict
         fig.add_trace(go.Scatter(
             x=pos["Strike"], y=pos["CumGEX_Bn"], mode="lines", name="+Cum GEX",
             line=dict(color=GREEN, width=2),
-            fill="tozeroy", fillcolor="rgba(34,197,94,0.10)",
+            fill="tozeroy", fillcolor="rgba(22,199,132,0.10)",
             hovertemplate="Strike $%{x}<br>Cum GEX: $%{y:+.2f}B<extra></extra>",
         ))
     if not neg.empty:
         fig.add_trace(go.Scatter(
             x=neg["Strike"], y=neg["CumGEX_Bn"], mode="lines", name="−Cum GEX",
             line=dict(color=RED, width=2),
-            fill="tozeroy", fillcolor="rgba(244,63,94,0.10)",
+            fill="tozeroy", fillcolor="rgba(234,57,67,0.10)",
             hovertemplate="Strike $%{x}<br>Cum GEX: $%{y:+.2f}B<extra></extra>",
         ))
     fig.add_hline(y=0, line_dash="dot",
@@ -298,12 +298,12 @@ def chart_vex_profile(vex_df: pd.DataFrame, spot: float, summary: dict,
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=df["Strike"], y=df["C_VEX_M"], name="Call VEX",
-        marker=dict(color="rgba(34,197,94,0.72)", line=dict(width=0)),
+        marker=dict(color="rgba(22,199,132,0.72)", line=dict(width=0)),
         hovertemplate="Strike $%{x:.1f}<br>Call VEX: $%{y:+.2f}M<extra></extra>",
     ))
     fig.add_trace(go.Bar(
         x=df["Strike"], y=df["P_VEX_M"], name="Put VEX",
-        marker=dict(color="rgba(244,63,94,0.72)", line=dict(width=0)),
+        marker=dict(color="rgba(234,57,67,0.72)", line=dict(width=0)),
         hovertemplate="Strike $%{x:.1f}<br>Put VEX: $%{y:+.2f}M<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
@@ -345,12 +345,12 @@ def chart_cex_profile(cex_df: pd.DataFrame, spot: float, summary: dict,
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=df["Strike"], y=df["C_CEX_M"], name="Call CEX",
-        marker=dict(color="rgba(34,197,94,0.72)", line=dict(width=0)),
+        marker=dict(color="rgba(22,199,132,0.72)", line=dict(width=0)),
         hovertemplate="Strike $%{x:.1f}<br>Call CEX: $%{y:+.2f}M/día<extra></extra>",
     ))
     fig.add_trace(go.Bar(
         x=df["Strike"], y=df["P_CEX_M"], name="Put CEX",
-        marker=dict(color="rgba(244,63,94,0.72)", line=dict(width=0)),
+        marker=dict(color="rgba(234,57,67,0.72)", line=dict(width=0)),
         hovertemplate="Strike $%{x:.1f}<br>Put CEX: $%{y:+.2f}M/día<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
@@ -390,10 +390,10 @@ def chart_gex_by_expiry(exp_df: pd.DataFrame) -> Optional[go.Figure]:
     labels = [f"{str(r['Expiry'])[5:]}  ({r['DTE']}d)" for _, r in df.iterrows()]
     fig = go.Figure([
         go.Bar(x=labels, y=df["Call_GEX_M"], name="Calls",
-               marker=dict(color="rgba(34,197,94,0.75)", line=dict(width=0)),
+               marker=dict(color="rgba(22,199,132,0.75)", line=dict(width=0)),
                hovertemplate="%{x}<br>Call GEX: $%{y:.1f}M<extra></extra>"),
         go.Bar(x=labels, y=df["Put_GEX_M"], name="Puts",
-               marker=dict(color="rgba(244,63,94,0.75)", line=dict(width=0)),
+               marker=dict(color="rgba(234,57,67,0.75)", line=dict(width=0)),
                hovertemplate="%{x}<br>Put GEX: $%{y:.1f}M<extra></extra>"),
     ])
     fig.update_layout(height=280, barmode="relative",
@@ -422,12 +422,12 @@ def chart_dex_profile(dex_df: pd.DataFrame, spot: float, summary: dict,
                                         "NET DEX ACUMULADO"])
     fig.add_trace(go.Bar(
         x=df["Strike"], y=df["C_DEX_M"], name="Call DEX",
-        marker=dict(color="rgba(34,197,94,0.72)", line=dict(width=0)),
+        marker=dict(color="rgba(22,199,132,0.72)", line=dict(width=0)),
         hovertemplate="Strike $%{x}<br>Call DEX: $%{y:+.1f}M<extra></extra>",
     ), row=1, col=1)
     fig.add_trace(go.Bar(
         x=df["Strike"], y=df["P_DEX_M"], name="Put DEX",
-        marker=dict(color="rgba(244,63,94,0.72)", line=dict(width=0)),
+        marker=dict(color="rgba(234,57,67,0.72)", line=dict(width=0)),
         hovertemplate="Strike $%{x}<br>Put DEX: $%{y:+.1f}M<extra></extra>",
     ), row=1, col=1)
     vline(fig, spot, row=1, col=1, text=f"  SPOT ${spot:.2f}")

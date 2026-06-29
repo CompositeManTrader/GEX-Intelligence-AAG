@@ -22,9 +22,9 @@ from typing import Optional
 
 import plotly.graph_objects as go
 
-EMERALD = "#34d399"
-ROSE = "#fb7185"
-RED = "#f87171"
+EMERALD = "#16C784"
+ROSE = "#EA3943"
+RED = "#EA3943"
 GOLD = "#fbbf24"
 ORANGE = "#F5A623"
 INK = "#f0f0fb"
@@ -121,9 +121,9 @@ def build_payoff_figure(symbol: str, spot: float, m: dict) -> go.Figure:
     # Profit / loss zones (split at breakeven).
     g_x0, g_x1 = (be, xmax) if bull else (xmin, be)
     r_x0, r_x1 = (xmin, be) if bull else (be, xmax)
-    fig.add_vrect(x0=g_x0, x1=g_x1, fillcolor="rgba(52,211,153,0.13)",
+    fig.add_vrect(x0=g_x0, x1=g_x1, fillcolor="rgba(22,199,132,0.13)",
                   line_width=0, layer="below")
-    fig.add_vrect(x0=r_x0, x1=r_x1, fillcolor="rgba(251,113,133,0.12)",
+    fig.add_vrect(x0=r_x0, x1=r_x1, fillcolor="rgba(234,57,67,0.12)",
                   line_width=0, layer="below")
 
     fig.add_hline(y=0, line_color="rgba(255,255,255,0.22)", line_width=1,
@@ -272,10 +272,12 @@ def render_card_png(symbol: str, spot: float, m: dict,
             else f"Compra PUT {kH:g} · Vende PUT {kL:g}")
     prima = (f"crédito +${m['prem']:.2f}" if bull else f"débito ${m['prem']:.2f}")
     rr = f"  ·  R:R 1:{m['rr']:.1f}" if m["rr"] else ""
-    fig.text(0.015, 0.965, f"❯ GEX  ·  {symbol} ${sp:.2f}",
+    fig.text(0.015, 0.965, f"GEX  ·  {symbol} ${sp:.2f}",
              color=ORANGE, fontsize=15, va="top", **mono)
     fig.text(0.015, 0.918, f"{STRATS[m['strat']]}", color=INK, fontsize=12,
              va="top", **mono)
+    fig.text(0.985, 0.022, "SPREAD · TRADING · CLUB", color="#9AA1A9",
+             fontsize=8.5, va="bottom", ha="right", **mono)
     fig.text(0.985, 0.95,
              f"{legs}\n{prima}  ·  gana ${mp:.2f}  ·  pierde ${ml:.2f}{rr}",
              color=MUTE, fontsize=9.5, va="top", ha="right", **mono)

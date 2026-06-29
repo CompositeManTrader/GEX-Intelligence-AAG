@@ -512,8 +512,8 @@ def show_dashboard() -> None:
             if gf_now and spot and spot > 0:
                 dist_pct = (spot - gf_now) / spot * 100
                 dist_pts = (spot - gf_now) * (fut_spec.etf_ratio if fut_spec else 1.0)
-                color = "#22c55e" if dist_pct > 0.3 else (
-                    "#f43f5e" if dist_pct < -0.3 else "#F5A623")
+                color = "#16C784" if dist_pct > 0.3 else (
+                    "#EA3943" if dist_pct < -0.3 else "#F5A623")
                 pt_lbl = (f"{fut_spec.root}pts" if fut_spec else "$pts")
                 st.markdown(
                     f'<div style="font-family:JetBrains Mono,monospace;'
@@ -1473,11 +1473,11 @@ def show_dashboard() -> None:
                 if now_et.time() >= datetime.time(16, 0):
                     risk_color, risk_label = "#7070a0", "MARKET CLOSED"
                 elif minutes_to_close <= 30:
-                    risk_color, risk_label = "#f43f5e", "EOD RISK · CHARM ACCELERATION"
+                    risk_color, risk_label = "#EA3943", "EOD RISK · CHARM ACCELERATION"
                 elif minutes_to_close <= 90:
                     risk_color, risk_label = "#F5A623", "POWER HOUR"
                 else:
-                    risk_color, risk_label = "#22c55e", "REGULAR SESSION"
+                    risk_color, risk_label = "#16C784", "REGULAR SESSION"
                 from ui.widgets import panel_0dte_glass_metrics
                 _render_md(panel_0dte_glass_metrics(
                     zdte_sum, zdte_dex_sum, zdte_vex_sum, zdte_cex_sum,
@@ -2300,7 +2300,7 @@ def show_connect_screen() -> None:
         if is_expired:
             st.markdown("""
             <div style="text-align:center;font-size:2.2rem;margin:0.4rem 0 0.2rem;">⚠</div>
-            <div style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:1.55rem;font-weight:800;color:#f43f5e;letter-spacing:0.08em;margin-bottom:0.3rem;">TOKEN EXPIRADO</div>
+            <div style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:1.55rem;font-weight:800;color:#EA3943;letter-spacing:0.08em;margin-bottom:0.3rem;">TOKEN EXPIRADO</div>
             <p class="conn-sub">Tu refresh token expiró (válido 7 días). Re-autoriza una vez y copia el nuevo token a Secrets.</p>
             """, unsafe_allow_html=True)
         else:

@@ -267,8 +267,8 @@ def chart_oi_volume(c: pd.DataFrame, p: pd.DataFrame, spot: float,
         horizontal_spacing=0.10,
     )
     for metric, col in [("OI", 1), ("Volume", 2)]:
-        for df, lbl, clr in [(c, "Calls", "rgba(34,197,94,0.65)"),
-                             (p, "Puts", "rgba(244,63,94,0.65)")]:
+        for df, lbl, clr in [(c, "Calls", "rgba(22,199,132,0.65)"),
+                             (p, "Puts", "rgba(234,57,67,0.65)")]:
             if df is None or df.empty or metric not in df.columns:
                 continue
             d = df.sort_values("Strike")
@@ -424,8 +424,8 @@ def chart_returns_dist(analytics: dict, symbol: str) -> Optional[go.Figure]:
             x=x_norm, y=y_norm, name="Normal",
             line=dict(color=ORANGE, width=2, dash="dot"), hoverinfo="skip",
         ))
-    for n, clr, lbl in [(1, "rgba(34,197,94,0.5)", "±1σ"),
-                        (2, "rgba(244,63,94,0.4)", "±2σ")]:
+    for n, clr, lbl in [(1, "rgba(22,199,132,0.5)", "±1σ"),
+                        (2, "rgba(234,57,67,0.4)", "±2σ")]:
         for sign in (-1, 1):
             fig.add_vline(
                 x=mu + sign * n * sig, line_dash="dot",

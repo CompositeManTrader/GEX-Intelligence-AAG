@@ -76,7 +76,7 @@ def collect_price_levels(
             "VT-C", "Strike de mayor volumen CALL hoy (flujo activo al alza)",
             False)
     if vt_p:
-        add(vt_p, "flow", "#fb7185", "dashdot", 1.4, "VT-P · vol put activo",
+        add(vt_p, "flow", "#EA3943", "dashdot", 1.4, "VT-P · vol put activo",
             "VT-P", "Strike de mayor volumen PUT hoy (flujo activo a la baja)",
             False)
     if cb:

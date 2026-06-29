@@ -115,7 +115,7 @@ def chart_orderflow_pro_stack(history: list,
             x=df["timestamp"], y=df["call_gex_mm"],
             name="Call GEX (stacked +)", mode="lines",
             line=dict(color=GREEN, width=0.8),
-            fill="tozeroy", fillcolor="rgba(34,197,94,0.18)",
+            fill="tozeroy", fillcolor="rgba(22,199,132,0.18)",
             hovertemplate="%{x|%H:%M:%S}<br>Call GEX: $%{y:+.1f}M<extra></extra>",
         ), row=1, col=1, secondary_y=False)
     if "put_gex_mm" in df.columns and df["put_gex_mm"].notna().any():
@@ -123,7 +123,7 @@ def chart_orderflow_pro_stack(history: list,
             x=df["timestamp"], y=df["put_gex_mm"],
             name="Put GEX (stacked −)", mode="lines",
             line=dict(color=RED, width=0.8),
-            fill="tozeroy", fillcolor="rgba(244,63,94,0.18)",
+            fill="tozeroy", fillcolor="rgba(234,57,67,0.18)",
             hovertemplate="%{x|%H:%M:%S}<br>Put GEX: $%{y:+.1f}M<extra></extra>",
         ), row=1, col=1, secondary_y=False)
     if "net_gex_mm" in df.columns and df["net_gex_mm"].notna().any():
@@ -183,8 +183,8 @@ def chart_orderflow_pro_stack(history: list,
             elif sigma > 0 and abs(x) >= 2 * sigma:
                 bar_colors.append(RED if x < 0 else GREEN)
             elif sigma > 0 and abs(x) >= sigma:
-                bar_colors.append("rgba(244,63,94,0.55)" if x < 0
-                                  else "rgba(34,197,94,0.55)")
+                bar_colors.append("rgba(234,57,67,0.55)" if x < 0
+                                  else "rgba(22,199,132,0.55)")
             else:
                 bar_colors.append("rgba(168,85,247,0.5)")
         fig.add_trace(go.Bar(
@@ -354,13 +354,13 @@ def chart_cum_hedge_flow(history: list,
     fig.add_trace(go.Scatter(
         x=df["timestamp"], y=pos, name="Long-γ counter-trend (positive)",
         line=dict(color=GREEN, width=1.4),
-        fill="tozeroy", fillcolor="rgba(34,197,94,0.16)",
+        fill="tozeroy", fillcolor="rgba(22,199,132,0.16)",
         hovertemplate="%{x|%H:%M:%S}<br>Cum: $%{y:+.0f}M<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
         x=df["timestamp"], y=neg, name="Short-γ pro-trend (negative)",
         line=dict(color=RED, width=1.4),
-        fill="tozeroy", fillcolor="rgba(244,63,94,0.16)",
+        fill="tozeroy", fillcolor="rgba(234,57,67,0.16)",
         hovertemplate="%{x|%H:%M:%S}<br>Cum: $%{y:+.0f}M<extra></extra>",
     ))
     fig.add_hline(y=0, line_dash="dot",
@@ -427,9 +427,9 @@ def chart_strike_heatmap(strike_history: list, symbol: str = "",
         z=z, x=pv.columns, y=pv.index,
         zmin=-vmax, zmax=vmax,
         colorscale=[
-            [0.0, "rgba(244,63,94,0.95)"],
+            [0.0, "rgba(234,57,67,0.95)"],
             [0.5, "rgba(20,20,36,0.0)"],
-            [1.0, "rgba(34,197,94,0.95)"],
+            [1.0, "rgba(22,199,132,0.95)"],
         ],
         colorbar=dict(title=f"{metric} ($M)", thickness=10),
         hovertemplate="%{x|%H:%M:%S}<br>K $%{y:.0f}<br>%{z:+.2f} $M<extra></extra>",
@@ -488,7 +488,7 @@ def panel_what_changed_html(rows_now: list[dict], rows_prev: list[dict],
     rows = []
     for _, r in movers.iterrows():
         d = float(r["delta"])
-        clr = "#22c55e" if d > 0 else ("#f43f5e" if d < 0 else "#9090b0")
+        clr = "#16C784" if d > 0 else ("#EA3943" if d < 0 else "#9090b0")
         sign = "▲" if d > 0 else ("▼" if d < 0 else "·")
         rows.append(
             f'<tr>'
@@ -555,8 +555,8 @@ def panel_wall_stability_html(history: list) -> str:
 
     return (
         '<div style="display:flex;gap:0.4rem;margin:0.3rem 0;">'
-        + _cell("CW STABILITY",   "#22c55e", cw)
-        + _cell("PW STABILITY",   "#f43f5e", pw)
+        + _cell("CW STABILITY",   "#16C784", cw)
+        + _cell("PW STABILITY",   "#EA3943", pw)
         + _cell("Zero Γ STABILITY", "#a855f7", gf)
         + '</div>'
     )
@@ -584,7 +584,7 @@ def panel_cross_session_html(rows: list[dict],
         else:
             v = float(v)
             txt = f"${v:+.0f}M"
-            clr = "#22c55e" if v > 0 else ("#f43f5e" if v < 0 else "#9090b0")
+            clr = "#16C784" if v > 0 else ("#EA3943" if v < 0 else "#9090b0")
         cells.append(
             f'<div style="flex:1 1 0;text-align:center;'
             f'background:rgba(15,17,24,0.7);border:1px solid #1e2230;'

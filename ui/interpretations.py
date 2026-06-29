@@ -30,7 +30,7 @@ _BOX = (
 
 def _box(body: str, tone: str = "info") -> str:
     clr = {
-        "bull": "#22c55e", "bear": "#f43f5e", "warn": "#F5A623",
+        "bull": "#16C784", "bear": "#EA3943", "warn": "#F5A623",
         "info": "#3b82f6", "neutral": "#8b8ba7",
     }.get(tone, "#8b8ba7")
     return _BOX.format(clr=clr, body=body)
@@ -61,13 +61,13 @@ def interpret_gex_profile(gex_sum: dict, spot: float) -> str:
     # Regime thesis
     if regime == "POSITIVE":
         parts.append(
-            f"<b>Régimen LONG GAMMA</b> (Net GEX {_chip(f'${total_bn:+.2f}B', '34,197,94')}). "
+            f"<b>Régimen LONG GAMMA</b> (Net GEX {_chip(f'${total_bn:+.2f}B', '22,199,132')}). "
             "Dealer vende rallies / compra dips → <b>baja volatilidad realizada</b>. "
             "Favorece estrategias de venta de vol (iron condors, credit spreads)."
         )
     elif regime == "NEGATIVE":
         parts.append(
-            f"<b>Régimen SHORT GAMMA</b> (Net GEX {_chip(f'${total_bn:+.2f}B', '244,63,94')}). "
+            f"<b>Régimen SHORT GAMMA</b> (Net GEX {_chip(f'${total_bn:+.2f}B', '234,57,67')}). "
             "Dealer amplifica movimiento → <b>alta volatilidad realizada</b>. "
             "Riesgo de <b>gamma squeeze</b>. Considera compra de vol o direccionales."
         )
@@ -280,13 +280,13 @@ def interpret_smile(metrics: dict, expiry: str) -> str:
     if rr is not None:
         if rr > 3:
             parts.append(
-                f"<b>RR25 {_chip(f'{rr:+.1f}', '244,63,94')}</b> → "
+                f"<b>RR25 {_chip(f'{rr:+.1f}', '234,57,67')}</b> → "
                 "fuerte <b>demanda de puts</b> (protección cara, miedo)."
             )
             tone = "bear"
         elif rr < -3:
             parts.append(
-                f"<b>RR25 {_chip(f'{rr:+.1f}', '34,197,94')}</b> → "
+                f"<b>RR25 {_chip(f'{rr:+.1f}', '22,199,132')}</b> → "
                 "<b>call skew</b> (persiguiendo el rally)."
             )
             tone = "bull"
@@ -450,9 +450,9 @@ def interpret_scenario(curve_df: pd.DataFrame, gex_sum: dict,
     max_spot = float(curve_df.loc[gex_col.idxmax(), "Spot"])
     min_spot = float(curve_df.loc[gex_col.idxmin(), "Spot"])
     parts = [
-        f"Máx GEX: {_chip(f'${max_gex:+.2f}B', '34,197,94')} "
+        f"Máx GEX: {_chip(f'${max_gex:+.2f}B', '22,199,132')} "
         f"en spot <b>${max_spot:.0f}</b>.",
-        f"Mín GEX: {_chip(f'${min_gex:+.2f}B', '244,63,94')} "
+        f"Mín GEX: {_chip(f'${min_gex:+.2f}B', '234,57,67')} "
         f"en spot <b>${min_spot:.0f}</b>.",
     ]
     if gf and spot and spot > 0:

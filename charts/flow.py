@@ -28,13 +28,13 @@ def chart_hiro_strike(flow_df: pd.DataFrame, spot: float,
     fig.add_trace(go.Bar(
         y=df["Strike"], x=df["C_Flow"], orientation="h",
         name="Call Flow (buy pressure)",
-        marker=dict(color="rgba(34,197,94,0.78)", line=dict(width=0)),
+        marker=dict(color="rgba(22,199,132,0.78)", line=dict(width=0)),
         hovertemplate="Strike $%{y:.1f}<br>Call flow: %{x:,.0f}<extra></extra>",
     ))
     fig.add_trace(go.Bar(
         y=df["Strike"], x=df["P_Flow"], orientation="h",
         name="Put Flow (sell pressure)",
-        marker=dict(color="rgba(244,63,94,0.78)", line=dict(width=0)),
+        marker=dict(color="rgba(234,57,67,0.78)", line=dict(width=0)),
         hovertemplate="Strike $%{y:.1f}<br>Put flow: %{x:,.0f}<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
@@ -95,8 +95,8 @@ def chart_hiro_oscillator(history: list, symbol: str = "") -> Optional[go.Figure
     # HIRO area. NaN ticks get a transparent color (otherwise `NaN >= 0`
     # is False → red, misclassifying empty ticks as bearish dealer flow).
     clrs = [
-        "rgba(34,197,94,0.6)" if (pd.notna(v) and v >= 0)
-        else "rgba(244,63,94,0.6)" if pd.notna(v)
+        "rgba(22,199,132,0.6)" if (pd.notna(v) and v >= 0)
+        else "rgba(234,57,67,0.6)" if pd.notna(v)
         else "rgba(0,0,0,0)"
         for v in df["hiro"]
     ]

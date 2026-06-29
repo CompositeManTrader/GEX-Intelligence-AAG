@@ -115,18 +115,18 @@ def build_table(c_df: pd.DataFrame, p_df: pd.DataFrame,
         parts.append(
             "<thead><tr>"
             f'<th colspan="{len(c_cols)}" class="call-hdr ctr" '
-            f'style="border-right:1px solid #22c55e33;">▲ CALLS</th>'
+            f'style="border-right:1px solid #16C78433;">▲ CALLS</th>'
             '<th class="mid-hdr ctr" '
-            'style="border-left:1px solid #22c55e33;border-right:1px solid #f43f5e33;">'
+            'style="border-left:1px solid #16C78433;border-right:1px solid #EA394333;">'
             'STRIKE</th>'
             f'<th colspan="{len(p_cols)}" class="put-hdr ctr" '
-            f'style="border-left:1px solid #f43f5e33;">▼ PUTS</th>'
+            f'style="border-left:1px solid #EA394333;">▼ PUTS</th>'
             "</tr><tr>"
         )
         parts.append(hdr(c_cols, "call"))
         parts.append('<th class="mid-hdr ctr" '
-                     'style="border-left:1px solid #22c55e33;'
-                     'border-right:1px solid #f43f5e33;">$</th>')
+                     'style="border-left:1px solid #16C78433;'
+                     'border-right:1px solid #EA394333;">$</th>')
         parts.append(hdr(p_cols, "put"))
         parts.append("</tr></thead><tbody>")
         for s in strikes:
@@ -135,18 +135,18 @@ def build_table(c_df: pd.DataFrame, p_df: pd.DataFrame,
             is_atm = s == atm_s
             parts.append("<tr>")
             for col in c_cols:
-                bg = "background:rgba(34,197,94,0.04);" if c_itm and not is_atm else ""
+                bg = "background:rgba(22,199,132,0.04);" if c_itm and not is_atm else ""
                 parts.append(f'<td style="{bg}">{_fmt(cr.get(col, float("nan")), col)}</td>')
             mid = ("background:rgba(245,166,35,0.1);color:#F5A623;font-weight:800;"
                    if is_atm else
                    "background:#0d0d1a;color:#9090b0;font-weight:600;")
             pct = _pct_label(s, spot)
             parts.append(f'<td class="ctr" style="{mid}'
-                         f'border-left:1px solid #22c55e22;'
-                         f'border-right:1px solid #f43f5e22;">'
+                         f'border-left:1px solid #16C78422;'
+                         f'border-right:1px solid #EA394322;">'
                          f'${s:.1f} <span style="font-size:0.6rem;opacity:0.5">{pct}</span></td>')
             for col in p_cols:
-                bg = "background:rgba(244,63,94,0.04);" if p_itm and not is_atm else ""
+                bg = "background:rgba(234,57,67,0.04);" if p_itm and not is_atm else ""
                 parts.append(f'<td style="{bg}">{_fmt(pr.get(col, float("nan")), col)}</td>')
             parts.append("</tr>")
 
