@@ -1037,10 +1037,11 @@ def show_dashboard() -> None:
 
     # ── OVERVIEW ────────────────────────────────────────────────────────────
     with tab_overview:
-        # 1. COCKPIT DE DECISIÓN — veredicto + acción AHORA + mapa a escala.
-        # (Reemplaza la trade-setup-card: lo que el trader necesita en 2 seg.)
+        # ── 1. HÉROE — cockpit: veredicto + acción AHORA + mapa de precio a
+        #    escala. Lo que el trader necesita en 2 segundos.
         iv_hv_ratio = (analytics_full or {}).get("iv_hv_ratio") if analytics_full else None
-        from ui.widgets import overview_cockpit
+        from ui.widgets import (overview_cockpit, panel_zones_html,
+                                 regime_flow_card, rnd_mini_panel)
         _ck_rnd, _ck_meta, _ck_lv = _get_rnd(0)
         _render_md(overview_cockpit(
             symbol=symbol, spot=spot, chg_p=chg_p,
@@ -1049,72 +1050,40 @@ def show_dashboard() -> None:
             hiro_snap=hiro_snap, p_c=p_c, max_pain=mp,
         ))
 
-        # 1b. IMPLIED DISTRIBUTION (RND) — the crown-jewel model, compact.
-        # New info on Overview (full implied distribution + skew), not a
-        # repeat of the header's simple 1σ EM bar. Shares the memoised compute.
-        from ui.widgets import rnd_mini_panel
-        _rnd_ov, _rnd_ov_meta, _rnd_ov_lv = _get_rnd(0)
-        _mini = rnd_mini_panel(_rnd_ov, _rnd_ov_lv, _rnd_ov_meta, spot)
-        if _mini:
-            _render_md(_mini)
+        # ── 2. DOS COLUMNAS — Distribución (RND) | Régimen & Flujo (consolida
+        #    regime-compare + decision + HIRO en una tarjeta de 3 líneas).
+        ov_c1, ov_c2 = st.columns(2)
+        with ov_c1:
+            _mini = rnd_mini_panel(_ck_rnd, _ck_lv, _ck_meta, spot)
+            if _mini:
+                _render_md(_mini)
+            else:
+                st.caption("Distribución implícita (RND) en construcción para "
+                           "este símbolo.")
+        with ov_c2:
+            _render_md(regime_flow_card(gex_sum, gex_sum_0dte, hiro_snap))
 
-        # 2. GEX FLIP ZONE — thermometer tactico
-        _render_md(flip_zone_widget(spot, gex_sum))
-
-        # 3. GAMMA ZONES — P1/P2/P3 ranked clusters with width + score
-        from ui.widgets import panel_zones_html
-        _render_md(panel_zones_html(gamma_zones, spot=spot))
-
-        # 4. DECISION PANEL — con selector de alcance (agregado vs 0DTE) y
-        #    comparación de régimen lado a lado (alerta si divergen).
-        from ui.widgets import regime_compare_panel
-        _render_md(regime_compare_panel(gex_sum, gex_sum_0dte))
-        dp_scope = st.radio(
-            "Alcance del decision panel",
-            options=["Agregado", "0DTE"],
-            format_func=lambda s: ("Agregado (0–60d · estructural)"
-                                   if s == "Agregado" else "0DTE (hoy · intradía)"),
-            horizontal=True, index=0, key="dp_scope",
-            help="Agregado = régimen estructural de todo el libro. 0DTE = el "
-                 "régimen que gobierna la sesión (pesa más hacia el cierre).",
-        )
-        _dp_gex = (gex_sum_0dte if (dp_scope == "0DTE" and gex_sum_0dte)
-                   else gex_sum)
-        _scope_lbl = ("0DTE · hoy" if (dp_scope == "0DTE" and gex_sum_0dte)
-                      else "Agregado · 0–60d")
-        if dp_scope == "0DTE" and not gex_sum_0dte:
-            st.caption("⚠ Sin 0DTE para este símbolo — mostrando el agregado.")
-        _render_md('<p class="bb-header">DECISION PANEL  ·  Flow-weighted thesis '
-                   f'<span style="color:#6c6c90;font-size:0.7rem">· {_scope_lbl}</span></p>')
-        panel = build_decision_panel(spot, _dp_gex, vex_sum, cex_sum, dex_sum,
-                                     iv_atm, em_lo, em_hi, dte_v, vol_regime_str)
-        _render_md(panel)
-        # Quick KPI row
+        # ── 3. NIVELES CLAVE — fila KPI compacta (siempre visible) + futuros.
         if gex_sum:
             regime = gex_sum.get("regime", "NEUTRAL")
             r_color = GREEN if regime == "POSITIVE" else (RED if regime == "NEGATIVE" else ORANGE)
             total_bn = gex_sum.get("total_gex", 0) / 1e9
-            call_bn = gex_sum.get("call_gex", 0) / 1e9
-            put_bn = gex_sum.get("put_gex", 0) / 1e9
             gf = gex_sum.get("gamma_flip")
             cw = gex_sum.get("call_wall")
             pw = gex_sum.get("put_wall")
             hvl = gex_sum.get("hvl")
             flip_pct = gex_sum.get("flip_pct")
             hdr = '<div class="kpi-panel">'
-            hdr += _kv("Régimen", f"{regime} Γ", r_color)
             hdr += _kv("Net GEX", f"${total_bn:+.2f}B", r_color, sub="per 1% move")
-            hdr += _kv("Call GEX", f"${call_bn:+.2f}B", GREEN)
-            hdr += _kv("Put GEX", f"${put_bn:+.2f}B", RED)
-            hdr += _kv("Zero Γ", f"${gf:.0f}" if gf else "—", PURPLE,
-                       sub=f"{flip_pct:+.1f}% spot" if flip_pct is not None else None)
             hdr += _kv("Call Wall", f"${cw:.0f}" if cw else "—", GREEN)
             hdr += _kv("Put Wall", f"${pw:.0f}" if pw else "—", RED)
-            hdr += _kv("HVL", f"${hvl:.0f}" if hvl else "—", CYAN, sub="attractor")
+            hdr += _kv("Zero Γ", f"${gf:.0f}" if gf else "—", PURPLE,
+                       sub=f"{flip_pct:+.1f}% spot" if flip_pct is not None else None)
+            hdr += _kv("HVL", f"${hvl:.0f}" if hvl else "—", CYAN, sub="imán")
             hdr += '</div>'
             _render_md(hdr)
 
-            # ── Futures-points overlay ─────────────────────────────────────
+            # ── Futures-points overlay (compacto, cuando aplica) ───────────
             if fut_spec is not None and spot > 0:
                 ratio = fut_spec.etf_ratio
                 ppt = fut_spec.point_value
@@ -1148,12 +1117,32 @@ def show_dashboard() -> None:
                 pts_panel += '</div>'
                 _render_md(pts_panel)
 
-        # NOTE (live-audit): the GEX narrative bar was removed from Overview —
-        # it repeated, word for word, what the decision panel right above it
-        # already says (regime + walls + flip + HVL). It still renders in its
-        # own tab (GEX Total), where it isn't redundant. The HIRO bar stays:
-        # its z-score and call/put volume counts appear nowhere else here.
-        _render_md(interpret_hiro(hiro_snap, hiro_z, len(hist)))
+        # ── 4. AVANZADO — tesis de flujo detallada + clusters de gamma, en un
+        #    expander para no abrumar la vista principal. El selector de alcance
+        #    (agregado/0DTE) vive aquí; la tarjeta Régimen ya muestra ambos.
+        with st.expander(
+                "📊 Análisis avanzado · tesis de flujo + gamma zones P1/P2/P3"):
+            dp_scope = st.radio(
+                "Alcance de la tesis",
+                options=["Agregado", "0DTE"],
+                format_func=lambda s: ("Agregado (0–60d · estructural)"
+                                       if s == "Agregado" else "0DTE (hoy · intradía)"),
+                horizontal=True, index=0, key="dp_scope",
+                help="Agregado = régimen estructural de todo el libro. 0DTE = "
+                     "el régimen que gobierna la sesión (pesa más al cierre).",
+            )
+            _dp_gex = (gex_sum_0dte if (dp_scope == "0DTE" and gex_sum_0dte)
+                       else gex_sum)
+            _scope_lbl = ("0DTE · hoy" if (dp_scope == "0DTE" and gex_sum_0dte)
+                          else "Agregado · 0–60d")
+            if dp_scope == "0DTE" and not gex_sum_0dte:
+                st.caption("⚠ Sin 0DTE para este símbolo — mostrando el agregado.")
+            _render_md('<p class="bb-header">DECISION PANEL  ·  Flow-weighted thesis '
+                       f'<span style="color:#6c6c90;font-size:0.7rem">· {_scope_lbl}</span></p>')
+            panel = build_decision_panel(spot, _dp_gex, vex_sum, cex_sum, dex_sum,
+                                         iv_atm, em_lo, em_hi, dte_v, vol_regime_str)
+            _render_md(panel)
+            _render_md(panel_zones_html(gamma_zones, spot=spot))
 
     # ── 1. GEX TOTAL ────────────────────────────────────────────────────────
     with tab_gex:

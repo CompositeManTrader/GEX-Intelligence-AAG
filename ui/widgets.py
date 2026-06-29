@@ -1194,6 +1194,79 @@ def regime_compare_panel(gex_agg: Optional[dict],
         f'{_card("0DTE", "hoy", z)}</div></div>')
 
 
+def regime_flow_card(gex_agg: Optional[dict], gex_0dte: Optional[dict],
+                     hiro_snap: Optional[dict]) -> str:
+    """UNA tarjeta compacta: régimen estructural vs 0DTE (con alineación) +
+    flujo HIRO + un takeaway accionable. Consolida lo que antes eran tres
+    paneles sueltos (regime-compare, decision, HIRO) en el Overview."""
+    def _lab(reg):
+        if reg == "POSITIVE":
+            return "LONG Γ", "#16C784", "dealer amortigua"
+        if reg == "NEGATIVE":
+            return "SHORT Γ", "#EA3943", "dealer amplifica"
+        return "NEUTRAL", "#F5A623", "indefinido"
+
+    a_reg = (gex_agg or {}).get("regime", "NEUTRAL")
+    z_reg = (gex_0dte or {}).get("regime") if gex_0dte else None
+    a_lab, a_clr, a_desc = _lab(a_reg)
+
+    if z_reg and z_reg != "NEUTRAL" and a_reg != "NEUTRAL":
+        align = ('<span style="color:#16C784;">✓ alineado</span>'
+                 if z_reg == a_reg
+                 else '<span style="color:#F5A623;">⚠ divergen</span>')
+    else:
+        align = ""
+    if z_reg:
+        z_lab, z_clr, _zd = _lab(z_reg)
+        z_val = (f'<span style="color:{z_clr};font-weight:700;">{z_lab}</span>'
+                 f'&nbsp;{align}')
+    else:
+        z_val = '<span style="color:#6b6b8a;">— sin 0DTE</span>'
+
+    h = (hiro_snap or {}).get("hiro", 0) or 0
+    if h > 0:
+        hiro_val = '<span style="color:#16C784;font-weight:700;">▲ BUY pressure</span>'
+    elif h < 0:
+        hiro_val = '<span style="color:#EA3943;font-weight:700;">▼ SELL pressure</span>'
+    else:
+        hiro_val = '<span style="color:#9AA1A9;">equilibrado</span>'
+
+    gov = z_reg or a_reg
+    if gov == "NEGATIVE":
+        take = "Dealer amplifica → opera con momentum, no fades los muros."
+    elif gov == "POSITIVE":
+        take = "Dealer amortigua → fade los extremos, mean-revert al pin (HVL)."
+    else:
+        take = "Régimen indefinido — espera confirmación de dirección."
+
+    a_val = (f'<span style="color:{a_clr};font-weight:700;">{a_lab}</span>'
+             f'&nbsp;<span style="color:{a_clr};font-size:0.6rem;opacity:.8;">'
+             f'{a_desc}</span>')
+
+    def _row(lbl, val, last=False):
+        bb = "" if last else "border-bottom:1px solid #1c2026;"
+        return (f'<div style="display:flex;justify-content:space-between;'
+                f'align-items:center;padding:5px 0;{bb}font-size:0.72rem;">'
+                f'<span style="color:#9AA1A9;">{lbl}</span>'
+                f'<span style="font-family:JetBrains Mono,monospace;">{val}'
+                f'</span></div>')
+
+    glass = ("background:rgba(255,255,255,0.022);backdrop-filter:blur(9px) "
+             "saturate(125%);-webkit-backdrop-filter:blur(9px) saturate(125%);"
+             "border:1px solid rgba(255,255,255,0.07);border-radius:13px;"
+             "padding:0.8rem 1rem;box-shadow:inset 0 1px 0 rgba(255,255,255,0.05);")
+    return _html(
+        f'<div style="{glass}">'
+        f'<div style="font-size:0.58rem;color:#F5A623;letter-spacing:0.16em;'
+        f'text-transform:uppercase;font-family:JetBrains Mono,monospace;'
+        f'margin-bottom:0.5rem;">Régimen &amp; flujo</div>'
+        f'{_row("Agregado · 0–60d", a_val)}'
+        f'{_row("0DTE · hoy", z_val)}'
+        f'{_row("HIRO · flujo", hiro_val, last=True)}'
+        f'<div style="font-size:0.72rem;color:#c8c8d0;line-height:1.5;'
+        f'margin-top:0.6rem;">{take}</div></div>')
+
+
 def _metric(label: str, value: str, color: str = "#e0e0f0",
             sub: Optional[str] = None) -> str:
     """Compact metric cell used by the trade-setup-card footer grid."""
