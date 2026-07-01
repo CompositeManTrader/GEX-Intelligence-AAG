@@ -1194,6 +1194,288 @@ def regime_compare_panel(gex_agg: Optional[dict],
         f'{_card("0DTE", "hoy", z)}</div></div>')
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  Overview v3 — héroe de régimen (liquid glass) + gráfico mariposa GEX|RND
+# ─────────────────────────────────────────────────────────────────────────────
+_OV_GLASS = (
+    "background:rgba(255,255,255,0.035);"
+    "backdrop-filter:blur(14px) saturate(140%);"
+    "-webkit-backdrop-filter:blur(14px) saturate(140%);"
+    "border:1px solid rgba(255,255,255,0.09);border-radius:14px;"
+    "box-shadow:inset 0 1px 0 rgba(255,255,255,0.08),"
+    "0 8px 30px rgba(0,0,0,0.30);"
+)
+
+
+def _ov_regime(reg: Optional[str]):
+    if reg == "POSITIVE":
+        return ("GAMMA POSITIVA · LONG Γ", "#16C784",
+                "El dealer amortigua el movimiento — fade extremos, "
+                "el precio es atraído al pin.")
+    if reg == "NEGATIVE":
+        return ("GAMMA NEGATIVA · SHORT Γ", "#EA3943",
+                "El dealer amplifica el movimiento — momentum manda, "
+                "no fades los muros.")
+    return ("GAMMA NEUTRAL", "#F5A623",
+            "Régimen indefinido — espera confirmación de dirección.")
+
+
+def overview_hero(symbol: str, spot: float, chg_p: Optional[float],
+                  gex_scoped: Optional[dict], gex_agg: Optional[dict],
+                  gex_0dte: Optional[dict], scope_label: str) -> str:
+    """Héroe del Overview: precio grande + UN bloque de régimen legible en un
+    vistazo. Cristal líquido (blur + orbes ámbar) sobre tokens de marca."""
+    reg_title, reg_clr, reg_desc = _ov_regime((gex_scoped or {}).get("regime"))
+
+    chg_html = ""
+    if chg_p is not None:
+        c_clr = "#16C784" if chg_p >= 0 else "#EA3943"
+        arrow = "▲" if chg_p >= 0 else "▼"
+        chg_html = (f'<span style="font-family:JetBrains Mono,monospace;'
+                    f'font-size:0.95rem;color:{c_clr};">{arrow} '
+                    f'{abs(chg_p):.2f}%</span>')
+
+    a_reg = (gex_agg or {}).get("regime")
+    z_reg = (gex_0dte or {}).get("regime") if gex_0dte else None
+    if a_reg and z_reg and "NEUTRAL" not in (a_reg, z_reg):
+        align = ('<div style="font-family:JetBrains Mono,monospace;'
+                 'font-size:0.68rem;color:#16C784;margin-top:7px;">'
+                 '✓ 0DTE y agregado alineados</div>'
+                 if a_reg == z_reg else
+                 '<div style="font-family:JetBrains Mono,monospace;'
+                 'font-size:0.68rem;color:#F5A623;margin-top:7px;">'
+                 '⚠ 0DTE y agregado divergen — para intradía pesa el 0DTE'
+                 '</div>')
+    else:
+        align = ""
+
+    net = (gex_scoped or {}).get("total_gex")
+    net_html = (f'<span style="color:#9AA1A9;">Net GEX</span> '
+                f'<b style="color:{reg_clr};">${net/1e9:+.2f}B</b>'
+                if net is not None else "")
+
+    orbs = (
+        '<div style="position:absolute;top:-70px;right:-40px;width:300px;'
+        'height:230px;background:radial-gradient(circle,'
+        'rgba(245,166,35,0.16),transparent 68%);pointer-events:none;"></div>'
+        '<div style="position:absolute;bottom:-80px;left:22%;width:340px;'
+        'height:240px;background:radial-gradient(circle,'
+        'rgba(201,130,26,0.11),transparent 68%);pointer-events:none;"></div>')
+
+    return _html(
+        f'<div style="{_OV_GLASS}position:relative;overflow:hidden;'
+        f'padding:1.1rem 1.35rem;margin:0.3rem 0 0.55rem;">{orbs}'
+        f'<div style="position:relative;z-index:1;display:flex;gap:1.8rem;'
+        f'align-items:center;flex-wrap:wrap;">'
+        f'<div style="min-width:200px;">'
+        f'<div style="font-family:JetBrains Mono,monospace;font-size:0.66rem;'
+        f'color:#6B6B80;letter-spacing:0.16em;">{symbol} · {scope_label}</div>'
+        f'<div style="display:flex;align-items:baseline;gap:10px;">'
+        f'<span style="font-family:Space Grotesk,system-ui,sans-serif;'
+        f'font-size:2.25rem;font-weight:700;color:#F4F5F6;line-height:1.08;">'
+        f'{spot:,.2f}</span>{chg_html}</div>'
+        f'<div style="font-family:JetBrains Mono,monospace;font-size:0.7rem;'
+        f'margin-top:3px;">{net_html}</div></div>'
+        f'<div style="flex:1;min-width:280px;border-left:2px solid {reg_clr};'
+        f'padding-left:18px;">'
+        f'<div style="font-family:Space Grotesk,system-ui,sans-serif;'
+        f'font-size:1.28rem;font-weight:700;color:{reg_clr};'
+        f'line-height:1.15;">{reg_title}</div>'
+        f'<div style="font-family:Inter,system-ui,sans-serif;'
+        f'font-size:0.82rem;color:#9AA1A9;margin-top:4px;line-height:1.5;">'
+        f'{reg_desc}</div>{align}</div></div></div>')
+
+
+def overview_butterfly(gex_df, gex_sum: Optional[dict], rnd_df,
+                       rnd_levels: Optional[dict], spot: float) -> str:
+    """Gráfico 'mariposa': GEX por strike (ala izquierda) y densidad RND (ala
+    derecha) compartiendo un eje de precio central. La línea de spot cruza
+    ambas alas — gamma y probabilidad se leen a la misma altura de precio."""
+    import numpy as np
+
+    gs = gex_sum or {}
+    if gex_df is None or gex_df.empty or not spot or spot <= 0:
+        return ""
+
+    # ── Ventana de strikes: ±1.5% del spot, ampliada para incluir muros
+    #    cercanos (≤3%), máx 15 strikes alrededor del spot.
+    df = gex_df.dropna(subset=["Strike", "Net_GEX"]).copy()
+    lo, hi = spot * 0.985, spot * 1.015
+    for w in (gs.get("call_wall"), gs.get("put_wall"), gs.get("hvl"),
+              gs.get("gamma_flip")):
+        if w and abs(w - spot) / spot <= 0.03:
+            lo, hi = min(lo, w - 0.5), max(hi, w + 0.5)
+    win = df[(df["Strike"] >= lo) & (df["Strike"] <= hi)]
+    if len(win) < 5:
+        win = df.iloc[(df["Strike"] - spot).abs().sort_values().index[:11]]
+    if len(win) > 15:
+        win = win.iloc[(win["Strike"] - spot).abs()
+                       .sort_values().index[:15]]
+    win = win.sort_values("Strike", ascending=False)
+    strikes = win["Strike"].to_numpy(dtype=float)
+    nets = win["Net_GEX"].to_numpy(dtype=float)
+    if len(strikes) == 0 or np.max(np.abs(nets)) <= 0:
+        return ""
+
+    # ── Geometría (viewBox ancho 1200 → texto se renderiza ~proporcional)
+    W, H = 1200.0, 470.0
+    y0, y1 = 46.0, H - 44.0
+    p_hi, p_lo = float(strikes.max()), float(strikes.min())
+    span = max(p_hi - p_lo, 0.5)
+
+    def _y(p):
+        return y0 + (p_hi - p) / span * (y1 - y0)
+
+    bar_right, bar_min_x = 540.0, 84.0
+    spine_x, wing_x0, wing_x1 = 580.0, 622.0, 1140.0
+    max_bar = bar_right - bar_min_x
+    scale = max_bar / float(np.max(np.abs(nets)))
+    n = len(strikes)
+    bar_h = min(max(6.0, (y1 - y0) / max(n - 1, 1) * 0.52), 17.0)
+
+    cw, pw = gs.get("call_wall"), gs.get("put_wall")
+    gf, hvl = gs.get("gamma_flip"), gs.get("hvl")
+
+    def _near(a, b, tol=0.26):
+        return a is not None and b is not None and abs(a - b) <= tol
+
+    svg = [f'<svg viewBox="0 0 {W:.0f} {H:.0f}" width="100%" role="img" '
+           f'aria-label="GEX por strike y densidad RND sobre el mismo eje '
+           f'de precio; spot {spot:.2f}" style="display:block;">'
+           '<defs><linearGradient id="ovRnd" x1="0" y1="0" x2="1" y2="0">'
+           '<stop offset="0" stop-color="#F5A623" stop-opacity="0.02"/>'
+           '<stop offset="1" stop-color="#F5A623" stop-opacity="0.24"/>'
+           '</linearGradient></defs>']
+
+    # ── Ala izquierda: barras Net GEX + spine + tags de muros
+    mono = 'font-family="JetBrains Mono,monospace"'
+    for k, v in zip(strikes, nets):
+        y = _y(k)
+        ln = abs(v) * scale
+        clr = "#16C784" if v >= 0 else "#EA3943"
+        svg.append(f'<rect x="{bar_right - ln:.1f}" y="{y - bar_h/2:.1f}" '
+                   f'width="{ln:.1f}" height="{bar_h:.1f}" rx="2.5" '
+                   f'fill="{clr}" fill-opacity="0.88"/>')
+        # Spine: precio; muros en su color
+        s_clr, s_w = "#6B6B80", "500"
+        if _near(k, hvl):
+            s_clr, s_w = "#F4F5F6", "700"
+        if _near(k, gf):
+            s_clr, s_w = "#F5A623", "700"
+        if _near(k, cw):
+            s_clr, s_w = "#16C784", "700"
+        if _near(k, pw):
+            s_clr, s_w = "#EA3943", "700"
+        k_txt = f"{k:.0f}" if abs(k - round(k)) < 0.01 else f"{k:.1f}"
+        svg.append(f'<text x="{spine_x:.0f}" y="{y + 5:.1f}" fill="{s_clr}" '
+                   f'font-size="15.5" font-weight="{s_w}" {mono} '
+                   f'text-anchor="middle">{k_txt}</text>')
+        tag = None
+        if _near(k, cw):
+            tag = ("CW", "#16C784")
+        elif _near(k, pw):
+            tag = ("PW", "#EA3943")
+        elif _near(k, gf):
+            tag = ("ZΓ", "#F5A623")
+        elif _near(k, hvl):
+            tag = ("PIN", "#9AA1A9")
+        if tag:
+            svg.append(f'<text x="12" y="{y + 5:.1f}" fill="{tag[1]}" '
+                       f'font-size="15" font-weight="700" {mono}>'
+                       f'{tag[0]}</text>')
+
+    # ── Ala derecha: densidad RND interpolada al mismo eje de precio
+    has_rnd = rnd_df is not None and hasattr(rnd_df, "empty") \
+        and not rnd_df.empty and "pdf" in getattr(rnd_df, "columns", [])
+    if has_rnd:
+        K = rnd_df["strike"].to_numpy(dtype=float)
+        pdf = rnd_df["pdf"].to_numpy(dtype=float)
+        ys = np.linspace(y0, y1, 72)
+        prices = p_hi - (ys - y0) / (y1 - y0) * span
+        dens = np.interp(prices, K, pdf, left=0.0, right=0.0)
+        dmax = float(dens.max())
+        if dmax > 0:
+            xs = wing_x0 + dens / dmax * (wing_x1 - wing_x0 - 40.0)
+            pts = " ".join(f"{x:.1f},{y:.1f}" for x, y in zip(xs, ys))
+            svg.append(f'<polygon points="{wing_x0:.0f},{y0:.0f} {pts} '
+                       f'{wing_x0:.0f},{y1:.0f}" fill="url(#ovRnd)"/>')
+            svg.append(f'<polyline points="{pts}" fill="none" '
+                       f'stroke="#F5A623" stroke-width="2.2" '
+                       f'stroke-linejoin="round"/>')
+            lv = rnd_levels or {}
+            mode = lv.get("mode")
+            if mode and p_lo <= mode <= p_hi:
+                my = _y(mode)
+                mx = wing_x0 + float(np.interp(mode, K, pdf) / dmax) \
+                    * (wing_x1 - wing_x0 - 40.0)
+                svg.append(f'<circle cx="{mx:.1f}" cy="{my:.1f}" r="5" '
+                           f'fill="#F5A623"/>')
+                svg.append(f'<text x="{mx - 12:.1f}" y="{my - 12:.1f}" '
+                           f'fill="#F4F5F6" font-size="15" {mono} '
+                           f'text-anchor="end">moda {mode:.1f}</text>')
+            pct = lv.get("percentiles") or {}
+            for pkey, lab in (("p10", "P10"), ("p90", "P90")):
+                pv = pct.get(pkey)
+                if pv and p_lo <= pv <= p_hi:
+                    py = _y(pv)
+                    px = wing_x0 + float(np.interp(pv, K, pdf) / dmax) \
+                        * (wing_x1 - wing_x0 - 40.0)
+                    svg.append(f'<circle cx="{px:.1f}" cy="{py:.1f}" '
+                               f'r="3.4" fill="#9AA1A9"/>')
+                    svg.append(f'<text x="{px + 12:.1f}" y="{py + 5:.1f}" '
+                               f'fill="#9AA1A9" font-size="14.5" {mono}>'
+                               f'{lab} {pv:.0f}</text>')
+            # POP sobre el Put Wall (si la RND lo cubre)
+            lp = (lv.get("level_probs") or {}).get("put_wall") or {}
+            if lp.get("p_above") is not None:
+                svg.append(f'<text x="{wing_x1:.0f}" y="{y1 - 6:.1f}" '
+                           f'fill="#16C784" font-size="15" {mono} '
+                           f'text-anchor="end">P(≥PW {lp.get("level"):.0f}) '
+                           f'{lp["p_above"]*100:.0f}%</text>')
+    else:
+        svg.append(f'<text x="{(wing_x0 + wing_x1)/2:.0f}" '
+                   f'y="{(y0 + y1)/2:.0f}" fill="#6B6B80" font-size="16" '
+                   f'{mono} text-anchor="middle">RND no disponible para '
+                   f'este vencimiento</text>')
+
+    # ── Línea de spot cruzando ambas alas
+    sy = _y(min(max(spot, p_lo), p_hi))
+    svg.append(f'<line x1="{bar_min_x - 10:.0f}" y1="{sy:.1f}" '
+               f'x2="{wing_x1:.0f}" y2="{sy:.1f}" stroke="#F5A623" '
+               f'stroke-width="1.6" stroke-dasharray="7 5" '
+               f'opacity="0.92"/>')
+    svg.append(f'<text x="{wing_x1:.0f}" y="{sy - 9:.1f}" fill="#F5A623" '
+               f'font-size="15.5" font-weight="700" {mono} '
+               f'text-anchor="end">spot {spot:,.2f}</text>')
+    svg.append('</svg>')
+
+    header = (
+        '<div style="display:flex;justify-content:space-between;'
+        'margin-bottom:2px;font-family:JetBrains Mono,monospace;'
+        'font-size:0.62rem;letter-spacing:0.18em;text-transform:uppercase;">'
+        '<span style="color:#F5A623;">Modelo GEX '
+        '<span style="color:#6B6B80;letter-spacing:0.04em;">· γ dealer por '
+        'strike</span></span>'
+        '<span style="color:#F5A623;">Modelo RND '
+        '<span style="color:#6B6B80;letter-spacing:0.04em;">· prob. de '
+        'cierre</span></span></div>')
+    caption = (
+        '<div style="text-align:center;font-family:JetBrains Mono,monospace;'
+        'font-size:0.62rem;color:#6B6B80;margin-top:2px;">izq · Net GEX por '
+        'strike (verde +γ · rojo −γ) &nbsp;·&nbsp; der · densidad RND de '
+        'cierre &nbsp;·&nbsp; misma escala de precio · línea ámbar = spot'
+        '</div>')
+    orb = ('<div style="position:absolute;top:-60px;left:30%;width:360px;'
+           'height:240px;background:radial-gradient(circle,'
+           'rgba(245,166,35,0.07),transparent 68%);pointer-events:none;">'
+           '</div>')
+    return _html(
+        f'<div style="{_OV_GLASS}position:relative;overflow:hidden;'
+        f'padding:0.9rem 1.1rem 0.7rem;margin:0.15rem 0 0.5rem;">{orb}'
+        f'<div style="position:relative;z-index:1;">{header}'
+        f'{"".join(svg)}{caption}</div></div>')
+
+
 def regime_flow_card(gex_agg: Optional[dict], gex_0dte: Optional[dict],
                      hiro_snap: Optional[dict]) -> str:
     """UNA tarjeta compacta: régimen estructural vs 0DTE (con alineación) +

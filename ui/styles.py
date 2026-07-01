@@ -46,8 +46,12 @@ button[kind="primary"]:hover { background: #F5A623 !important; color: #000 !impo
 }
 
 [data-testid="stMetric"] {
-    background: #0e0e1a !important; border: 1px solid #1e1e30 !important;
-    border-radius: 4px !important; padding: 10px 14px !important;
+    background: rgba(255,255,255,0.028) !important;
+    backdrop-filter: blur(10px) saturate(130%) !important;
+    -webkit-backdrop-filter: blur(10px) saturate(130%) !important;
+    border: 1px solid rgba(255,255,255,0.075) !important;
+    border-radius: 11px !important; padding: 10px 14px !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06) !important;
 }
 [data-testid="stMetricLabel"] {
     font-size: 0.62rem !important; text-transform: uppercase; letter-spacing: 0.1em;
@@ -203,7 +207,11 @@ h1, h2, h3 { color: #e0e0f0 !important;
 .stat-label { font-size:0.65rem; color:#505070; text-transform:uppercase; letter-spacing:0.08em; font-family:'JetBrains Mono',monospace; }
 .stat-val   { font-size:1.1rem; font-weight:700; color:#e0e0f8; font-family:'JetBrains Mono',monospace; margin-top:2px; }
 
-.kpi-panel { background:#0e0e1a; border:1px solid #1e1e30; border-radius:6px;
+.kpi-panel { background:rgba(255,255,255,0.028); border:1px solid rgba(255,255,255,0.075);
+             backdrop-filter:blur(11px) saturate(130%);
+             -webkit-backdrop-filter:blur(11px) saturate(130%);
+             border-radius:12px;
+             box-shadow:inset 0 1px 0 rgba(255,255,255,0.06);
              padding:0.9rem 1.4rem; display:flex; gap:2rem; align-items:center;
              flex-wrap:wrap; margin-bottom:0.8rem; }
 .kpi-item { min-width:110px; }
@@ -213,8 +221,12 @@ h1, h2, h3 { color: #e0e0f0 !important;
 .kpi-sub  { font-size:0.6rem; color:#505070; font-family:'JetBrains Mono',monospace; }
 
 .decision-card {
-    background: linear-gradient(135deg, #0e0e1a 0%, #12121e 100%);
-    border: 1px solid #2a2a3e; border-radius: 6px;
+    background: rgba(255,255,255,0.032) !important;
+    backdrop-filter: blur(13px) saturate(135%);
+    -webkit-backdrop-filter: blur(13px) saturate(135%);
+    border: 1px solid rgba(255,255,255,0.085); border-radius: 13px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.07),
+                0 8px 26px rgba(0,0,0,0.28);
     padding: 1rem 1.3rem; margin: 0.8rem 0;
 }
 .decision-title {

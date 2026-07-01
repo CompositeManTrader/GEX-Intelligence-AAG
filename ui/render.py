@@ -1041,113 +1041,108 @@ def show_dashboard() -> None:
                 else:
                     st.info("Sin strikes con IV/gamma válidas para comparar.")
 
-    # ── OVERVIEW ────────────────────────────────────────────────────────────
+    # ── OVERVIEW v3 — régimen → mariposa GEX|RND → decision panel ───────────
     with tab_overview:
-        # ── 1. HÉROE — cockpit: veredicto + acción AHORA + mapa de precio a
-        #    escala. Lo que el trader necesita en 2 segundos.
-        iv_hv_ratio = (analytics_full or {}).get("iv_hv_ratio") if analytics_full else None
-        from ui.widgets import (overview_cockpit, panel_zones_html,
-                                 regime_flow_card, rnd_mini_panel)
+        from ui.widgets import (overview_butterfly, overview_hero,
+                                 panel_zones_html)
+
+        # ── 0. Selector de alcance (manda sobre héroe, mariposa y tesis)
+        ov_scope = st.radio(
+            "Alcance del Overview",
+            options=["0DTE", "Todas"],
+            format_func=lambda s: ("0DTE · HOY" if s == "0DTE"
+                                   else "TODAS LAS EXPIRACIONES"),
+            horizontal=True, index=0, key="ov_scope",
+            label_visibility="collapsed",
+        )
+        _ov_is_0dte = ov_scope == "0DTE" and bool(gex_sum_0dte)
+        if ov_scope == "0DTE" and not gex_sum_0dte:
+            st.caption("⚠ Sin 0DTE para este símbolo — mostrando todas las "
+                       "expiraciones.")
+        _ov_df = _gex_df_0dte if _ov_is_0dte else gex_df
+        _ov_sum = gex_sum_0dte if _ov_is_0dte else gex_sum
+        _ov_lbl = "0DTE · HOY" if _ov_is_0dte else f"0–{max_dte}D"
+
+        # ── 1. HÉROE — el estado del mercado en un vistazo (liquid glass).
+        _render_md(overview_hero(symbol, spot, chg_p, _ov_sum,
+                                 gex_sum, gex_sum_0dte, _ov_lbl))
+
+        # ── 2. MARIPOSA — GEX (ala izq) y RND (ala der) sobre el mismo eje
+        #    de precio; la línea de spot cruza ambos modelos.
         _ck_rnd, _ck_meta, _ck_lv = _get_rnd(0)
-        _render_md(overview_cockpit(
-            symbol=symbol, spot=spot, chg_p=chg_p,
-            gex_sum=gex_sum, gex_0dte=gex_sum_0dte,
-            rnd_levels=_ck_lv, rnd_meta=_ck_meta, iv_hv=iv_hv_ratio,
-            hiro_snap=hiro_snap, p_c=p_c, max_pain=mp,
-        ))
+        _bfly = overview_butterfly(_ov_df, _ov_sum, _ck_rnd, _ck_lv, spot)
+        if _bfly:
+            _render_md(_bfly)
+        if _ck_meta and _ck_meta.get("confidence") == "low":
+            st.caption("⚠ RND en BAJA CONFIANZA (smile 0DTE cerca de "
+                       "arbitraje) — trata la densidad como orientativa.")
 
-        # ── 2. DOS COLUMNAS — Distribución (RND) | Régimen & Flujo (consolida
-        #    regime-compare + decision + HIRO en una tarjeta de 3 líneas).
-        ov_c1, ov_c2 = st.columns(2)
-        with ov_c1:
-            _mini = rnd_mini_panel(_ck_rnd, _ck_lv, _ck_meta, spot)
-            if _mini:
-                _render_md(_mini)
-            else:
-                st.caption("Distribución implícita (RND) en construcción para "
-                           "este símbolo.")
-        with ov_c2:
-            _render_md(regime_flow_card(gex_sum, gex_sum_0dte, hiro_snap))
+        # ── 3. DECISION PANEL — el de siempre, como lectura del modelo.
+        _render_md('<p class="bb-header">DECISION PANEL  ·  Flow-weighted '
+                   'thesis <span style="color:#6c6c90;font-size:0.7rem">· '
+                   f'{_ov_lbl}</span></p>')
+        panel = build_decision_panel(spot, _ov_sum, vex_sum, cex_sum, dex_sum,
+                                     iv_atm, em_lo, em_hi, dte_v,
+                                     vol_regime_str)
+        _render_md(panel)
 
-        # ── 3. NIVELES CLAVE — fila KPI compacta (siempre visible) + futuros.
-        if gex_sum:
-            regime = gex_sum.get("regime", "NEUTRAL")
-            r_color = GREEN if regime == "POSITIVE" else (RED if regime == "NEGATIVE" else ORANGE)
-            total_bn = gex_sum.get("total_gex", 0) / 1e9
-            gf = gex_sum.get("gamma_flip")
-            cw = gex_sum.get("call_wall")
-            pw = gex_sum.get("put_wall")
-            hvl = gex_sum.get("hvl")
-            flip_pct = gex_sum.get("flip_pct")
-            hdr = '<div class="kpi-panel">'
-            hdr += _kv("Net GEX", f"${total_bn:+.2f}B", r_color, sub="per 1% move")
-            hdr += _kv("Call Wall", f"${cw:.0f}" if cw else "—", GREEN)
-            hdr += _kv("Put Wall", f"${pw:.0f}" if pw else "—", RED)
-            hdr += _kv("Zero Γ", f"${gf:.0f}" if gf else "—", PURPLE,
-                       sub=f"{flip_pct:+.1f}% spot" if flip_pct is not None else None)
-            hdr += _kv("HVL", f"${hvl:.0f}" if hvl else "—", CYAN, sub="imán")
-            hdr += '</div>'
-            _render_md(hdr)
-
-            # ── Futures-points overlay (compacto, cuando aplica) ───────────
-            if fut_spec is not None and spot > 0:
-                ratio = fut_spec.etf_ratio
-                ppt = fut_spec.point_value
-                def _pts(level):
-                    if level is None:
-                        return None
-                    return (level - spot) * ratio
-                def _fmt(pts):
-                    if pts is None:
-                        return "—"
-                    return f"{pts:+.1f} pts"
-                def _fmt_dollar(pts):
-                    if pts is None:
-                        return None
-                    return f"${pts*ppt:+,.0f}/contrato"
-                pts_panel = '<div class="kpi-panel">'
-                pts_panel += _kv(f"{display_root} ≈",
-                                 f"{spot*ratio:,.1f}", CYAN,
-                                 sub=f"{fut_spec.name}")
-                pts_panel += _kv("Δ Call Wall", _fmt(_pts(cw)), GREEN,
-                                 sub=_fmt_dollar(_pts(cw)))
-                pts_panel += _kv("Δ Put Wall", _fmt(_pts(pw)), RED,
-                                 sub=_fmt_dollar(_pts(pw)))
-                pts_panel += _kv("Δ Zero Γ", _fmt(_pts(gf)), PURPLE,
-                                 sub=_fmt_dollar(_pts(gf)))
-                pts_panel += _kv("Δ HVL", _fmt(_pts(hvl)), CYAN,
-                                 sub=_fmt_dollar(_pts(hvl)))
-                pts_panel += _kv("Tick", f"${fut_spec.tick_value:.2f}",
-                                 "#9ca3af",
-                                 sub=f"{fut_spec.tick_size} pt")
-                pts_panel += '</div>'
-                _render_md(pts_panel)
-
-        # ── 4. AVANZADO — tesis de flujo detallada + clusters de gamma, en un
-        #    expander para no abrumar la vista principal. El selector de alcance
-        #    (agregado/0DTE) vive aquí; la tarjeta Régimen ya muestra ambos.
+        # ── 4. AVANZADO — niveles numéricos + futuros + gamma zones.
         with st.expander(
-                "📊 Análisis avanzado · tesis de flujo + gamma zones P1/P2/P3"):
-            dp_scope = st.radio(
-                "Alcance de la tesis",
-                options=["Agregado", "0DTE"],
-                format_func=lambda s: ("Agregado (0–60d · estructural)"
-                                       if s == "Agregado" else "0DTE (hoy · intradía)"),
-                horizontal=True, index=0, key="dp_scope",
-                help="Agregado = régimen estructural de todo el libro. 0DTE = "
-                     "el régimen que gobierna la sesión (pesa más al cierre).",
-            )
-            _dp_gex = (gex_sum_0dte if (dp_scope == "0DTE" and gex_sum_0dte)
-                       else gex_sum)
-            _scope_lbl = ("0DTE · hoy" if (dp_scope == "0DTE" and gex_sum_0dte)
-                          else "Agregado · 0–60d")
-            if dp_scope == "0DTE" and not gex_sum_0dte:
-                st.caption("⚠ Sin 0DTE para este símbolo — mostrando el agregado.")
-            _render_md('<p class="bb-header">DECISION PANEL  ·  Flow-weighted thesis '
-                       f'<span style="color:#6c6c90;font-size:0.7rem">· {_scope_lbl}</span></p>')
-            panel = build_decision_panel(spot, _dp_gex, vex_sum, cex_sum, dex_sum,
-                                         iv_atm, em_lo, em_hi, dte_v, vol_regime_str)
-            _render_md(panel)
+                "📊 Análisis avanzado · niveles + futuros + gamma zones"):
+            _adv_render_kpis = bool(gex_sum)
+            if _adv_render_kpis:
+                regime = gex_sum.get("regime", "NEUTRAL")
+                r_color = GREEN if regime == "POSITIVE" else (RED if regime == "NEGATIVE" else ORANGE)
+                total_bn = gex_sum.get("total_gex", 0) / 1e9
+                gf = gex_sum.get("gamma_flip")
+                cw = gex_sum.get("call_wall")
+                pw = gex_sum.get("put_wall")
+                hvl = gex_sum.get("hvl")
+                flip_pct = gex_sum.get("flip_pct")
+                hdr = '<div class="kpi-panel">'
+                hdr += _kv("Net GEX", f"${total_bn:+.2f}B", r_color, sub="per 1% move")
+                hdr += _kv("Call Wall", f"${cw:.0f}" if cw else "—", GREEN)
+                hdr += _kv("Put Wall", f"${pw:.0f}" if pw else "—", RED)
+                hdr += _kv("Zero Γ", f"${gf:.0f}" if gf else "—", PURPLE,
+                           sub=f"{flip_pct:+.1f}% spot" if flip_pct is not None else None)
+                hdr += _kv("HVL", f"${hvl:.0f}" if hvl else "—", CYAN, sub="imán")
+                hdr += '</div>'
+                _render_md(hdr)
+
+                # ── Futures-points overlay (compacto, cuando aplica) ───────────
+                if fut_spec is not None and spot > 0:
+                    ratio = fut_spec.etf_ratio
+                    ppt = fut_spec.point_value
+                    def _pts(level):
+                        if level is None:
+                            return None
+                        return (level - spot) * ratio
+                    def _fmt(pts):
+                        if pts is None:
+                            return "—"
+                        return f"{pts:+.1f} pts"
+                    def _fmt_dollar(pts):
+                        if pts is None:
+                            return None
+                        return f"${pts*ppt:+,.0f}/contrato"
+                    pts_panel = '<div class="kpi-panel">'
+                    pts_panel += _kv(f"{display_root} ≈",
+                                     f"{spot*ratio:,.1f}", CYAN,
+                                     sub=f"{fut_spec.name}")
+                    pts_panel += _kv("Δ Call Wall", _fmt(_pts(cw)), GREEN,
+                                     sub=_fmt_dollar(_pts(cw)))
+                    pts_panel += _kv("Δ Put Wall", _fmt(_pts(pw)), RED,
+                                     sub=_fmt_dollar(_pts(pw)))
+                    pts_panel += _kv("Δ Zero Γ", _fmt(_pts(gf)), PURPLE,
+                                     sub=_fmt_dollar(_pts(gf)))
+                    pts_panel += _kv("Δ HVL", _fmt(_pts(hvl)), CYAN,
+                                     sub=_fmt_dollar(_pts(hvl)))
+                    pts_panel += _kv("Tick", f"${fut_spec.tick_value:.2f}",
+                                     "#9ca3af",
+                                     sub=f"{fut_spec.tick_size} pt")
+                    pts_panel += '</div>'
+                    _render_md(pts_panel)
+
             _render_md(panel_zones_html(gamma_zones, spot=spot))
 
     # ── 1. GEX TOTAL ────────────────────────────────────────────────────────
