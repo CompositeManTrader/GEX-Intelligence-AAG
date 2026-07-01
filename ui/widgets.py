@@ -1306,11 +1306,14 @@ def overview_butterfly(gex_df, gex_sum: Optional[dict], rnd_df,
         if w and abs(w - spot) / spot <= 0.03:
             lo, hi = min(lo, w - 0.5), max(hi, w + 0.5)
     win = df[(df["Strike"] >= lo) & (df["Strike"] <= hi)]
+    # .loc (etiquetas), NO .iloc: el índice de `win`/`df` conserva las
+    # etiquetas del frame original (no contiguas tras filtrar) y sort_values()
+    # devuelve esas etiquetas — usarlas como posiciones lanza IndexError.
     if len(win) < 5:
-        win = df.iloc[(df["Strike"] - spot).abs().sort_values().index[:11]]
+        win = df.loc[(df["Strike"] - spot).abs().sort_values().index[:11]]
     if len(win) > 15:
-        win = win.iloc[(win["Strike"] - spot).abs()
-                       .sort_values().index[:15]]
+        win = win.loc[(win["Strike"] - spot).abs()
+                      .sort_values().index[:15]]
     win = win.sort_values("Strike", ascending=False)
     strikes = win["Strike"].to_numpy(dtype=float)
     nets = win["Net_GEX"].to_numpy(dtype=float)
