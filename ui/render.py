@@ -1631,245 +1631,240 @@ def show_dashboard() -> None:
                 from ui.widgets import (
                     panel_gex_gate_html, panel_ic_strike_suggest_html,
                 )
-                _render_md(
-                    '<p class="bb-header" style="margin-top:0.5rem">'
-                    '0DTE VOLATILITY SMILE  ·  IV(K) blend OTM</p>'
-                )
-                _doc(
-                    "IV por strike del vencimiento de hoy — dónde está cara "
-                    "la prima.",
-                    "Sonrisa de IV por strike para 0DTE (no es "
-                    "term-structure). IV reutilizada directamente de la "
-                    "cadena (columna IV%). Market_IV usa la convención OTM: "
-                    "put-IV para K&lt;S, call-IV para K≥S. Overlay de walls "
-                    "GEX. Strikes en zona <b>rica</b> (IV &gt; mediana+1σ) "
-                    "marcados con anillo rojo.")
-                # X-axis toggle + rich-zone σ slider
-                csm0, csm1 = st.columns([2, 2])
-                with csm0:
-                    sm_xaxis = st.radio(
-                        "Eje X",
-                        options=["strike", "moneyness", "delta"],
-                        format_func=lambda v: {
-                            "strike": "Strike",
-                            "moneyness": "Moneyness %",
-                            "delta": "|Δ|",
-                        }[v],
-                        horizontal=True, index=0, key="0dte_sm_xaxis",
+                with st.expander("SMILE 0DTE · IV(K) + selector de strikes IC (avanzado)"):
+                    _doc(
+                        "IV por strike del vencimiento de hoy — dónde está cara "
+                        "la prima.",
+                        "Sonrisa de IV por strike para 0DTE (no es "
+                        "term-structure). IV reutilizada directamente de la "
+                        "cadena (columna IV%). Market_IV usa la convención OTM: "
+                        "put-IV para K&lt;S, call-IV para K≥S. Overlay de walls "
+                        "GEX. Strikes en zona <b>rica</b> (IV &gt; mediana+1σ) "
+                        "marcados con anillo rojo.")
+                    # X-axis toggle + rich-zone σ slider
+                    csm0, csm1 = st.columns([2, 2])
+                    with csm0:
+                        sm_xaxis = st.radio(
+                            "Eje X",
+                            options=["strike", "moneyness", "delta"],
+                            format_func=lambda v: {
+                                "strike": "Strike",
+                                "moneyness": "Moneyness %",
+                                "delta": "|Δ|",
+                            }[v],
+                            horizontal=True, index=0, key="0dte_sm_xaxis",
+                        )
+                    with csm1:
+                        rich_sigma = st.slider(
+                            "Rich-zone threshold (σ)",
+                            min_value=0.5, max_value=2.5, value=1.0, step=0.1,
+                            key="0dte_sm_rich",
+                        )
+                    # The 0DTE expiry as a string (first row of either side
+                    # post-DTE filter — they share the date)
+                    zdte_expiry = (
+                        str(zdte_c["Expiry"].iloc[0]) if not zdte_c.empty
+                        else str(zdte_p["Expiry"].iloc[0]) if not zdte_p.empty
+                        else "0DTE"
                     )
-                with csm1:
-                    rich_sigma = st.slider(
-                        "Rich-zone threshold (σ)",
-                        min_value=0.5, max_value=2.5, value=1.0, step=0.1,
-                        key="0dte_sm_rich",
-                    )
-                # The 0DTE expiry as a string (first row of either side
-                # post-DTE filter — they share the date)
-                zdte_expiry = (
-                    str(zdte_c["Expiry"].iloc[0]) if not zdte_c.empty
-                    else str(zdte_p["Expiry"].iloc[0]) if not zdte_p.empty
-                    else "0DTE"
-                )
-                smile_df_0dte = build_smile_blend(
-                    zdte_c, zdte_p, spot=spot, expiry=zdte_expiry,
-                )
-
-                # GEX gate verdict + strike suggestion based on walls
-                gate = gex_gate_check(
-                    zdte_sum, spot=spot,
-                    min_net_gex_usd=5e7,  # 0DTE Net GEX is smaller than aggregate
-                    min_cushion_pct=0.25,
-                )
-                _render_md(panel_gex_gate_html(gate))
-                suggestion = suggest_strikes_from_walls(
-                    zdte_c, zdte_p, spot=spot, gex_sum=zdte_sum,
-                    target_short_delta=0.16,
-                    smile_df=smile_df_0dte,
-                )
-                _render_md(panel_ic_strike_suggest_html(
-                    suggestion, walls=zdte_sum))
-
-                # Render the smile chart with walls + IC overlay
-                walls_for_chart = {
-                    "call_wall": zdte_sum.get("call_wall"),
-                    "put_wall": zdte_sum.get("put_wall"),
-                    "hvl": zdte_sum.get("hvl"),
-                    "gamma_flip": zdte_sum.get("gamma_flip"),
-                }
-                ic_strikes_overlay = (
-                    {"short_put": suggestion["short_put"],
-                     "short_call": suggestion["short_call"]}
-                    if suggestion and suggestion.get("short_put")
-                    and suggestion.get("short_call")
-                    else None
-                )
-                fig_smile = chart_smile_0dte(
-                    smile_df_0dte, spot=spot, walls=walls_for_chart,
-                    x_axis=sm_xaxis, rich_sigma=float(rich_sigma),
-                    ic_strikes=ic_strikes_overlay, symbol=symbol,
-                    expiry=zdte_expiry,
-                )
-                if fig_smile is not None:
-                    st.plotly_chart(
-                        fig_smile, use_container_width=True,
-                        key=f"0dte_smile_{symbol}",
+                    smile_df_0dte = build_smile_blend(
+                        zdte_c, zdte_p, spot=spot, expiry=zdte_expiry,
                     )
 
-                # Wing-width comparison table
-                _render_md(
-                    '<p class="bb-header" style="margin-top:0.4rem">'
-                    'IRON CONDOR  ·  WING WIDTH COMPARISON</p>'
-                )
-                st.caption(
-                    "Mantiene los strikes cortos fijos (sugeridos arriba) y "
-                    "compara VRP neto por unidad de max-loss para varios "
-                    "anchos de ala. La fila más eficiente queda arriba."
-                )
-                # Allow override of shorts manually
-                cic0, cic1, cic2 = st.columns([1, 1, 2])
-                default_sp = (suggestion.get("short_put") or
-                              round(spot * 0.99, 0))
-                default_sc = (suggestion.get("short_call") or
-                              round(spot * 1.01, 0))
-                with cic0:
-                    sp_override = st.number_input(
-                        "Short Put", value=float(default_sp), step=1.0,
-                        key="0dte_ic_sp",
+                    # GEX gate verdict + strike suggestion based on walls
+                    gate = gex_gate_check(
+                        zdte_sum, spot=spot,
+                        min_net_gex_usd=5e7,  # 0DTE Net GEX is smaller than aggregate
+                        min_cushion_pct=0.25,
                     )
-                with cic1:
-                    sc_override = st.number_input(
-                        "Short Call", value=float(default_sc), step=1.0,
-                        key="0dte_ic_sc",
+                    _render_md(panel_gex_gate_html(gate))
+                    suggestion = suggest_strikes_from_walls(
+                        zdte_c, zdte_p, spot=spot, gex_sum=zdte_sum,
+                        target_short_delta=0.16,
+                        smile_df=smile_df_0dte,
                     )
-                with cic2:
-                    widths_str = st.text_input(
-                        "Anchos de ala (separados por coma)",
-                        value="1, 3, 5, 10", key="0dte_ic_widths",
+                    _render_md(panel_ic_strike_suggest_html(
+                        suggestion, walls=zdte_sum))
+
+                    # Render the smile chart with walls + IC overlay
+                    walls_for_chart = {
+                        "call_wall": zdte_sum.get("call_wall"),
+                        "put_wall": zdte_sum.get("put_wall"),
+                        "hvl": zdte_sum.get("hvl"),
+                        "gamma_flip": zdte_sum.get("gamma_flip"),
+                    }
+                    ic_strikes_overlay = (
+                        {"short_put": suggestion["short_put"],
+                         "short_call": suggestion["short_call"]}
+                        if suggestion and suggestion.get("short_put")
+                        and suggestion.get("short_call")
+                        else None
                     )
-                try:
-                    widths_tuple = tuple(
-                        float(x.strip()) for x in widths_str.split(",")
-                        if x.strip()
-                    )
-                except ValueError:
-                    # User typed something non-numeric — fall back to
-                    # defaults silently. Anything else (KeyError etc.)
-                    # bubbles up as it should.
-                    widths_tuple = (1.0, 3.0, 5.0, 10.0)
-                if widths_tuple:
-                    ic_table = compare_wing_widths(
-                        zdte_c, zdte_p, spot=spot,
-                        short_put=float(sp_override),
-                        short_call=float(sc_override),
-                        wing_widths=widths_tuple,
+                    fig_smile = chart_smile_0dte(
+                        smile_df_0dte, spot=spot, walls=walls_for_chart,
+                        x_axis=sm_xaxis, rich_sigma=float(rich_sigma),
+                        ic_strikes=ic_strikes_overlay, symbol=symbol,
                         expiry=zdte_expiry,
                     )
-                    if not ic_table.empty:
-                        # Drop verbose / redundant cols for display
-                        display_cols = [
-                            "wing_width", "short_put", "long_put",
-                            "short_call", "long_call",
-                            "credit", "max_loss",
-                            "vrp_put_side", "vrp_call_side",
-                            "net_vrp_iv_points",
-                            "vrp_per_max_loss", "credit_per_max_loss",
-                            "p_touch_put", "p_touch_call", "pop",
-                            "credit_source",
-                        ]
-                        cols_present = [c for c in display_cols
-                                        if c in ic_table.columns]
+                    if fig_smile is not None:
+                        st.plotly_chart(
+                            fig_smile, use_container_width=True,
+                            key=f"0dte_smile_{symbol}",
+                        )
+
+                    # Wing-width comparison table
+                    _render_md(
+                        '<p class="bb-header" style="margin-top:0.4rem">'
+                        'IRON CONDOR  ·  WING WIDTH COMPARISON</p>'
+                    )
+                    st.caption(
+                        "Mantiene los strikes cortos fijos (sugeridos arriba) y "
+                        "compara VRP neto por unidad de max-loss para varios "
+                        "anchos de ala. La fila más eficiente queda arriba."
+                    )
+                    # Allow override of shorts manually
+                    cic0, cic1, cic2 = st.columns([1, 1, 2])
+                    default_sp = (suggestion.get("short_put") or
+                                  round(spot * 0.99, 0))
+                    default_sc = (suggestion.get("short_call") or
+                                  round(spot * 1.01, 0))
+                    with cic0:
+                        sp_override = st.number_input(
+                            "Short Put", value=float(default_sp), step=1.0,
+                            key="0dte_ic_sp",
+                        )
+                    with cic1:
+                        sc_override = st.number_input(
+                            "Short Call", value=float(default_sc), step=1.0,
+                            key="0dte_ic_sc",
+                        )
+                    with cic2:
+                        widths_str = st.text_input(
+                            "Anchos de ala (separados por coma)",
+                            value="1, 3, 5, 10", key="0dte_ic_widths",
+                        )
+                    try:
+                        widths_tuple = tuple(
+                            float(x.strip()) for x in widths_str.split(",")
+                            if x.strip()
+                        )
+                    except ValueError:
+                        # User typed something non-numeric — fall back to
+                        # defaults silently. Anything else (KeyError etc.)
+                        # bubbles up as it should.
+                        widths_tuple = (1.0, 3.0, 5.0, 10.0)
+                    if widths_tuple:
+                        ic_table = compare_wing_widths(
+                            zdte_c, zdte_p, spot=spot,
+                            short_put=float(sp_override),
+                            short_call=float(sc_override),
+                            wing_widths=widths_tuple,
+                            expiry=zdte_expiry,
+                        )
+                        if not ic_table.empty:
+                            # Drop verbose / redundant cols for display
+                            display_cols = [
+                                "wing_width", "short_put", "long_put",
+                                "short_call", "long_call",
+                                "credit", "max_loss",
+                                "vrp_put_side", "vrp_call_side",
+                                "net_vrp_iv_points",
+                                "vrp_per_max_loss", "credit_per_max_loss",
+                                "p_touch_put", "p_touch_call", "pop",
+                                "credit_source",
+                            ]
+                            cols_present = [c for c in display_cols
+                                            if c in ic_table.columns]
+                            st.dataframe(
+                                ic_table[cols_present],
+                                use_container_width=True, hide_index=True,
+                            )
+                        else:
+                            st.caption(
+                                "Sin filas: revisa que los strikes cortos "
+                                "estén dentro del rango de la cadena 0DTE."
+                            )
+
+                with st.expander("PERFIL ACUMULADO + GAMMA SCENARIO · flip dinámico (avanzado)"):
+                    # ── Cumulative GEX + Scenario curve (paridad con GEX Total) ─
+                    col_l, col_r = st.columns([1, 1])
+                    with col_l:
+                        _render_md(
+                            '<p class="bb-header" style="margin-top:0.3rem">'
+                            '0DTE PERFIL ACUMULADO</p>'
+                        )
+                        st.caption(
+                            "Cumulative Net GEX por strike. El cruce por cero = "
+                            "Zero Gamma dinámico para hoy."
+                        )
+                        fig_cum_z = chart_cum_gex(zdte_df, spot, zdte_sum)
+                        if fig_cum_z:
+                            st.plotly_chart(
+                                fig_cum_z, use_container_width=True,
+                                key=f"0dte_cum_{symbol}",
+                            )
+                    with col_r:
+                        _render_md(
+                            '<p class="bb-header" style="margin-top:0.3rem">'
+                            '0DTE GAMMA SCENARIO</p>'
+                        )
+                        st.caption(
+                            "Reprice 0DTE gamma sobre un grid de spot hipotético. "
+                            "El cruce por cero da el flip dinámico que el "
+                            "mercado vería si el spot saltara a ese precio."
+                        )
+                        try:
+                            zdte_curve = gex_curve_over_spot(
+                                zdte_c, zdte_p, spot, symbol=symbol,
+                                max_dte=0, min_oi=0,
+                                grid_pct=0.05, n_points=81,
+                            )
+                            fig_curve_z = chart_gex_curve(zdte_curve, spot, zdte_sum)
+                            if fig_curve_z:
+                                st.plotly_chart(
+                                    fig_curve_z, use_container_width=True,
+                                    key=f"0dte_curve_{symbol}",
+                                )
+                        except Exception as exc:
+                            log.exception("0DTE scenario curve failed")
+                            st.caption(f"Scenario no disponible: {exc}")
+
+                with st.expander("TOP 0DTE STRIKES · tabla por |Net GEX|, OI y volumen"):
+                    # ── Top 0DTE strikes — most actionable single panel for
+                    # an intraday trader: where is the OI/volume/gamma actually
+                    # concentrated TODAY?
+                    # Build a combined view across calls + puts for the same
+                    # strike so the trader sees both sides at once.
+                    cs = (zdte_c[["Strike", "OI", "Volume", "Gamma"]]
+                          .rename(columns={"OI": "C_OI", "Volume": "C_Vol",
+                                           "Gamma": "C_Γ"})
+                          if not zdte_c.empty else pd.DataFrame())
+                    ps = (zdte_p[["Strike", "OI", "Volume", "Gamma"]]
+                          .rename(columns={"OI": "P_OI", "Volume": "P_Vol",
+                                           "Gamma": "P_Γ"})
+                          if not zdte_p.empty else pd.DataFrame())
+                    if not cs.empty and not ps.empty:
+                        merged = cs.merge(ps, on="Strike", how="outer").fillna(0)
+                    else:
+                        merged = cs if not cs.empty else ps
+                    # Bring in |Net GEX| from the computed profile to rank by it.
+                    if not merged.empty and not zdte_df.empty:
+                        g_map = zdte_df.set_index("Strike")["Abs_GEX"].to_dict()
+                        merged["AbsGEX_M"] = (
+                            merged["Strike"].map(g_map).fillna(0) / 1e6
+                        )
+                        merged = merged.sort_values("AbsGEX_M", ascending=False).head(15)
+                        merged["Dist %"] = (
+                            (merged["Strike"] - spot) / spot * 100
+                        ).round(2)
+                        cols_order = ["Strike", "Dist %", "AbsGEX_M",
+                                      "C_OI", "P_OI", "C_Vol", "P_Vol",
+                                      "C_Γ", "P_Γ"]
+                        cols_show = [c for c in cols_order if c in merged.columns]
                         st.dataframe(
-                            ic_table[cols_present],
+                            merged[cols_show].reset_index(drop=True),
                             use_container_width=True, hide_index=True,
                         )
-                    else:
-                        st.caption(
-                            "Sin filas: revisa que los strikes cortos "
-                            "estén dentro del rango de la cadena 0DTE."
-                        )
-
-                # ── Cumulative GEX + Scenario curve (paridad con GEX Total) ─
-                col_l, col_r = st.columns([1, 1])
-                with col_l:
-                    _render_md(
-                        '<p class="bb-header" style="margin-top:0.3rem">'
-                        '0DTE PERFIL ACUMULADO</p>'
-                    )
-                    st.caption(
-                        "Cumulative Net GEX por strike. El cruce por cero = "
-                        "Zero Gamma dinámico para hoy."
-                    )
-                    fig_cum_z = chart_cum_gex(zdte_df, spot, zdte_sum)
-                    if fig_cum_z:
-                        st.plotly_chart(
-                            fig_cum_z, use_container_width=True,
-                            key=f"0dte_cum_{symbol}",
-                        )
-                with col_r:
-                    _render_md(
-                        '<p class="bb-header" style="margin-top:0.3rem">'
-                        '0DTE GAMMA SCENARIO</p>'
-                    )
-                    st.caption(
-                        "Reprice 0DTE gamma sobre un grid de spot hipotético. "
-                        "El cruce por cero da el flip dinámico que el "
-                        "mercado vería si el spot saltara a ese precio."
-                    )
-                    try:
-                        zdte_curve = gex_curve_over_spot(
-                            zdte_c, zdte_p, spot, symbol=symbol,
-                            max_dte=0, min_oi=0,
-                            grid_pct=0.05, n_points=81,
-                        )
-                        fig_curve_z = chart_gex_curve(zdte_curve, spot, zdte_sum)
-                        if fig_curve_z:
-                            st.plotly_chart(
-                                fig_curve_z, use_container_width=True,
-                                key=f"0dte_curve_{symbol}",
-                            )
-                    except Exception as exc:
-                        log.exception("0DTE scenario curve failed")
-                        st.caption(f"Scenario no disponible: {exc}")
-
-                # ── Top 0DTE strikes — most actionable single panel for
-                # an intraday trader: where is the OI/volume/gamma actually
-                # concentrated TODAY?
-                _render_md(
-                    '<p class="bb-header" style="margin-top:0.4rem">'
-                    'TOP 0DTE STRIKES  ·  by |Net GEX|, OI y Volumen</p>'
-                )
-                # Build a combined view across calls + puts for the same
-                # strike so the trader sees both sides at once.
-                cs = (zdte_c[["Strike", "OI", "Volume", "Gamma"]]
-                      .rename(columns={"OI": "C_OI", "Volume": "C_Vol",
-                                       "Gamma": "C_Γ"})
-                      if not zdte_c.empty else pd.DataFrame())
-                ps = (zdte_p[["Strike", "OI", "Volume", "Gamma"]]
-                      .rename(columns={"OI": "P_OI", "Volume": "P_Vol",
-                                       "Gamma": "P_Γ"})
-                      if not zdte_p.empty else pd.DataFrame())
-                if not cs.empty and not ps.empty:
-                    merged = cs.merge(ps, on="Strike", how="outer").fillna(0)
-                else:
-                    merged = cs if not cs.empty else ps
-                # Bring in |Net GEX| from the computed profile to rank by it.
-                if not merged.empty and not zdte_df.empty:
-                    g_map = zdte_df.set_index("Strike")["Abs_GEX"].to_dict()
-                    merged["AbsGEX_M"] = (
-                        merged["Strike"].map(g_map).fillna(0) / 1e6
-                    )
-                    merged = merged.sort_values("AbsGEX_M", ascending=False).head(15)
-                    merged["Dist %"] = (
-                        (merged["Strike"] - spot) / spot * 100
-                    ).round(2)
-                    cols_order = ["Strike", "Dist %", "AbsGEX_M",
-                                  "C_OI", "P_OI", "C_Vol", "P_Vol",
-                                  "C_Γ", "P_Γ"]
-                    cols_show = [c for c in cols_order if c in merged.columns]
-                    st.dataframe(
-                        merged[cols_show].reset_index(drop=True),
-                        use_container_width=True, hide_index=True,
-                    )
 
                 # ── 0DTE Vanna + Charm narrative
                 cvn1, cvn2 = st.columns(2)
@@ -2013,30 +2008,29 @@ def show_dashboard() -> None:
                             st.plotly_chart(fig_cone, use_container_width=True,
                                             key=f"er_cone_{symbol}")
 
-            # ── EM Accuracy tracker — calibration (auto-recorded headless) ──
-            _render_md('<p class="bb-header" style="margin-top:0.5rem">'
-                       'EM ACCURACY  ·  ¿el modelo acierta?</p>')
-            try:
-                from data import em_store
-                from quant.em_tracker import accuracy_stats
-                em_hist = em_store.load_history(symbol, limit=250)
-                if em_hist:
-                    stats = accuracy_stats(em_hist, only_clean=True)
-                    _render_md(panel_em_accuracy_html(
-                        stats, backend=em_store.backend_info().get("backend", "—")))
-                else:
+            with st.expander("EM ACCURACY · ¿el modelo acierta? (calibración histórica)"):
+                # ── EM Accuracy tracker — calibration (auto-recorded headless) ──
+                try:
+                    from data import em_store
+                    from quant.em_tracker import accuracy_stats
+                    em_hist = em_store.load_history(symbol, limit=250)
+                    if em_hist:
+                        stats = accuracy_stats(em_hist, only_clean=True)
+                        _render_md(panel_em_accuracy_html(
+                            stats, backend=em_store.backend_info().get("backend", "—")))
+                    else:
+                        st.caption(
+                            "Aún sin registros para este símbolo. El job headless "
+                            "(GitHub Actions) graba una predicción cada apertura y "
+                            "la liquida al cierre — ~10 sesiones para un veredicto. "
+                            "Ver `docs/EM_TRACKER_SETUP.md`."
+                        )
+                except Exception as exc:
+                    log.warning("EM accuracy panel failed: %s", exc)
                     st.caption(
-                        "Aún sin registros para este símbolo. El job headless "
-                        "(GitHub Actions) graba una predicción cada apertura y "
-                        "la liquida al cierre — ~10 sesiones para un veredicto. "
+                        "Tracker no disponible (¿DATABASE_URL configurado?). "
                         "Ver `docs/EM_TRACKER_SETUP.md`."
                     )
-            except Exception as exc:
-                log.warning("EM accuracy panel failed: %s", exc)
-                st.caption(
-                    "Tracker no disponible (¿DATABASE_URL configurado?). "
-                    "Ver `docs/EM_TRACKER_SETUP.md`."
-                )
 
     # ── 3. VANNA ────────────────────────────────────────────────────────────
     with tab_vex:
