@@ -92,6 +92,17 @@ def _render_md(html: str) -> None:
     st.markdown(html, unsafe_allow_html=True)
 
 
+def _doc(resumen: str, detalle: str) -> None:
+    """Patrón anti-amontonamiento: UNA línea de contexto visible y la
+    explicación completa plegada en un expander. Los párrafos didácticos
+    son valiosos la primera vez y ruido la número cien."""
+    st.caption(resumen)
+    with st.expander("ℹ Cómo leerlo"):
+        _render_md(
+            f'<p style="font-size:0.76rem;color:#8a8aa5;line-height:1.65;'
+            f'margin:0;">{detalle}</p>')
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Dashboard
 # ─────────────────────────────────────────────────────────────────────────────
@@ -660,24 +671,26 @@ def show_dashboard() -> None:
     # ─────────────────────────────────────────────────────────────────────────
     #  TABS  (named for readability — order here controls UI order)
     # ─────────────────────────────────────────────────────────────────────────
+    # Sin emojis: un terminal cuantitativo se lee en texto plano. El estado
+    # activo lo marca el subrayado ámbar del CSS, no un icono.
     TAB_LABELS = [
-        "🎯 Overview",
-        "🔥 GEX 0DTE",
-        "🗺️ Niveles",
-        "📊 GEX Total",
-        "🌀 Orderflow",
-        "📐 Expected Range",
-        "💎 Vanna (VEX)",
-        "⏳ Charm (CEX)",
-        "📈 Delta (DEX)",
-        "🌊 HIRO Flow",
-        "📐 Term Structure",
-        "📉 IV Skew & Smile",
-        "💰 Open Interest",
-        "📊 Vol Analytics",
-        "📋 Chain",
-        "📤 Trade Card",
-        "⚙ Ajustes",
+        "Overview",
+        "GEX 0DTE",
+        "Niveles",
+        "GEX Total",
+        "Orderflow",
+        "Expected Range",
+        "Vanna",
+        "Charm",
+        "Delta",
+        "HIRO",
+        "Term Structure",
+        "Skew & Smile",
+        "Open Interest",
+        "Vol Analytics",
+        "Chain",
+        "Trade Card",
+        "Ajustes",
     ]
     tabs = st.tabs(TAB_LABELS)
     (tab_overview, tab_0dte, tab_levels, tab_gex, tab_orderflow,
@@ -703,17 +716,17 @@ def show_dashboard() -> None:
                  "intradía). Resto = todas las demás expiraciones agregadas "
                  "(muros estructurales del libro, excluyendo 0DTE).",
         )
-        st.caption(
+        _doc(
+            "Niveles de gamma del dealer + niveles de flujo, sobre el precio "
+            "intradía.",
             "Líneas horizontales = niveles de gamma dealer (call/put wall · "
             "gamma flip · HVL · clusters P1/P2/P3) del alcance elegido. Línea "
             "cyan = precio intradía. Banda azul = rango actual. Verde = "
             "resistencia · rojo = soporte · naranja = flip · morado = pin. "
             "<b>Niveles de flujo</b> (punteado): <b>VT-C/VT-P</b> = strike de "
-            "mayor <b>volumen</b> call/put de HOY (no OI) · <b>Call Bridge</b> = "
-            "strike de mayor OI total (liquidez). El panel muestra la "
-            "dominancia de volumen calls vs puts.",
-            unsafe_allow_html=True,
-        )
+            "mayor <b>volumen</b> call/put de HOY (no OI) · <b>Call Bridge</b> "
+            "= strike de mayor OI total (liquidez). El panel muestra la "
+            "dominancia de volumen calls vs puts.")
 
         from charts.levels_map import chart_price_levels
         from ui.widgets import key_levels_panel
@@ -1148,12 +1161,14 @@ def show_dashboard() -> None:
     # ── 1. GEX TOTAL ────────────────────────────────────────────────────────
     with tab_gex:
         _render_md('<p class="bb-header">GEX PROFILE  ·  Gamma Exposure por Strike</p>')
-        st.caption(
-            "Calls → derecha (verde), Puts → izquierda (rojo), Net GEX → puntos "
-            "azules. Walls: Call (verde dashed), Put (rojo dashed), Spot (blanco "
-            "sólido), Zero Γ (morado dotted). Bandas semitransparentes = zonas "
-            "gamma P1/P2/P3 (verde call-dominant · rojo put-dominant · ámbar mixed)."
-        )
+        _doc(
+            "Gamma del dealer por strike — calls a la derecha, puts a la "
+            "izquierda, Net como curva.",
+            "Calls → derecha (verde), Puts → izquierda (rojo), Net GEX → curva "
+            "dorada. Muros como píldoras en el margen: Call Wall (verde), Put "
+            "Wall (rojo), Zero Γ (morado), spot (ámbar sólido). Bandas "
+            "semitransparentes = zonas gamma P1/P2/P3 (verde call-dominant · "
+            "rojo put-dominant · ámbar mixed).")
 
         # ── View + zoom controls ───────────────────────────────────────────
         # Defensive widget-state pattern: read the last-known value from
@@ -1271,14 +1286,14 @@ def show_dashboard() -> None:
 
         _render_md('<p class="bb-header">'
                    'ORDERFLOW  ·  SESIÓN CONTINUA</p>')
-        st.caption(
+        _doc(
+            "Sesión grabada de forma continua — qué cambió desde la última "
+            "vez que miraste.",
             "Historia grabada por el <b>recorder headless</b> cada ~10 min "
-            "de mercado (GitHub Actions → Neon) — ya no depende de tener la "
-            "app abierta. Responde 4 preguntas: ¿qué cambió desde que no "
-            "miro? · ¿el régimen está girando? · ¿los muros se mueven? · "
-            "¿dónde pega el flujo ahora?",
-            unsafe_allow_html=True,
-        )
+            "de mercado (GitHub Actions → Neon) — no depende de tener la app "
+            "abierta. Responde 4 preguntas: ¿qué cambió desde que no miro? · "
+            "¿el régimen está girando? · ¿los muros se mueven? · ¿dónde pega "
+            "el flujo ahora?")
 
         # ── Continuous history + live session ticks (newer than last snap) ──
         try:
@@ -1335,12 +1350,13 @@ def show_dashboard() -> None:
         if fig_flow is not None:
             st.plotly_chart(fig_flow, use_container_width=True,
                             key=f"of_flow_{symbol}")
-            st.caption(
+            _doc(
+                "Δvolumen por strike en la ventana elegida.",
                 "Δvolumen = contratos operados por strike en la ventana (el "
                 "volumen del chain es acumulado del día). Nota honesta: la "
                 "OI solo se actualiza overnight (regla OCC), así que el "
-                "volumen ES el proxy de flujo intradía — no existe ΔOI en vivo."
-            )
+                "volumen ES el proxy de flujo intradía — no existe ΔOI en "
+                "vivo.")
         if not combined and not srows:
             st.info(
                 "Aún no hay datos. El recorder se activa en la próxima "
@@ -1414,12 +1430,12 @@ def show_dashboard() -> None:
             '<span style="font-size:0.6rem;color:#6a6a90;letter-spacing:0.16em;'
             'align-self:center;">FLUJO DEL DEALER · SOLO HOY</span></div>'
         )
-        st.caption(
-            "Filtro DTE = 0 · la gamma que vence HOY. En las horas finales el "
-            "charm colapsa a cero y la gamma se concentra en el ATM, "
-            "intensificando el pinning. Se ignora el min-OI (los 0DTE tienen OI "
-            "bajo pero volumen y gamma altos)."
-        )
+        _doc(
+            "Solo la gamma que vence HOY (DTE = 0).",
+            "En las horas finales el charm colapsa a cero y la gamma se "
+            "concentra en el ATM, intensificando el pinning. Se ignora el "
+            "min-OI global: los contratos 0DTE tienen OI bajo pero volumen y "
+            "gamma altos.")
 
         if zdte_c.empty and zdte_p.empty:
             st.caption(
@@ -1619,14 +1635,15 @@ def show_dashboard() -> None:
                     '<p class="bb-header" style="margin-top:0.5rem">'
                     '0DTE VOLATILITY SMILE  ·  IV(K) blend OTM</p>'
                 )
-                st.caption(
-                    "Sonrisa de IV por strike para 0DTE (no es term-structure). "
-                    "IV reutilizada directamente de la cadena (columna IV% de "
-                    "data.parse.clean). Market_IV usa la convención OTM: "
+                _doc(
+                    "IV por strike del vencimiento de hoy — dónde está cara "
+                    "la prima.",
+                    "Sonrisa de IV por strike para 0DTE (no es "
+                    "term-structure). IV reutilizada directamente de la "
+                    "cadena (columna IV%). Market_IV usa la convención OTM: "
                     "put-IV para K&lt;S, call-IV para K≥S. Overlay de walls "
-                    "GEX. Strikes en zona <b>rica</b> (IV &gt; mediana+1σ) marcados "
-                    "con anillo rojo."
-                )
+                    "GEX. Strikes en zona <b>rica</b> (IV &gt; mediana+1σ) "
+                    "marcados con anillo rojo.")
                 # X-axis toggle + rich-zone σ slider
                 csm0, csm1 = st.columns([2, 2])
                 with csm0:
@@ -1879,14 +1896,15 @@ def show_dashboard() -> None:
 
         _render_md('<p class="bb-header">'
                    'EXPECTED RANGE  ·  distribución implícita (RND) + estimadores</p>')
-        st.caption(
+        _doc(
+            "La distribución de probabilidad que el mercado cotiza para el "
+            "cierre (RND).",
             "El modelo central es la <b>Risk-Neutral Density</b>: la "
-            "distribución de probabilidad completa que el mercado de opciones "
-            "cotiza para el cierre, extraída del chain vía SVI (Gatheral) + "
+            "distribución completa que el mercado de opciones cotiza para el "
+            "cierre, extraída del chain vía SVI (Gatheral) + "
             "Breeden-Litzenberger, arbitrage-free y centrada en el forward. "
-            "Los niveles salen por inversión exacta de la CDF. Debajo, cuatro "
-            "estimadores clásicos del rango ±1σ como contraste."
-        )
+            "Los niveles salen por inversión exacta de la CDF. Debajo, "
+            "cuatro estimadores clásicos del rango ±1σ como contraste.")
 
         # Horizon selector — radio pills.
         er_dte = st.radio(
@@ -2072,12 +2090,13 @@ def show_dashboard() -> None:
         _render_md(
             '<p class="bb-header">HIRO  ·  Hedging Impact Real-time Oscillator</p>'
         )
-        st.caption(
-            "Flujo de hedging implícito por volumen × |Δ|. "
-            "<b>Cliente compra call</b> → dealer short call → dealer <b>compra spot</b> "
-            "(BULLISH). <b>Cliente compra put</b> → dealer short put → dealer <b>vende spot</b> "
-            "(BEARISH). HIRO = call_flow − put_flow."
-        )
+        _doc(
+            "Flujo de hedging implícito del dealer (volumen × |Δ|).",
+            "<b>Cliente compra call</b> → dealer short call → dealer "
+            "<b>compra spot</b> (BULLISH). <b>Cliente compra put</b> → dealer "
+            "short put → dealer <b>vende spot</b> (BEARISH). HIRO = call_flow "
+            "− put_flow. Sin tape con lado (bid/ask) el volumen es proxy: "
+            "trátalo como inclinación, no como hecho.")
         h1, h2, h3, h4 = st.columns(4)
         h1.metric("HIRO now",
                   f"{hiro_snap.get('hiro', 0):+,.0f}",

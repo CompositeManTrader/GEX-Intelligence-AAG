@@ -18,12 +18,13 @@ BASE = dict(
     # shows through; a barely-there plot tint keeps the data area legible.
     plot_bgcolor="rgba(255,255,255,0.014)",
     paper_bgcolor="rgba(0,0,0,0)",
-    font=dict(size=11, family=FONT_MONO, color="#7070a0"),
-    margin=dict(l=55, r=24, t=42, b=36),
+    font=dict(size=11, family=FONT_MONO, color="#8a8ab0"),
+    # Márgenes uniformes con aire — todos los charts respiran igual.
+    margin=dict(l=56, r=28, t=48, b=42),
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
-                font=dict(size=10, color="#9090b0"), bgcolor="rgba(0,0,0,0)"),
-    hoverlabel=dict(bgcolor="#1a1a2a", font_size=11, font_family=FONT_MONO,
-                    bordercolor="#3a3a4a", font_color="#e0e0f0"),
+                font=dict(size=10, color="#9AA1A9"), bgcolor="rgba(0,0,0,0)"),
+    hoverlabel=dict(bgcolor="#15171A", font_size=11, font_family=FONT_MONO,
+                    bordercolor="#262A30", font_color="#F4F5F6"),
 )
 AX = dict(
     showgrid=True, gridcolor=GRID_CLR,

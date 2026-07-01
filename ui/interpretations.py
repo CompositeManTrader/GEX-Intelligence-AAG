@@ -21,18 +21,24 @@ import pandas as pd
 #  Visual helpers
 # ─────────────────────────────────────────────────────────────────────────────
 _BOX = (
-    '<div style="background:rgba(20,20,36,0.55);border-left:3px solid {clr};'
-    'padding:0.6rem 0.9rem;margin:0.3rem 0 1rem;border-radius:4px;'
-    'font-family:JetBrains Mono,monospace;font-size:0.76rem;line-height:1.55;'
-    'color:#c0c0d8;">{body}</div>'
+    '<div style="background:rgba(255,255,255,0.028);'
+    'backdrop-filter:blur(10px) saturate(130%);'
+    '-webkit-backdrop-filter:blur(10px) saturate(130%);'
+    'border:1px solid rgba(255,255,255,0.06);'
+    'border-left:2px solid {clr};'
+    'box-shadow:inset 0 1px 0 rgba(255,255,255,0.05);'
+    'padding:0.65rem 1rem;margin:0.35rem 0 1.05rem;border-radius:0 11px 11px 0;'
+    'font-family:Inter,system-ui,sans-serif;font-size:0.78rem;line-height:1.6;'
+    'color:#b4b4c8;">{body}</div>'
 )
 
 
 def _box(body: str, tone: str = "info") -> str:
+    # Paleta de marca: ámbar como acento informativo (no azul genérico).
     clr = {
         "bull": "#16C784", "bear": "#EA3943", "warn": "#F5A623",
-        "info": "#3b82f6", "neutral": "#8b8ba7",
-    }.get(tone, "#8b8ba7")
+        "info": "#F5A623", "neutral": "#6B6B80",
+    }.get(tone, "#6B6B80")
     return _BOX.format(clr=clr, body=body)
 
 

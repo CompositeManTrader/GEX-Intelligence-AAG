@@ -12,7 +12,11 @@ html, body, [data-testid="stApp"], .main, .block-container {
     color: #c8c8d8 !important;
     font-family: 'Inter', system-ui, sans-serif !important;
 }
-.block-container { padding: 2rem 1.6rem 2rem !important; max-width: 100% !important; }
+/* Contenido centrado con ancho máximo: en monitores anchos el layout a
+ * sangre completa dispersa el ojo; 1560px mantiene densidad de terminal
+ * sin regar los paneles. */
+.block-container { padding: 1.7rem 2.2rem 2.6rem !important;
+    max-width: 1560px !important; margin: 0 auto !important; }
 
 input, textarea, select,
 [data-testid="stTextInput"] input,
@@ -79,10 +83,10 @@ button[kind="primary"]:hover { background: #F5A623 !important; color: #000 !impo
 .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar-track { background: transparent; }
 .stTabs [data-baseweb="tab"] {
     background: transparent !important; border-radius: 4px 4px 0 0 !important;
-    padding: 7px 13px !important; margin: 0 !important;
-    color: #57577a !important; font-size: 0.73rem !important;
+    padding: 9px 14px !important; margin: 0 !important;
+    color: #57577a !important; font-size: 0.66rem !important;
     font-weight: 600 !important; font-family: 'JetBrains Mono', monospace !important;
-    letter-spacing: 0.03em; white-space: nowrap;
+    letter-spacing: 0.09em; text-transform: uppercase; white-space: nowrap;
     transition: color .15s, background .15s;
 }
 .stTabs [data-baseweb="tab"]:hover {
@@ -99,7 +103,13 @@ button[kind="primary"]:hover { background: #F5A623 !important; color: #000 !impo
     box-shadow: 0 0 8px rgba(245,166,35,0.5);
 }
 
-.stCaption p, [data-testid="stCaptionContainer"] p { color: #505070 !important; font-size: 0.72rem !important; }
+/* Captions a dieta: son notas al pie, no párrafos protagonistas. Más
+ * pequeños, más tenues y con ancho de lectura acotado. */
+.stCaption p, [data-testid="stCaptionContainer"] p {
+    color: #565670 !important; font-size: 0.69rem !important;
+    line-height: 1.55 !important; max-width: 110ch;
+    font-family: 'Inter', system-ui, sans-serif !important;
+}
 p, .stMarkdown p { color: #a0a0c0 !important; }
 h1, h2, h3 { color: #e0e0f0 !important;
     font-family: 'Space Grotesk', system-ui, sans-serif !important; font-weight: 700 !important; }
@@ -135,11 +145,18 @@ h1, h2, h3 { color: #e0e0f0 !important;
 .brand-tag { font-family:'JetBrains Mono',monospace; font-size:0.52rem; color:#9AA1A9;
     letter-spacing:0.26em; margin-top:5px; white-space:nowrap; }
 
+/* Header de sección — tick ámbar + regla que se desvanece a la derecha.
+ * Más aire arriba (separa bloques) y menos peso visual que el borde de 3px. */
 .bb-header {
-    font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.12em;
-    color: #F5A623; border-left: 3px solid #F5A623;
-    padding-left: 10px; margin: 1.4rem 0 0.8rem;
+    display: flex; align-items: center; gap: 14px;
+    font-family: 'JetBrains Mono', monospace; font-size: 0.64rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.18em;
+    color: #F5A623; border-left: 2px solid #F5A623;
+    padding-left: 11px; margin: 2rem 0 0.65rem;
+}
+.bb-header::after {
+    content: ""; flex: 1; height: 1px;
+    background: linear-gradient(90deg, #262A30 0%, transparent 85%);
 }
 .bb-divider { border: none; border-top: 1px solid #1a1a2a; margin: 1.2rem 0; }
 
